@@ -41,8 +41,7 @@ export function AgentCenter({
     const ch = officeState.characters.get(id);
     return sum + (ch ? ch.inputTokens + ch.outputTokens : 0);
   }, 0);
-  const minCost = estimateGpt55Cost(totalTokens, 'input');
-  const maxCost = estimateGpt55Cost(totalTokens, 'output');
+  const costSummary = getCostSummary(totalTokens, providerFilter);
 
   return (
     <Modal
@@ -62,15 +61,11 @@ export function AgentCenter({
                 </div>
               </div>
               <div className="text-right text-sm text-text-muted">
-                <div>GPT-5.5 API estimate</div>
-                <div className="text-text">
-                  ${minCost.toFixed(4)} - ${maxCost.toFixed(4)}
-                </div>
+                <div>{costSummary.label}</div>
+                <div className="text-text">{costSummary.value}</div>
               </div>
             </div>
-            <div className="mt-2 text-xs text-text-muted">
-              Range uses tracked tokens. Codex totals may not split input/output.
-            </div>
+            <div className="mt-2 text-xs text-text-muted">{costSummary.note}</div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {(['all', 'codex', 'claude'] as const).map((provider) => (
@@ -194,7 +189,31 @@ function providerLabel(providerId: string): string {
   return providerId;
 }
 
-function estimateGpt55Cost(tokens: number, kind: 'input' | 'output'): number {
+function getCostSummary(
+  tokens: number,
+  providerFilter: 'all' | 'codex' | 'claude',
+): { label: string; value: string; note: string } {
+  if (providerFilter === 'claude') {
+    return {
+      label: 'Claude token count',
+      value: 'Cost not estimated',
+      note: 'Claude sessions report tokens when available; provider pricing is not applied here.',
+    };
+  }
+
+  const minCost = estimateOpenAiCost(tokens, 'input');
+  const maxCost = estimateOpenAiCost(tokens, 'output');
+  return {
+    label: providerFilter === 'codex' ? 'OpenAI API cost proxy' : 'Mixed-provider cost proxy',
+    value: `$${minCost.toFixed(4)} - $${maxCost.toFixed(4)}`,
+    note:
+      providerFilter === 'codex'
+        ? 'Range uses tracked Codex tokens. Totals may not split input/output.'
+        : 'Range is an OpenAI proxy for mixed agents; switch filters for provider-specific totals.',
+  };
+}
+
+function estimateOpenAiCost(tokens: number, kind: 'input' | 'output'): number {
   const ratePerMillion = kind === 'input' ? 5 : 30;
   return (tokens / 1_000_000) * ratePerMillion;
 }

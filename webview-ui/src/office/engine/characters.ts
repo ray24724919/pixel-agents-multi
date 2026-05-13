@@ -91,6 +91,10 @@ export function createCharacter(
   };
 }
 
+export function isCharacterSeated(ch: Character): boolean {
+  return ch.state === CharacterState.TYPE && ch.seatId !== null;
+}
+
 export function updateCharacter(
   ch: Character,
   dt: number,
@@ -153,10 +157,13 @@ export function updateCharacter(
             ch.state = CharacterState.WALK;
             ch.frame = 0;
             ch.frameTimer = 0;
-          } else {
-            // Already at seat or no path — sit down
+          } else if (ch.tileCol === seat.seatCol && ch.tileRow === seat.seatRow) {
             ch.state = CharacterState.TYPE;
             ch.dir = seat.facingDir;
+            ch.frame = 0;
+            ch.frameTimer = 0;
+          } else {
+            ch.state = CharacterState.IDLE;
             ch.frame = 0;
             ch.frameTimer = 0;
           }
