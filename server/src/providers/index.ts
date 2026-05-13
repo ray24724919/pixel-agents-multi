@@ -11,5 +11,6 @@
  * than reaching into each provider directory directly.
  */
 
+export { codexProvider } from './file/codex/codex.js';
 export { claudeProvider } from './hook/claude/claude.js';
 export { copyHookScript } from './hook/claude/claudeHookInstaller.js';

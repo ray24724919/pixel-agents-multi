@@ -103,11 +103,7 @@ export function SettingsModal({
         checked={watchAllSessions}
         onChange={onToggleWatchAllSessions}
       />
-      <Checkbox
-        label="Instant Detection (Hooks)"
-        checked={hooksEnabled}
-        onChange={onToggleHooksEnabled}
-      />
+      <Checkbox label="Instant Detection" checked={hooksEnabled} onChange={onToggleHooksEnabled} />
       <Checkbox
         label="Always Show Labels"
         checked={alwaysShowOverlay}

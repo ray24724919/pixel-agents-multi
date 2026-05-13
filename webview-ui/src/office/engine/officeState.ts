@@ -105,6 +105,8 @@ export class OfficeState {
           ch.x = cx;
           ch.y = cy;
           ch.dir = seat.facingDir;
+          if (seat.seatKind === 'work') ch.workSeatId = ch.seatId;
+          if (seat.seatKind === 'rest') ch.restSeatId = ch.seatId;
           continue;
         }
       }
@@ -124,6 +126,8 @@ export class OfficeState {
         ch.x = seat.seatCol * TILE_SIZE + TILE_SIZE / 2;
         ch.y = seat.seatRow * TILE_SIZE + TILE_SIZE / 2;
         ch.dir = seat.facingDir;
+        if (seat.seatKind === 'work') ch.workSeatId = seatId;
+        if (seat.seatKind === 'rest') ch.restSeatId = seatId;
       }
     }
 
@@ -175,61 +179,16 @@ export class OfficeState {
   }
 
   private findFreeSeat(): string | null {
-    // Build set of tiles occupied by electronics (PCs, monitors, etc.)
-    const electronicsTiles = new Set<string>();
-    for (const item of this.layout.furniture) {
-      const entry = getCatalogEntry(item.type);
-      if (!entry || entry.category !== 'electronics') continue;
-      for (let dr = 0; dr < entry.footprintH; dr++) {
-        for (let dc = 0; dc < entry.footprintW; dc++) {
-          electronicsTiles.add(`${item.col + dc},${item.row + dr}`);
-        }
-      }
-    }
+    return this.findFreeSeatByKind('work') ?? this.findFreeSeatByKind('rest');
+  }
 
-    // Collect free seats, split into those facing electronics and the rest
-    const pcSeats: string[] = [];
-    const otherSeats: string[] = [];
+  private findFreeSeatByKind(kind: 'work' | 'rest'): string | null {
+    const candidates: string[] = [];
     for (const [uid, seat] of this.seats) {
       if (seat.assigned) continue;
-
-      // Check if this seat faces electronics (same logic as auto-state detection)
-      let facesPC = false;
-      const dCol =
-        seat.facingDir === Direction.RIGHT ? 1 : seat.facingDir === Direction.LEFT ? -1 : 0;
-      const dRow = seat.facingDir === Direction.DOWN ? 1 : seat.facingDir === Direction.UP ? -1 : 0;
-      for (let d = 1; d <= AUTO_ON_FACING_DEPTH && !facesPC; d++) {
-        const tileCol = seat.seatCol + dCol * d;
-        const tileRow = seat.seatRow + dRow * d;
-        if (electronicsTiles.has(`${tileCol},${tileRow}`)) {
-          facesPC = true;
-          break;
-        }
-        if (dCol !== 0) {
-          if (
-            electronicsTiles.has(`${tileCol},${tileRow - 1}`) ||
-            electronicsTiles.has(`${tileCol},${tileRow + 1}`)
-          ) {
-            facesPC = true;
-            break;
-          }
-        } else {
-          if (
-            electronicsTiles.has(`${tileCol - 1},${tileRow}`) ||
-            electronicsTiles.has(`${tileCol + 1},${tileRow}`)
-          ) {
-            facesPC = true;
-            break;
-          }
-        }
-      }
-      (facesPC ? pcSeats : otherSeats).push(uid);
+      if (seat.seatKind === kind) candidates.push(uid);
     }
-
-    // Pick randomly: prefer PC seats, then any seat
-    if (pcSeats.length > 0) return pcSeats[Math.floor(Math.random() * pcSeats.length)];
-    if (otherSeats.length > 0) return otherSeats[Math.floor(Math.random() * otherSeats.length)];
-    return null;
+    return candidates.length > 0 ? candidates[Math.floor(Math.random() * candidates.length)] : null;
   }
 
   /**
@@ -267,6 +226,7 @@ export class OfficeState {
     preferredSeatId?: string,
     skipSpawnEffect?: boolean,
     folderName?: string,
+    initialActive = true,
   ): void {
     if (this.characters.has(id)) return;
 
@@ -281,16 +241,19 @@ export class OfficeState {
       hueShift = pick.hueShift;
     }
 
-    // Try preferred seat first, then any free seat
+    // Active agents begin at a work seat. Inactive agents begin roaming on a
+    // walkable tile instead of standing on top of rest furniture.
     let seatId: string | null = null;
-    if (preferredSeatId && this.seats.has(preferredSeatId)) {
-      const seat = this.seats.get(preferredSeatId)!;
-      if (!seat.assigned) {
-        seatId = preferredSeatId;
+    if (initialActive) {
+      if (preferredSeatId && this.seats.has(preferredSeatId)) {
+        const seat = this.seats.get(preferredSeatId)!;
+        if (!seat.assigned && seat.seatKind === 'work') {
+          seatId = preferredSeatId;
+        }
       }
-    }
-    if (!seatId) {
-      seatId = this.findFreeSeat();
+      if (!seatId) {
+        seatId = this.findFreeSeatByKind('work') ?? this.findFreeSeat();
+      }
     }
 
     let ch: Character;
@@ -298,6 +261,9 @@ export class OfficeState {
       const seat = this.seats.get(seatId)!;
       seat.assigned = true;
       ch = createCharacter(id, palette, seatId, seat, hueShift);
+      ch.isActive = initialActive;
+      ch.workSeatId = seat.seatKind === 'work' ? seatId : this.findFreeSeatByKind('work');
+      ch.restSeatId = seat.seatKind === 'rest' ? seatId : this.findFreeSeatByKind('rest');
     } else {
       // No seats — spawn at random walkable tile
       const spawn =
@@ -309,6 +275,10 @@ export class OfficeState {
       ch.y = spawn.row * TILE_SIZE + TILE_SIZE / 2;
       ch.tileCol = spawn.col;
       ch.tileRow = spawn.row;
+      ch.isActive = initialActive;
+      ch.state = initialActive ? CharacterState.TYPE : CharacterState.IDLE;
+      ch.workSeatId = this.findFreeSeatByKind('work');
+      ch.restSeatId = this.findFreeSeatByKind('rest');
     }
 
     if (folderName) {
@@ -362,6 +332,11 @@ export class OfficeState {
     if (!seat || seat.assigned) return;
     seat.assigned = true;
     ch.seatId = seatId;
+    if (seat.seatKind === 'work') {
+      ch.workSeatId = seatId;
+    } else {
+      ch.restSeatId = seatId;
+    }
     // Pathfind to new seat (unblock own seat tile for this query)
     const path = this.withOwnSeatUnblocked(ch, () =>
       findPath(ch.tileCol, ch.tileRow, seat.seatCol, seat.seatRow, this.tileMap, this.blockedTiles),
@@ -379,8 +354,44 @@ export class OfficeState {
       ch.frame = 0;
       ch.frameTimer = 0;
       if (!ch.isActive) {
-        ch.seatTimer = INACTIVE_SEAT_TIMER_MIN_SEC + Math.random() * INACTIVE_SEAT_TIMER_RANGE_SEC;
+        if (ch.seatTimer < 0) {
+          ch.seatTimer = 0;
+        } else {
+          ch.seatTimer =
+            INACTIVE_SEAT_TIMER_MIN_SEC + Math.random() * INACTIVE_SEAT_TIMER_RANGE_SEC;
+        }
       }
+    }
+  }
+
+  private switchAgentSeat(agentId: number, kind: 'work' | 'rest'): void {
+    const ch = this.characters.get(agentId);
+    if (!ch) return;
+    const targetId = kind === 'work' ? ch.workSeatId : ch.restSeatId;
+    let nextSeatId: string | null = null;
+    if (targetId) {
+      const target = this.seats.get(targetId);
+      if (target && (!target.assigned || ch.seatId === targetId) && target.seatKind === kind) {
+        nextSeatId = targetId;
+      }
+    }
+    if (!nextSeatId) {
+      nextSeatId = this.findFreeSeatByKind(kind);
+    }
+    if (!nextSeatId || nextSeatId === ch.seatId) return;
+
+    if (ch.seatId) {
+      const current = this.seats.get(ch.seatId);
+      if (current) current.assigned = false;
+    }
+    const nextSeat = this.seats.get(nextSeatId);
+    if (!nextSeat || nextSeat.assigned) return;
+    nextSeat.assigned = true;
+    ch.seatId = nextSeatId;
+    if (kind === 'work') {
+      ch.workSeatId = nextSeatId;
+    } else {
+      ch.restSeatId = nextSeatId;
     }
   }
 
@@ -406,7 +417,12 @@ export class OfficeState {
       ch.frame = 0;
       ch.frameTimer = 0;
       if (!ch.isActive) {
-        ch.seatTimer = INACTIVE_SEAT_TIMER_MIN_SEC + Math.random() * INACTIVE_SEAT_TIMER_RANGE_SEC;
+        if (ch.seatTimer < 0) {
+          ch.seatTimer = 0;
+        } else {
+          ch.seatTimer =
+            INACTIVE_SEAT_TIMER_MIN_SEC + Math.random() * INACTIVE_SEAT_TIMER_RANGE_SEC;
+        }
       }
     }
   }
@@ -563,11 +579,22 @@ export class OfficeState {
     if (ch) {
       ch.isActive = active;
       if (!active) {
-        // Sentinel -1: signals turn just ended, skip next seat rest timer.
-        // Prevents the WALK handler from setting a 2-4 min rest on arrival.
-        ch.seatTimer = -1;
+        if (ch.seatId) {
+          const current = this.seats.get(ch.seatId);
+          if (current) current.assigned = false;
+        }
+        ch.seatId = null;
         ch.path = [];
         ch.moveProgress = 0;
+        ch.currentTool = null;
+        ch.state = CharacterState.IDLE;
+        ch.frame = 0;
+        ch.frameTimer = 0;
+        ch.seatTimer = 0;
+        ch.wanderTimer = 0;
+      } else {
+        this.switchAgentSeat(id, 'work');
+        this.sendToSeat(id);
       }
       this.rebuildFurnitureInstances();
     }

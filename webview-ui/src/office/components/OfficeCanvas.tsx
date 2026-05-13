@@ -26,6 +26,7 @@ import { EditTool, TILE_SIZE } from '../types.js';
 
 interface OfficeCanvasProps {
   officeState: OfficeState;
+  visibleAgentIds?: Set<number>;
   onClick: (agentId: number) => void;
   isEditMode: boolean;
   editorState: EditorState;
@@ -43,6 +44,7 @@ interface OfficeCanvasProps {
 
 export function OfficeCanvas({
   officeState,
+  visibleAgentIds,
   onClick,
   isEditMode,
   editorState,
@@ -70,6 +72,10 @@ export function OfficeCanvas({
   const isEraseDraggingRef = useRef(false);
   // Zoom scroll accumulator for trackpad pinch sensitivity
   const zoomAccumulatorRef = useRef(0);
+  const isAgentVisible = useCallback(
+    (id: number): boolean => !visibleAgentIds || visibleAgentIds.has(id),
+    [visibleAgentIds],
+  );
 
   // Clamp pan so the map edge can't go past a margin inside the viewport
   const clampPan = useCallback(
@@ -244,12 +250,24 @@ export function OfficeCanvas({
         }
 
         // Build selection render state
+        const visibleCharacters = officeState
+          .getCharacters()
+          .filter((character) => isAgentVisible(character.id));
+        const visibleCharacterMap = new Map(
+          [...officeState.characters].filter(([id]) => isAgentVisible(id)),
+        );
         const selectionRender: SelectionRenderState = {
-          selectedAgentId: officeState.selectedAgentId,
-          hoveredAgentId: officeState.hoveredAgentId,
+          selectedAgentId:
+            officeState.selectedAgentId !== null && isAgentVisible(officeState.selectedAgentId)
+              ? officeState.selectedAgentId
+              : null,
+          hoveredAgentId:
+            officeState.hoveredAgentId !== null && isAgentVisible(officeState.hoveredAgentId)
+              ? officeState.hoveredAgentId
+              : null,
           hoveredTile: officeState.hoveredTile,
           seats: officeState.seats,
-          characters: officeState.characters,
+          characters: visibleCharacterMap,
         };
 
         const { offsetX, offsetY } = renderFrame(
@@ -258,7 +276,7 @@ export function OfficeCanvas({
           h,
           officeState.tileMap,
           officeState.furniture,
-          officeState.getCharacters(),
+          visibleCharacters,
           zoom,
           panRef.current.x,
           panRef.current.y,
@@ -280,7 +298,16 @@ export function OfficeCanvas({
       stop();
       observer.disconnect();
     };
-  }, [officeState, resizeCanvas, isEditMode, editorState, _editorTick, zoom, panRef]);
+  }, [
+    officeState,
+    resizeCanvas,
+    isEditMode,
+    editorState,
+    _editorTick,
+    zoom,
+    panRef,
+    isAgentVisible,
+  ]);
 
   // Convert CSS mouse coords to world (sprite pixel) coords
   const screenToWorld = useCallback(
@@ -457,12 +484,13 @@ export function OfficeCanvas({
       const pos = screenToWorld(e.clientX, e.clientY);
       if (!pos) return;
       const hitId = officeState.getCharacterAt(pos.worldX, pos.worldY);
+      const visibleHitId = hitId !== null && isAgentVisible(hitId) ? hitId : null;
       const tile = screenToTile(e.clientX, e.clientY);
       officeState.hoveredTile = tile;
       const canvas = canvasRef.current;
       if (canvas) {
         let cursor = 'default';
-        if (hitId !== null) {
+        if (visibleHitId !== null) {
           cursor = 'pointer';
         } else if (officeState.selectedAgentId !== null && tile) {
           // Check if hovering over a clickable seat (available or own)
@@ -479,7 +507,7 @@ export function OfficeCanvas({
         }
         canvas.style.cursor = cursor;
       }
-      officeState.hoveredAgentId = hitId;
+      officeState.hoveredAgentId = visibleHitId;
     },
     [
       officeState,
@@ -493,6 +521,7 @@ export function OfficeCanvas({
       hitTestDeleteButton,
       hitTestRotateButton,
       clampPan,
+      isAgentVisible,
     ],
   );
 
@@ -673,6 +702,7 @@ export function OfficeCanvas({
       if (!pos) return;
 
       const hitId = officeState.getCharacterAt(pos.worldX, pos.worldY);
+      if (hitId !== null && !isAgentVisible(hitId)) return;
       if (hitId !== null) {
         // Dismiss any active bubble on click
         officeState.dismissBubble(hitId);
@@ -728,7 +758,7 @@ export function OfficeCanvas({
         officeState.cameraFollowId = null;
       }
     },
-    [officeState, onClick, screenToWorld, screenToTile, isEditMode],
+    [officeState, onClick, screenToWorld, screenToTile, isEditMode, isAgentVisible],
   );
 
   const handleMouseLeave = useCallback(() => {

@@ -76,6 +76,8 @@ export function createCharacter(
     wanderLimit: randomInt(WANDER_MOVES_BEFORE_REST_MIN, WANDER_MOVES_BEFORE_REST_MAX),
     isActive: true,
     seatId,
+    workSeatId: seat?.seatKind === 'work' ? seatId : null,
+    restSeatId: seat?.seatKind === 'rest' ? seatId : null,
     bubbleType: null,
     bubbleTimer: 0,
     seatTimer: 0,

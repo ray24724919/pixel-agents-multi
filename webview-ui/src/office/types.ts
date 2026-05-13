@@ -53,6 +53,8 @@ export interface Seat {
   seatRow: number;
   /** Direction character faces when sitting (toward adjacent desk) */
   facingDir: Direction;
+  /** Work seats are near computers; rest seats are everything else. */
+  seatKind: 'work' | 'rest';
   assigned: boolean;
 }
 
@@ -162,6 +164,10 @@ export interface Character {
   isActive: boolean;
   /** Assigned seat uid, or null if no seat */
   seatId: string | null;
+  /** Seat used when the agent is active/working */
+  workSeatId: string | null;
+  /** Seat used when the agent is idle/resting */
+  restSeatId: string | null;
   /** Active speech bubble type, or null if none showing */
   bubbleType: 'permission' | 'waiting' | null;
   /** Countdown timer for bubble (waiting: 2→0, permission: unused) */
@@ -180,6 +186,8 @@ export interface Character {
   matrixEffectSeeds: number[];
   /** Workspace folder name (only set for multi-root workspaces) */
   folderName?: string;
+  /** Source provider, e.g. codex or claude */
+  providerId?: string;
 
   // -- Agent Teams --
   /** Team name this agent belongs to */

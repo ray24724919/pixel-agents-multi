@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 
+import type { AgentEventTrace } from '../hooks/useExtensionMessages.js';
+import type { OfficeState } from '../office/engine/officeState.js';
 import type { ToolActivity } from '../office/types.js';
 import { vscode } from '../vscodeApi.js';
 import { Button } from './ui/Button.js';
@@ -21,8 +23,11 @@ interface DebugViewProps {
   selectedAgent: number | null;
   agentTools: Record<number, ToolActivity[]>;
   agentStatuses: Record<number, string>;
+  agentEventTrace: Record<number, AgentEventTrace[]>;
   subagentTools: Record<number, Record<string, ToolActivity[]>>;
+  officeState: OfficeState;
   onSelectAgent: (id: number) => void;
+  onCloseAgent: (id: number) => void;
 }
 
 function ToolDot({ tool }: { tool: ToolActivity }) {
@@ -63,8 +68,11 @@ export function DebugView({
   selectedAgent,
   agentTools,
   agentStatuses,
+  agentEventTrace,
   subagentTools,
+  officeState,
   onSelectAgent,
+  onCloseAgent,
 }: DebugViewProps) {
   const [diagnostics, setDiagnostics] = useState<Record<number, AgentDiagnostics>>({});
 
@@ -100,6 +108,11 @@ export function DebugView({
     const status = agentStatuses[id];
     const hasActiveTools = tools.some((t) => !t.done);
     const diag = diagnostics[id];
+    const ch = officeState.characters.get(id);
+    const seat = ch?.seatId ? officeState.seats.get(ch.seatId) : undefined;
+    const workSeat = ch?.workSeatId ? officeState.seats.get(ch.workSeatId) : undefined;
+    const restSeat = ch?.restSeatId ? officeState.seats.get(ch.restSeatId) : undefined;
+    const trace = agentEventTrace[id] || [];
     return (
       <div
         key={id}
@@ -117,7 +130,7 @@ export function DebugView({
             size="sm"
             onClick={(e) => {
               e.stopPropagation();
-              vscode.postMessage({ type: 'closeAgent', id });
+              onCloseAgent(id);
             }}
             className={`opacity-70 ${isSelected ? 'text-white' : ''}`}
             title="Close agent"
@@ -144,6 +157,47 @@ export function DebugView({
                 <span className="w-6 h-6 rounded-full inline-block shrink-0 bg-status-permission" />
                 Might be waiting for input
               </span>
+            )}
+          </div>
+        )}
+        {/* Runtime state diagnostics */}
+        {ch && (
+          <div className="mt-6 py-4 px-6 text-xs opacity-80 flex flex-col gap-3 border-t border-white/8">
+            <span className="font-bold opacity-90">Runtime state</span>
+            <div className="grid grid-cols-2 gap-x-8 gap-y-2">
+              <span>Provider: {ch.providerId || 'unknown'}</span>
+              <span>UI status: {status || (ch.isActive ? 'active' : 'none')}</span>
+              <span>isActive: {String(ch.isActive)}</span>
+              <span>FSM: {ch.state}</span>
+              <span>
+                Seat: {seat?.seatKind || 'none'} {ch.seatId ? `(${ch.seatId})` : ''}
+              </span>
+              <span>Path: {ch.path.length}</span>
+              <span>
+                Work seat:{' '}
+                {workSeat ? `${workSeat.uid} ${workSeat.seatCol},${workSeat.seatRow}` : 'none'}
+              </span>
+              <span>
+                Rest seat:{' '}
+                {restSeat ? `${restSeat.uid} ${restSeat.seatCol},${restSeat.seatRow}` : 'none'}
+              </span>
+              <span>
+                Tile: {ch.tileCol},{ch.tileRow}
+              </span>
+              <span>Tool: {ch.currentTool || 'none'}</span>
+              <span>Seat timer: {ch.seatTimer.toFixed(1)}</span>
+              <span>Bubble: {ch.bubbleType || 'none'}</span>
+            </div>
+            {trace.length > 0 && (
+              <div className="flex flex-col gap-1 pt-2">
+                <span className="font-bold opacity-90">Recent events</span>
+                {trace.slice(0, 5).map((item, index) => (
+                  <span key={`${item.at}-${index}`} className="opacity-70 break-all">
+                    {formatTimeAgo(item.at)} · {item.event}
+                    {item.detail ? ` · ${item.detail}` : ''}
+                  </span>
+                ))}
+              </div>
             )}
           </div>
         )}

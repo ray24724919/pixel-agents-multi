@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+# Mock 'codex' executable for Pixel Agents e2e tests.
+#
+# Behaviour:
+#   1. Parses --cd <cwd> from args, falling back to the process cwd.
+#   2. Appends an invocation record to $HOME/.codex-mock/invocations.log.
+#   3. Creates $HOME/.codex/state_5.sqlite with a threads row for that cwd.
+#   4. Creates $HOME/.codex/sessions/.../rollout-*.jsonl so the extension can
+#      resolve the latest Codex thread for the workspace.
+#   5. Stays alive for up to 30 s (tests can kill it once assertions pass).
+
+set -euo pipefail
+
+TARGET_CWD=""
+PREV=""
+for arg in "$@"; do
+  if [ "$PREV" = "--cd" ]; then
+    TARGET_CWD="$arg"
+  fi
+  PREV="$arg"
+done
+
+if [ -z "$TARGET_CWD" ]; then
+  TARGET_CWD="$(pwd)"
+fi
+
+CODEX_HOME_DIR="${CODEX_HOME:-${HOME}/.codex}"
+LOG_DIR="${HOME}/.codex-mock"
+mkdir -p "$LOG_DIR"
+echo "$(date -Iseconds) cwd=${TARGET_CWD} args=$*" >> "${LOG_DIR}/invocations.log"
+
+NOW_MS="$(($(date +%s) * 1000))"
+THREAD_ID="thread-${NOW_MS}-$$"
+CHILD_THREAD_ID="${THREAD_ID}-child"
+SESSION_DIR="${CODEX_HOME_DIR}/sessions/$(date +%Y/%m/%d)"
+ROLLOUT_PATH="${SESSION_DIR}/rollout-${THREAD_ID}.jsonl"
+CHILD_ROLLOUT_PATH="${SESSION_DIR}/rollout-${CHILD_THREAD_ID}.jsonl"
+DB_PATH="${CODEX_HOME_DIR}/state_5.sqlite"
+
+mkdir -p "$SESSION_DIR"
+printf '{"type":"session_meta","payload":{"id":"%s","cwd":"%s"}}\n' "$THREAD_ID" "$TARGET_CWD" > "$ROLLOUT_PATH"
+printf '{"type":"event_msg","payload":{"message":"mock-codex-ready"}}\n' >> "$ROLLOUT_PATH"
+printf '{"type":"session_meta","payload":{"id":"%s","cwd":"%s"}}\n' "$CHILD_THREAD_ID" "$TARGET_CWD" > "$CHILD_ROLLOUT_PATH"
+printf '{"type":"event_msg","payload":{"type":"task_started"}}\n' >> "$CHILD_ROLLOUT_PATH"
+printf '{"type":"response_item","payload":{"type":"function_call","call_id":"call-child-shell","name":"exec_command","arguments":"{\"cmd\":\"echo child\"}"}}\n' >> "$CHILD_ROLLOUT_PATH"
+printf '{"type":"response_item","payload":{"type":"function_call_output","call_id":"call-child-shell","output":"child"}}\n' >> "$CHILD_ROLLOUT_PATH"
+printf '{"type":"event_msg","payload":{"type":"task_complete"}}\n' >> "$CHILD_ROLLOUT_PATH"
+
+sqlite3 "$DB_PATH" <<SQL
+create table if not exists threads (
+  id text primary key,
+  rollout_path text not null,
+  cwd text not null,
+  created_at_ms integer,
+  updated_at_ms integer,
+  archived integer default 0,
+  agent_nickname text,
+  agent_role text
+);
+insert or replace into threads (
+  id,
+  rollout_path,
+  cwd,
+  created_at_ms,
+  updated_at_ms,
+  archived,
+  agent_nickname,
+  agent_role
+) values (
+  '$(printf "%s" "$THREAD_ID" | sed "s/'/''/g")',
+  '$(printf "%s" "$ROLLOUT_PATH" | sed "s/'/''/g")',
+  '$(printf "%s" "$TARGET_CWD" | sed "s/'/''/g")',
+  ${NOW_MS},
+  ${NOW_MS},
+  0,
+  '',
+  ''
+);
+insert or replace into threads (
+  id,
+  rollout_path,
+  cwd,
+  created_at_ms,
+  updated_at_ms,
+  archived,
+  agent_nickname,
+  agent_role
+) values (
+  '$(printf "%s" "$CHILD_THREAD_ID" | sed "s/'/''/g")',
+  '$(printf "%s" "$CHILD_ROLLOUT_PATH" | sed "s/'/''/g")',
+  '$(printf "%s" "$TARGET_CWD" | sed "s/'/''/g")',
+  ${NOW_MS},
+  ${NOW_MS},
+  0,
+  'Curie',
+  'worker'
+);
+SQL
+
+printf '{"type":"event_msg","payload":{"type":"collab_agent_spawn_end","call_id":"call-spawn-child","sender_thread_id":"%s","new_thread_id":"%s","new_agent_nickname":"Curie","new_agent_role":"worker","status":"pending_init"}}\n' "$THREAD_ID" "$CHILD_THREAD_ID" >> "$ROLLOUT_PATH"
+
+# Stay alive so the VS Code terminal doesn't immediately close.
+sleep 30 &
+SLEEP_PID=$!
+
+# Clean exit on SIGTERM/SIGINT.
+trap 'kill $SLEEP_PID 2>/dev/null; exit 0' SIGTERM SIGINT
+
+wait $SLEEP_PID || true

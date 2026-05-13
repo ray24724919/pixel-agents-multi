@@ -18,6 +18,12 @@ export interface SubagentCharacter {
   label: string;
 }
 
+export interface AgentEventTrace {
+  event: string;
+  at: number;
+  detail?: string;
+}
+
 interface FurnitureAsset {
   id: string;
   name: string;
@@ -51,12 +57,14 @@ interface ExtensionMessageState {
   selectedAgent: number | null;
   agentTools: Record<number, ToolActivity[]>;
   agentStatuses: Record<number, string>;
+  agentEventTrace: Record<number, AgentEventTrace[]>;
   subagentTools: Record<number, Record<string, ToolActivity[]>>;
   subagentCharacters: SubagentCharacter[];
   layoutReady: boolean;
   layoutWasReset: boolean;
   loadedAssets?: { catalog: FurnitureAsset[]; sprites: Record<string, string[][]> };
   workspaceFolders: WorkspaceFolder[];
+  codexProjects: WorkspaceFolder[];
   externalAssetDirectories: string[];
   lastSeenVersion: string;
   extensionVersion: string;
@@ -86,6 +94,7 @@ export function useExtensionMessages(
   const [selectedAgent, setSelectedAgent] = useState<number | null>(null);
   const [agentTools, setAgentTools] = useState<Record<number, ToolActivity[]>>({});
   const [agentStatuses, setAgentStatuses] = useState<Record<number, string>>({});
+  const [agentEventTrace, setAgentEventTrace] = useState<Record<number, AgentEventTrace[]>>({});
   const [subagentTools, setSubagentTools] = useState<
     Record<number, Record<string, ToolActivity[]>>
   >({});
@@ -96,6 +105,7 @@ export function useExtensionMessages(
     { catalog: FurnitureAsset[]; sprites: Record<string, string[][]> } | undefined
   >();
   const [workspaceFolders, setWorkspaceFolders] = useState<WorkspaceFolder[]>([]);
+  const [codexProjects, setCodexProjects] = useState<WorkspaceFolder[]>([]);
   const [externalAssetDirectories, setExternalAssetDirectories] = useState<string[]>([]);
   const [lastSeenVersion, setLastSeenVersion] = useState('');
   const [extensionVersion, setExtensionVersion] = useState('');
@@ -115,11 +125,23 @@ export function useExtensionMessages(
       hueShift?: number;
       seatId?: string;
       folderName?: string;
+      agentName?: string;
+      providerId?: string;
+      initialActive?: boolean;
     }> = [];
 
     const handler = (e: MessageEvent) => {
       const msg = e.data;
       const os = getOfficeState();
+      const traceAgentEvent = (id: number, eventName: string, detail?: string) => {
+        setAgentEventTrace((prev) => {
+          const list = prev[id] || [];
+          return {
+            ...prev,
+            [id]: [{ event: eventName, detail, at: Date.now() }, ...list].slice(0, 8),
+          };
+        });
+      };
 
       if (msg.type === 'layoutLoaded') {
         // Skip external layout updates while editor has unsaved changes
@@ -138,7 +160,12 @@ export function useExtensionMessages(
         }
         // Add buffered agents now that layout (and seats) are correct
         for (const p of pendingAgents) {
-          os.addAgent(p.id, p.palette, p.hueShift, p.seatId, true, p.folderName);
+          os.addAgent(p.id, p.palette, p.hueShift, p.seatId, true, p.folderName, p.initialActive);
+          const ch = os.characters.get(p.id);
+          if (ch) {
+            ch.agentName = p.agentName;
+            ch.providerId = p.providerId;
+          }
         }
         pendingAgents = [];
         layoutReadyRef.current = true;
@@ -152,6 +179,8 @@ export function useExtensionMessages(
       } else if (msg.type === 'agentCreated') {
         const id = msg.id as number;
         const folderName = msg.folderName as string | undefined;
+        const agentName = msg.agentName as string | undefined;
+        const providerId = msg.providerId as string | undefined;
         const isTeammate = msg.isTeammate as boolean | undefined;
         const teammateName = msg.teammateName as string | undefined;
         const teammateParentId = msg.parentAgentId as number | undefined;
@@ -177,6 +206,11 @@ export function useExtensionMessages(
           }
         } else {
           os.addAgent(id, undefined, undefined, undefined, undefined, folderName);
+          const ch = os.characters.get(id);
+          if (ch) {
+            ch.agentName = agentName;
+            ch.providerId = providerId;
+          }
         }
         saveAgentSeats(os);
       } else if (msg.type === 'agentClosed') {
@@ -205,6 +239,14 @@ export function useExtensionMessages(
         os.removeAllSubagents(id);
         setSubagentCharacters((prev) => prev.filter((s) => s.parentAgentId !== id));
         os.removeAgent(id);
+      } else if (msg.type === 'agentMetadata') {
+        const id = msg.id as number;
+        const ch = os.characters.get(id);
+        if (ch) {
+          ch.folderName = msg.folderName as string | undefined;
+          ch.agentName = msg.agentName as string | undefined;
+          ch.providerId = msg.providerId as string | undefined;
+        }
       } else if (msg.type === 'existingAgents') {
         const incoming = msg.agents as number[];
         const meta = (msg.agentMeta || {}) as Record<
@@ -212,15 +254,26 @@ export function useExtensionMessages(
           { palette?: number; hueShift?: number; seatId?: string }
         >;
         const folderNames = (msg.folderNames || {}) as Record<number, string>;
+        const agentNames = (msg.agentNames || {}) as Record<number, string>;
+        const providerIds = (msg.providerIds || {}) as Record<number, string>;
         // Buffer agents — they'll be added in layoutLoaded after seats are built
         for (const id of incoming) {
           const m = meta[id];
+          const ch = os.characters.get(id);
+          if (ch) {
+            ch.folderName = folderNames[id];
+            ch.agentName = agentNames[id];
+            ch.providerId = providerIds[id];
+          }
           pendingAgents.push({
             id,
             palette: m?.palette,
             hueShift: m?.hueShift,
             seatId: m?.seatId,
             folderName: folderNames[id],
+            agentName: agentNames[id],
+            providerId: providerIds[id],
+            initialActive: false,
           });
         }
         setAgents((prev) => {
@@ -237,6 +290,7 @@ export function useExtensionMessages(
         const id = msg.id as number;
         const toolId = msg.toolId as string;
         const status = msg.status as string;
+        traceAgentEvent(id, 'agentToolStart', status);
         const permissionActive = msg.permissionActive as boolean | undefined;
         setAgentTools((prev) => {
           const list = prev[id] || [];
@@ -281,6 +335,7 @@ export function useExtensionMessages(
       } else if (msg.type === 'agentToolDone') {
         const id = msg.id as number;
         const toolId = msg.toolId as string;
+        traceAgentEvent(id, 'agentToolDone', toolId);
         setAgentTools((prev) => {
           const list = prev[id];
           if (!list) return prev;
@@ -291,6 +346,7 @@ export function useExtensionMessages(
         });
       } else if (msg.type === 'agentToolsClear') {
         const id = msg.id as number;
+        traceAgentEvent(id, 'agentToolsClear');
         setAgentTools((prev) => {
           if (!(id in prev)) return prev;
           const next = { ...prev };
@@ -314,6 +370,7 @@ export function useExtensionMessages(
           setSubagentCharacters((prev) => prev.filter((s) => s.parentAgentId !== id));
         }
         os.setAgentTool(id, null);
+        os.setAgentActive(id, false);
         os.clearPermissionBubble(id);
       } else if (msg.type === 'agentSelected') {
         const id = msg.id as number;
@@ -321,6 +378,7 @@ export function useExtensionMessages(
       } else if (msg.type === 'agentStatus') {
         const id = msg.id as number;
         const status = msg.status as string;
+        traceAgentEvent(id, 'agentStatus', status);
         setAgentStatuses((prev) => {
           if (status === 'active') {
             if (!(id in prev)) return prev;
@@ -337,6 +395,7 @@ export function useExtensionMessages(
         }
       } else if (msg.type === 'agentToolPermission') {
         const id = msg.id as number;
+        traceAgentEvent(id, 'agentToolPermission');
         setAgentTools((prev) => {
           const list = prev[id];
           if (!list) return prev;
@@ -357,6 +416,7 @@ export function useExtensionMessages(
         }
       } else if (msg.type === 'agentToolPermissionClear') {
         const id = msg.id as number;
+        traceAgentEvent(id, 'agentToolPermissionClear');
         setAgentTools((prev) => {
           const list = prev[id];
           if (!list) return prev;
@@ -379,6 +439,7 @@ export function useExtensionMessages(
         const parentToolId = msg.parentToolId as string;
         const toolId = msg.toolId as string;
         const status = msg.status as string;
+        traceAgentEvent(id, 'subagentToolStart', status);
         setSubagentTools((prev) => {
           const agentSubs = prev[id] || {};
           const list = agentSubs[parentToolId] || [];
@@ -418,6 +479,7 @@ export function useExtensionMessages(
       } else if (msg.type === 'subagentClear') {
         const id = msg.id as number;
         const parentToolId = msg.parentToolId as string;
+        traceAgentEvent(id, 'subagentClear', parentToolId);
         setSubagentTools((prev) => {
           const agentSubs = prev[id];
           if (!agentSubs || !(parentToolId in agentSubs)) return prev;
@@ -454,6 +516,9 @@ export function useExtensionMessages(
       } else if (msg.type === 'workspaceFolders') {
         const folders = msg.folders as WorkspaceFolder[];
         setWorkspaceFolders(folders);
+      } else if (msg.type === 'codexProjects') {
+        const projects = msg.projects as WorkspaceFolder[];
+        setCodexProjects(projects);
       } else if (msg.type === 'settingsLoaded') {
         const soundOn = msg.soundEnabled as boolean;
         setSoundEnabled(soundOn);
@@ -505,6 +570,7 @@ export function useExtensionMessages(
         );
       } else if (msg.type === 'agentTokenUsage') {
         const id = msg.id as number;
+        traceAgentEvent(id, 'agentTokenUsage', `${msg.inputTokens ?? 0}/${msg.outputTokens ?? 0}`);
         os.setAgentTokens(id, msg.inputTokens as number, msg.outputTokens as number);
       }
     };
@@ -519,12 +585,14 @@ export function useExtensionMessages(
     selectedAgent,
     agentTools,
     agentStatuses,
+    agentEventTrace,
     subagentTools,
     subagentCharacters,
     layoutReady,
     layoutWasReset,
     loadedAssets,
     workspaceFolders,
+    codexProjects,
     externalAssetDirectories,
     lastSeenVersion,
     extensionVersion,

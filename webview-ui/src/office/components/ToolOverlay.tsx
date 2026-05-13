@@ -157,7 +157,8 @@ export function ToolOverlay({
         const teamRoleLabel = ch.isTeamLead ? 'LEAD' : ch.agentName || null;
         const totalTokens = ch.inputTokens + ch.outputTokens;
         const tokenRatio = totalTokens / MAX_CONTEXT_TOKENS;
-        const hasExtraLines = !!(ch.folderName || teamRoleLabel);
+        const providerLabel = providerDisplayName(ch.providerId);
+        const hasExtraLines = !!(ch.folderName || teamRoleLabel || providerLabel);
 
         return (
           <div
@@ -200,9 +201,9 @@ export function ToolOverlay({
                 >
                   {activityText}
                 </span>
-                {ch.folderName && (
+                {(providerLabel || ch.folderName) && (
                   <span className="text-2xs leading-none overflow-hidden text-ellipsis block">
-                    {ch.folderName}
+                    {[providerLabel, ch.folderName].filter(Boolean).join(' · ')}
                   </span>
                 )}
               </div>
@@ -245,4 +246,10 @@ export function ToolOverlay({
       })}
     </>
   );
+}
+
+function providerDisplayName(providerId?: string): string {
+  if (providerId === 'codex') return 'Codex';
+  if (providerId === 'claude' || !providerId) return 'Claude';
+  return providerId;
 }

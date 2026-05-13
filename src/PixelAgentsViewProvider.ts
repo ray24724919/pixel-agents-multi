@@ -3,8 +3,15 @@ import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 
+import { GLOBAL_SCAN_ACTIVE_MAX_AGE_MS } from '../server/src/constants.js';
 import type { HookEvent } from '../server/src/hookEventHandler.js';
 import { HookEventHandler } from '../server/src/hookEventHandler.js';
+import {
+  archiveCodexThread,
+  type CodexThread,
+  findCodexThreadById,
+  findRecentCodexThreads,
+} from '../server/src/providers/file/codex/codex.js';
 import {
   installHooks,
   uninstallHooks,
@@ -52,17 +59,27 @@ import {
   dismissedJsonlFiles,
   ensureProjectScan,
   isTrackedProjectDir,
+  readClaudeSessionMetadata,
+  readNewLines,
   reassignAgentToFile,
+  scanClaudeCoworkSessions,
+  scanClaudeRecentSessions,
   scanForTeammateFiles,
   seededMtimes,
   setTeammateRemovalCallback,
   setTeamProvider,
   startExternalSessionScanning,
+  startFileWatching,
   startStaleExternalAgentCheck,
+  syncClaudeAgentMetadata,
 } from './fileWatcher.js';
 import type { LayoutWatcher } from './layoutPersistence.js';
 import { readLayoutFromFile, watchLayoutFile, writeLayoutToFile } from './layoutPersistence.js';
-import { setHookProvider } from './transcriptParser.js';
+import {
+  type CodexSubagentSpawn,
+  setCodexSubagentSpawnHandler,
+  setHookProvider,
+} from './transcriptParser.js';
 import type { AgentState } from './types.js';
 
 export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
@@ -85,6 +102,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 
   // External session detection (VS Code extension panel, etc.)
   externalScanTimer: ReturnType<typeof setInterval> | null = null;
+  codexExternalScanTimer: ReturnType<typeof setInterval> | null = null;
   staleCheckTimer: ReturnType<typeof setInterval> | null = null;
 
   // Global session scanning (opt-in "Watch All Sessions" toggle)
@@ -139,6 +157,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       setTeamProvider(claudeProvider.team);
     }
     setHookProvider(claudeProvider);
+    setCodexSubagentSpawnHandler((event) => this.adoptCodexSubagent(event));
     setTeammateRemovalCallback((id) => this.removeTeammate(id, 'team-config'));
 
     this.hookEventHandler.setLifecycleCallbacks({
@@ -253,7 +272,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         // Server always starts regardless of hooks-enabled state.
         // It's the foundation for WebSocket transport and health monitoring.
         // Only hook installation/script-copy is gated by the toggle.
-        const hooksEnabled = this.context.globalState.get<boolean>(GLOBAL_KEY_HOOKS_ENABLED, true);
+        const hooksEnabled = this.context.globalState.get<boolean>(GLOBAL_KEY_HOOKS_ENABLED, false);
         this.hooksEnabled.current = hooksEnabled;
         if (hooksEnabled) {
           installHooks();
@@ -264,6 +283,383 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       .catch((e) => {
         console.error(`[Pixel Agents] Failed to start server: ${e}`);
       });
+  }
+
+  private adoptCodexSubagent(event: CodexSubagentSpawn, attempt = 0): void {
+    const parentAgent = this.agents.get(event.parentAgentId);
+    if (!parentAgent || parentAgent.providerId !== 'codex') return;
+
+    for (const agent of this.agents.values()) {
+      if (agent.sessionId === event.childThreadId) return;
+    }
+
+    const childThread = findCodexThreadById(event.childThreadId);
+    if (!childThread) {
+      if (attempt < 20) {
+        setTimeout(() => this.adoptCodexSubagent(event, attempt + 1), 500);
+      }
+      return;
+    }
+    if (this.knownJsonlFiles.has(childThread.rolloutPath)) return;
+
+    const id = this.nextAgentId.current++;
+    const teammateName =
+      event.nickname ?? childThread.agentNickname ?? event.role ?? childThread.agentRole;
+    const agent: AgentState = {
+      id,
+      sessionId: childThread.id,
+      isExternal: true,
+      projectDir: childThread.cwd || parentAgent.projectDir,
+      jsonlFile: childThread.rolloutPath,
+      fileOffset: 0,
+      lineBuffer: '',
+      activeToolIds: new Set(),
+      activeToolStatuses: new Map(),
+      activeToolNames: new Map(),
+      activeSubagentToolIds: new Map(),
+      activeSubagentToolNames: new Map(),
+      backgroundAgentToolIds: new Set(),
+      isWaiting: false,
+      permissionSent: false,
+      hadToolsInTurn: false,
+      folderName: parentAgent.folderName,
+      lastDataAt: Date.now(),
+      linesProcessed: 0,
+      seenUnknownRecordTypes: new Set(),
+      hookDelivered: false,
+      providerId: 'codex',
+      inputTokens: 0,
+      outputTokens: 0,
+      teamName: parentAgent.teamName ?? 'Codex',
+      agentName: teammateName,
+      leadAgentId: parentAgent.id,
+      teamUsesTmux: false,
+    };
+
+    this.agents.set(id, agent);
+    this.knownJsonlFiles.add(childThread.rolloutPath);
+    this.persistAgents();
+
+    this.webview?.postMessage({
+      type: 'agentCreated',
+      id,
+      isTeammate: true,
+      teammateName,
+      parentAgentId: parentAgent.id,
+      teamName: agent.teamName,
+      providerId: 'codex',
+    });
+
+    startFileWatching(
+      id,
+      childThread.rolloutPath,
+      this.agents,
+      this.fileWatchers,
+      this.pollingTimers,
+      this.waitingTimers,
+      this.permissionTimers,
+      this.webview,
+    );
+    readNewLines(id, this.agents, this.waitingTimers, this.permissionTimers, this.webview);
+  }
+
+  private adoptCodexExternalThread(thread: CodexThread, notifyWebview = true): AgentState | null {
+    for (const agent of this.agents.values()) {
+      if (agent.sessionId === thread.id || agent.jsonlFile === thread.rolloutPath) {
+        this.syncCodexThreadMetadata(agent, thread);
+        return null;
+      }
+    }
+    if (this.knownJsonlFiles.has(thread.rolloutPath)) return null;
+
+    let fileOffset = 0;
+    try {
+      fileOffset = fs.statSync(thread.rolloutPath).size;
+    } catch {
+      /* start at beginning if stat fails */
+    }
+
+    const id = this.nextAgentId.current++;
+    const projectName = thread.cwd ? path.basename(thread.cwd) : undefined;
+    const agentName = thread.title ?? thread.agentNickname ?? thread.agentRole ?? 'Codex';
+    const agent: AgentState = {
+      id,
+      sessionId: thread.id,
+      terminalRef: undefined,
+      isExternal: true,
+      providerId: 'codex',
+      projectDir: thread.cwd,
+      jsonlFile: thread.rolloutPath,
+      fileOffset,
+      lineBuffer: '',
+      activeToolIds: new Set(),
+      activeToolStatuses: new Map(),
+      activeToolNames: new Map(),
+      activeSubagentToolIds: new Map(),
+      activeSubagentToolNames: new Map(),
+      backgroundAgentToolIds: new Set(),
+      isWaiting: false,
+      permissionSent: false,
+      hadToolsInTurn: false,
+      folderName: projectName,
+      projectName,
+      lastDataAt: Date.now(),
+      linesProcessed: 0,
+      seenUnknownRecordTypes: new Set(),
+      hookDelivered: false,
+      inputTokens: thread.tokensUsed,
+      outputTokens: 0,
+      agentName,
+    };
+
+    this.agents.set(id, agent);
+    this.knownJsonlFiles.add(thread.rolloutPath);
+    this.persistAgents();
+
+    if (notifyWebview) {
+      this.webview?.postMessage({
+        type: 'agentCreated',
+        id,
+        isExternal: true,
+        folderName: projectName,
+        agentName,
+        providerId: 'codex',
+      });
+    }
+
+    startFileWatching(
+      id,
+      thread.rolloutPath,
+      this.agents,
+      this.fileWatchers,
+      this.pollingTimers,
+      this.waitingTimers,
+      this.permissionTimers,
+      this.webview,
+    );
+    return agent;
+  }
+
+  private syncCodexThreadMetadata(agent: AgentState, thread: CodexThread): void {
+    const agentName = thread.title ?? thread.agentNickname ?? thread.agentRole ?? agent.agentName;
+    const projectName = thread.cwd ? path.basename(thread.cwd) : agent.projectName;
+    agent.projectDir = thread.cwd;
+    agent.agentName = agentName;
+    agent.projectName = projectName;
+    agent.folderName = projectName;
+    agent.inputTokens = thread.tokensUsed;
+    agent.outputTokens = 0;
+    this.webview?.postMessage({
+      type: 'agentTeamInfo',
+      id: agent.id,
+      agentName,
+      teamName: agent.teamName,
+      isTeamLead: agent.isTeamLead,
+      leadAgentId: agent.leadAgentId,
+      teamUsesTmux: agent.teamUsesTmux,
+    });
+    this.webview?.postMessage({
+      type: 'agentTokenUsage',
+      id: agent.id,
+      inputTokens: agent.inputTokens,
+      outputTokens: agent.outputTokens,
+    });
+  }
+
+  private scanCodexWorkspaceThreads(notifyWebview = true): void {
+    const threads = findRecentCodexThreads(50);
+    const topLevelThreadIds = new Set(threads.map((thread) => thread.id));
+    for (const thread of threads) {
+      const adopted = this.adoptCodexExternalThread(thread, notifyWebview);
+      if (adopted) {
+        console.log(
+          `[Pixel Agents] Codex: adopted external thread ${thread.id.slice(0, 8)} (${path.basename(thread.cwd)}/${path.basename(thread.rolloutPath)})`,
+        );
+      }
+    }
+
+    this.removeStaleCodexAgents(topLevelThreadIds);
+    this.webview?.postMessage({
+      type: 'codexProjects',
+      projects: this.getRecentCodexProjects(threads),
+    });
+  }
+
+  private scanClaudeWorkspaceThreads(includeInactive = false): void {
+    const workspaceRoots = this.getWorkspaceRoots();
+    syncClaudeAgentMetadata(this.agents, this.webview);
+    if (includeInactive) {
+      this.removeClaudeAgentsOutsideWorkspace(workspaceRoots);
+      this.removeInactiveClaudeExternalAgents();
+    }
+    scanClaudeCoworkSessions(
+      workspaceRoots,
+      this.knownJsonlFiles,
+      this.nextAgentId,
+      this.agents,
+      this.fileWatchers,
+      this.pollingTimers,
+      this.waitingTimers,
+      this.permissionTimers,
+      this.webview,
+      this.persistAgents,
+    );
+    scanClaudeRecentSessions(
+      this.knownJsonlFiles,
+      this.nextAgentId,
+      this.agents,
+      this.fileWatchers,
+      this.pollingTimers,
+      this.waitingTimers,
+      this.permissionTimers,
+      this.webview,
+      this.persistAgents,
+      {
+        includeInactive: false,
+        includeTrackedDirs: true,
+        cwdRoots: workspaceRoots,
+      },
+    );
+  }
+
+  private getWorkspaceRoots(): string[] {
+    return (vscode.workspace.workspaceFolders ?? []).map((folder) => folder.uri.fsPath);
+  }
+
+  private removeClaudeAgentsOutsideWorkspace(workspaceRoots: string[]): void {
+    if (workspaceRoots.length === 0) return;
+    for (const [id, agent] of [...this.agents]) {
+      if ((agent.providerId ?? 'claude') !== 'claude' || !agent.isExternal || !agent.jsonlFile) {
+        continue;
+      }
+      if (agent.jsonlFile.includes('local-agent-mode-sessions')) continue;
+      const metadata = readClaudeSessionMetadata(
+        agent.jsonlFile,
+        agent.projectDir,
+        agent.projectName ?? agent.folderName,
+      );
+      if (this.isCwdInWorkspace(metadata.cwd, workspaceRoots)) continue;
+
+      console.log(`[Pixel Agents] Claude: removing out-of-workspace session ${agent.sessionId}`);
+      this.removeTrackedAgent(id, true);
+    }
+  }
+
+  private removeInactiveClaudeExternalAgents(): void {
+    const now = Date.now();
+    for (const [id, agent] of [...this.agents]) {
+      if (
+        (agent.providerId ?? 'claude') !== 'claude' ||
+        !agent.isExternal ||
+        agent.terminalRef ||
+        !agent.jsonlFile
+      ) {
+        continue;
+      }
+      if (agent.jsonlFile.includes('local-agent-mode-sessions')) continue;
+      try {
+        const stat = fs.statSync(agent.jsonlFile);
+        if (now - stat.mtimeMs <= GLOBAL_SCAN_ACTIVE_MAX_AGE_MS) continue;
+      } catch {
+        /* missing transcript is stale */
+      }
+
+      console.log(`[Pixel Agents] Claude: removing inactive CLI session ${agent.sessionId}`);
+      this.removeTrackedAgent(id, true);
+    }
+  }
+
+  private removeTrackedAgent(id: number, dismissTranscript: boolean): void {
+    const agent = this.agents.get(id);
+    if (!agent) return;
+    if (dismissTranscript && agent.jsonlFile) {
+      this.knownJsonlFiles.delete(agent.jsonlFile);
+      dismissedJsonlFiles.set(agent.jsonlFile, Date.now());
+    }
+    this.unregisterAgentHook(agent);
+    removeAgent(
+      id,
+      this.agents,
+      this.fileWatchers,
+      this.pollingTimers,
+      this.waitingTimers,
+      this.permissionTimers,
+      this.jsonlPollTimers,
+      this.persistAgents,
+    );
+    this.webview?.postMessage({ type: 'agentClosed', id });
+  }
+
+  private closeAgent(id: number): void {
+    const agent = this.agents.get(id);
+    if (!agent) return;
+
+    if (agent.isTeamLead) {
+      this.removeTeammates(id);
+    }
+
+    if (agent.terminalRef) {
+      agent.terminalRef.dispose();
+      return;
+    }
+
+    if (agent.providerId === 'codex') {
+      archiveCodexThread(agent.sessionId);
+    }
+
+    this.removeTrackedAgent(id, true);
+  }
+
+  private isCwdInWorkspace(cwd: string | undefined, workspaceRoots: string[]): boolean {
+    if (!cwd) return false;
+    const resolvedCwd = path.resolve(cwd);
+    return workspaceRoots.some((root) => {
+      const resolvedRoot = path.resolve(root);
+      return resolvedCwd === resolvedRoot || resolvedCwd.startsWith(`${resolvedRoot}${path.sep}`);
+    });
+  }
+
+  private getRecentCodexProjects(threads = findRecentCodexThreads(50)): Array<{
+    name: string;
+    path: string;
+  }> {
+    const projects = new Map<string, { name: string; path: string }>();
+    for (const folder of vscode.workspace.workspaceFolders ?? []) {
+      projects.set(folder.uri.fsPath, { name: folder.name, path: folder.uri.fsPath });
+    }
+    for (const thread of threads) {
+      if (!thread.cwd || projects.has(thread.cwd)) continue;
+      projects.set(thread.cwd, { name: path.basename(thread.cwd), path: thread.cwd });
+    }
+    return [...projects.values()];
+  }
+
+  private removeStaleCodexAgents(topLevelThreadIds: Set<string>): void {
+    for (const [id, agent] of [...this.agents]) {
+      if (agent.providerId !== 'codex' || !agent.jsonlFile) continue;
+      const isTopLevelExternal = agent.isExternal && agent.leadAgentId === undefined;
+      if (
+        fs.existsSync(agent.jsonlFile) &&
+        findCodexThreadById(agent.sessionId) &&
+        (!isTopLevelExternal || topLevelThreadIds.has(agent.sessionId))
+      ) {
+        continue;
+      }
+
+      console.log(`[Pixel Agents] Codex: removing stale thread ${agent.sessionId}`);
+      this.knownJsonlFiles.delete(agent.jsonlFile);
+      removeAgent(
+        id,
+        this.agents,
+        this.fileWatchers,
+        this.pollingTimers,
+        this.waitingTimers,
+        this.permissionTimers,
+        this.jsonlPollTimers,
+        this.persistAgents,
+      );
+      this.webview?.postMessage({ type: 'agentClosed', id });
+    }
   }
 
   /** Remove all teammates of a lead agent */
@@ -334,7 +730,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     webviewView.webview.html = getWebviewContent(webviewView.webview, this.extensionUri);
 
     webviewView.webview.onDidReceiveMessage(async (message) => {
-      if (message.type === 'openClaude') {
+      if (message.type === 'openAgent' || message.type === 'openClaude') {
         const prevAgentIds = new Set(this.agents.keys());
         await launchNewTerminal(
           this.nextAgentId,
@@ -352,6 +748,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
           this.persistAgents,
           message.folderPath as string | undefined,
           message.bypassPermissions as boolean | undefined,
+          message.prompt as string | undefined,
         );
         // Register newly created agent(s) with hook handler
         for (const [id, agent] of this.agents) {
@@ -373,31 +770,16 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
           }
         }
       } else if (message.type === 'closeAgent') {
-        const agent = this.agents.get(message.id);
-        if (agent) {
-          if (agent.terminalRef) {
-            agent.terminalRef.dispose();
-          } else {
-            // External agent — remove from tracking and dismiss the file
-            // so the external scanner doesn't re-adopt it
-            dismissedJsonlFiles.set(agent.jsonlFile, Date.now());
-            removeAgent(
-              message.id,
-              this.agents,
-              this.fileWatchers,
-              this.pollingTimers,
-              this.waitingTimers,
-              this.permissionTimers,
-              this.jsonlPollTimers,
-              this.persistAgents,
-            );
-            webviewView.webview.postMessage({ type: 'agentClosed', id: message.id });
-          }
-        }
+        this.closeAgent(message.id as number);
       } else if (message.type === 'saveAgentSeats') {
         // Store seat assignments in a separate key (never touched by persistAgents)
         console.log(`[Pixel Agents] State: saveAgentSeats:`, JSON.stringify(message.seats));
         this.context.workspaceState.update(WORKSPACE_KEY_AGENT_SEATS, message.seats);
+      } else if (message.type === 'refreshAgents') {
+        this.scanClaudeWorkspaceThreads(true);
+        this.scanCodexWorkspaceThreads(true);
+        sendExistingAgents(this.agents, this.context, this.webview);
+        sendCurrentAgentStatuses(this.agents, this.webview);
       } else if (message.type === 'saveLayout') {
         this.layoutWatcher?.markOwnWrite();
         writeLayoutToFile(message.layout as Record<string, unknown>);
@@ -435,6 +817,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
           // Remove all external agents not from the current workspace folders
           const workspaceDirs = new Set<string>();
           for (const folder of vscode.workspace.workspaceFolders ?? []) {
+            workspaceDirs.add(folder.uri.fsPath);
             const dir = getProjectDirPath(folder.uri.fsPath);
             if (dir) workspaceDirs.add(dir);
           }
@@ -502,7 +885,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
           false,
         );
         this.watchAllSessions.current = watchAllSessions;
-        const hooksEnabled = this.context.globalState.get<boolean>(GLOBAL_KEY_HOOKS_ENABLED, true);
+        const hooksEnabled = this.context.globalState.get<boolean>(GLOBAL_KEY_HOOKS_ENABLED, false);
         const hooksInfoShown = this.context.globalState.get<boolean>(
           GLOBAL_KEY_HOOKS_INFO_SHOWN,
           false,
@@ -528,6 +911,10 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
             folders: wsFolders.map((f) => ({ name: f.name, path: f.uri.fsPath })),
           });
         }
+        this.webview?.postMessage({
+          type: 'codexProjects',
+          projects: this.getRecentCodexProjects(),
+        });
 
         // Ensure project scan runs even with no restored agents (to adopt external terminals)
         const projectDir = getProjectDirPath();
@@ -551,6 +938,14 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
           (agent) => this.registerAgentHook(agent),
           this.hooksEnabled,
         );
+
+        this.scanClaudeWorkspaceThreads();
+        this.scanCodexWorkspaceThreads(false);
+        if (!this.codexExternalScanTimer) {
+          this.codexExternalScanTimer = setInterval(() => {
+            this.scanCodexWorkspaceThreads(true);
+          }, 3000);
+        }
 
         // Start external session scanning (detects VS Code extension panel sessions)
         if (!this.externalScanTimer) {
@@ -718,9 +1113,9 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         }
         this.webview?.postMessage({ type: 'agentDiagnostics', agents: diagnostics });
       } else if (message.type === 'openSessionsFolder') {
-        const projectDir = getProjectDirPath();
-        if (projectDir && fs.existsSync(projectDir)) {
-          vscode.env.openExternal(vscode.Uri.file(projectDir));
+        const sessionsDir = path.join(os.homedir(), '.codex', 'sessions');
+        if (fs.existsSync(sessionsDir)) {
+          vscode.env.openExternal(vscode.Uri.file(sessionsDir));
         }
       } else if (message.type === 'exportLayout') {
         const layout = readLayoutFromFile();

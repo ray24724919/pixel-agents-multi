@@ -472,6 +472,11 @@ function adoptTerminalForFile(
 ): void {
   const id = nextAgentIdRef.current++;
   const sessionId = path.basename(jsonlFile, '.jsonl');
+  const metadata = readClaudeSessionMetadata(
+    jsonlFile,
+    projectDir,
+    folderNameFromProjectDir(path.basename(projectDir)),
+  );
   // Skip to end of file -- adopted terminals show live activity only, not replay history
   let fileOffset = 0;
   try {
@@ -504,6 +509,10 @@ function adoptTerminalForFile(
     hookDelivered: false,
     inputTokens: 0,
     outputTokens: 0,
+    providerId: 'claude',
+    folderName: metadata.projectName,
+    projectName: metadata.projectName,
+    agentName: metadata.threadName,
   };
 
   agents.set(id, agent);
@@ -514,7 +523,13 @@ function adoptTerminalForFile(
   console.log(
     `[Pixel Agents] Watcher: Agent ${id} - adopted terminal "${terminal.name}" for ${path.basename(jsonlFile)}`,
   );
-  webview?.postMessage({ type: 'agentCreated', id });
+  webview?.postMessage({
+    type: 'agentCreated',
+    id,
+    folderName: metadata.projectName,
+    agentName: metadata.threadName,
+    providerId: 'claude',
+  });
 
   startFileWatching(
     id,
@@ -688,6 +703,7 @@ export function scanForTeammateFiles(
       seenUnknownRecordTypes: new Set(),
       inputTokens: 0,
       outputTokens: 0,
+      providerId: 'claude',
       // Agent Teams fields
       agentName: teammateName,
       leadAgentId: parentAgentId,
@@ -708,6 +724,7 @@ export function scanForTeammateFiles(
       teammateName,
       parentAgentId,
       teamName: parentAgent?.teamName,
+      providerId: 'claude',
     });
 
     onAgentCreated?.(agent);
@@ -900,6 +917,9 @@ export function adoptExternalSessionFromHook(
       linesProcessed: 0,
       seenUnknownRecordTypes: new Set(),
       folderName,
+      projectName: folderName,
+      providerId: 'claude',
+      agentName: 'Claude',
       inputTokens: 0,
       outputTokens: 0,
     };
@@ -910,7 +930,13 @@ export function adoptExternalSessionFromHook(
         `[Pixel Agents] Hook: Agent ${id} - detected hooks-only external session${folderName ? ` (${folderName})` : ''}`,
       );
     }
-    webview?.postMessage({ type: 'agentCreated', id, folderName });
+    webview?.postMessage({
+      type: 'agentCreated',
+      id,
+      folderName,
+      agentName: agent.agentName,
+      providerId: 'claude',
+    });
     onAgentCreated?.(agent);
   }
 }
@@ -927,8 +953,10 @@ function adoptExternalSession(
   webview: vscode.Webview | undefined,
   persistAgents: () => void,
   folderName?: string,
+  metadataOverride?: { sessionId?: string; projectName?: string; agentName?: string },
 ): void {
   const id = nextAgentIdRef.current++;
+  const metadata = readClaudeSessionMetadata(jsonlFile, projectDir, folderName);
   // Skip to end of file -- only show live activity going forward, not replay history
   let fileOffset = 0;
   try {
@@ -959,17 +987,28 @@ function adoptExternalSession(
     lastDataAt: Date.now(),
     linesProcessed: 0,
     seenUnknownRecordTypes: new Set(),
-    folderName,
+    folderName: metadataOverride?.projectName ?? metadata.projectName,
+    projectName: metadataOverride?.projectName ?? metadata.projectName,
+    providerId: 'claude',
+    agentName: metadataOverride?.agentName ?? metadata.threadName,
     inputTokens: 0,
     outputTokens: 0,
   };
+  if (metadataOverride?.sessionId) agent.sessionId = metadataOverride.sessionId;
 
   agents.set(id, agent);
   persistAgents();
 
   // Log is emitted by the caller (adoptExternalSessionFromHook or scanExternalDir)
   // to use the correct prefix (Hook: vs Watcher:).
-  webview?.postMessage({ type: 'agentCreated', id, isExternal: true, folderName });
+  webview?.postMessage({
+    type: 'agentCreated',
+    id,
+    isExternal: true,
+    folderName: metadataOverride?.projectName ?? metadata.projectName,
+    agentName: metadataOverride?.agentName ?? metadata.threadName,
+    providerId: 'claude',
+  });
 
   startFileWatching(
     id,
@@ -1024,21 +1063,133 @@ export function startExternalSessionScanning(
         );
       }
     }
-    // If "Watch All Sessions" is ON, also scan all global project dirs
-    if (watchAllSessionsRef?.current) {
-      scanGlobalProjectDirs(
-        knownJsonlFiles,
-        nextAgentIdRef,
-        agents,
-        fileWatchers,
-        pollingTimers,
-        waitingTimers,
-        permissionTimers,
-        webview,
-        persistAgents,
-      );
-    }
+    // Always scan recent global Claude sessions so Agent Center can show
+    // Claude and Codex side by side. The scanner only adopts recently-active
+    // files, so old history stays out of the room unless resumed.
+    scanGlobalProjectDirs(
+      knownJsonlFiles,
+      nextAgentIdRef,
+      agents,
+      fileWatchers,
+      pollingTimers,
+      waitingTimers,
+      permissionTimers,
+      webview,
+      persistAgents,
+    );
+    void watchAllSessionsRef;
   }, EXTERNAL_SCAN_INTERVAL_MS);
+}
+
+export function scanClaudeRecentSessions(
+  knownJsonlFiles: Set<string>,
+  nextAgentIdRef: { current: number },
+  agents: Map<number, AgentState>,
+  fileWatchers: Map<number, fs.FSWatcher>,
+  pollingTimers: Map<number, ReturnType<typeof setInterval>>,
+  waitingTimers: Map<number, ReturnType<typeof setTimeout>>,
+  permissionTimers: Map<number, ReturnType<typeof setTimeout>>,
+  webview: vscode.Webview | undefined,
+  persistAgents: () => void,
+  options: GlobalScanOptions = {},
+): void {
+  scanGlobalProjectDirs(
+    knownJsonlFiles,
+    nextAgentIdRef,
+    agents,
+    fileWatchers,
+    pollingTimers,
+    waitingTimers,
+    permissionTimers,
+    webview,
+    persistAgents,
+    options,
+  );
+}
+
+export function scanClaudeCoworkSessions(
+  workspaceRoots: string[],
+  knownJsonlFiles: Set<string>,
+  nextAgentIdRef: { current: number },
+  agents: Map<number, AgentState>,
+  fileWatchers: Map<number, fs.FSWatcher>,
+  pollingTimers: Map<number, ReturnType<typeof setInterval>>,
+  waitingTimers: Map<number, ReturnType<typeof setTimeout>>,
+  permissionTimers: Map<number, ReturnType<typeof setTimeout>>,
+  webview: vscode.Webview | undefined,
+  persistAgents: () => void,
+): void {
+  const root = path.join(
+    os.homedir(),
+    'Library',
+    'Application Support',
+    'Claude',
+    'local-agent-mode-sessions',
+  );
+  for (const metadataFile of findCoworkSessionMetadataFiles(root)) {
+    const metadata = readCoworkSessionMetadata(metadataFile);
+    if (!metadata) continue;
+    if (metadata.isArchived || metadata.isAgentCompleted) continue;
+    if (!metadata.auditPath || !fs.existsSync(metadata.auditPath)) continue;
+    if (
+      workspaceRoots.length > 0 &&
+      !metadata.userSelectedFolders.some((folder) => isCwdInRoots(folder, workspaceRoots))
+    ) {
+      continue;
+    }
+    if (knownJsonlFiles.has(metadata.auditPath)) continue;
+    if ([...agents.values()].some((agent) => agent.jsonlFile === metadata.auditPath)) continue;
+
+    knownJsonlFiles.add(metadata.auditPath);
+    console.log(
+      `[Pixel Agents] Claude Cowork: detected session ${metadata.sessionId} (${metadata.projectName})`,
+    );
+    adoptExternalSession(
+      metadata.auditPath,
+      metadata.projectDir,
+      nextAgentIdRef,
+      agents,
+      fileWatchers,
+      pollingTimers,
+      waitingTimers,
+      permissionTimers,
+      webview,
+      persistAgents,
+      metadata.projectName,
+      {
+        sessionId: metadata.sessionId,
+        projectName: metadata.projectName,
+        agentName: metadata.title,
+      },
+    );
+  }
+}
+
+export function syncClaudeAgentMetadata(
+  agents: Map<number, AgentState>,
+  webview: vscode.Webview | undefined,
+): void {
+  for (const agent of agents.values()) {
+    if ((agent.providerId ?? 'claude') !== 'claude' || !agent.jsonlFile || agent.teamName) {
+      continue;
+    }
+    if (agent.jsonlFile.includes('local-agent-mode-sessions')) continue;
+    const metadata = readClaudeSessionMetadata(
+      agent.jsonlFile,
+      agent.projectDir,
+      agent.projectName ?? agent.folderName,
+    );
+    agent.projectName = metadata.projectName;
+    agent.folderName = metadata.projectName;
+    agent.agentName = metadata.threadName;
+    webview?.postMessage({
+      type: 'agentMetadata',
+      id: agent.id,
+      folderName: metadata.projectName,
+      agentName: metadata.threadName,
+      providerId: 'claude',
+    });
+  }
 }
 
 /** Scan a single project dir for external sessions. */
@@ -1180,7 +1331,96 @@ function folderNameFromProjectDir(dirName: string): string {
   return parts[parts.length - 1] || dirName;
 }
 
+interface ClaudeSessionMetadata {
+  cwd?: string;
+  projectName?: string;
+  threadName: string;
+}
+
+export function readClaudeSessionMetadata(
+  jsonlFile: string,
+  projectDir: string,
+  fallbackProjectName?: string,
+): ClaudeSessionMetadata {
+  const fallbackName = fallbackProjectName ?? folderNameFromProjectDir(path.basename(projectDir));
+  let cwd: string | undefined;
+  let firstPrompt: string | undefined;
+
+  try {
+    const fd = fs.openSync(jsonlFile, 'r');
+    try {
+      const buf = Buffer.alloc(256 * 1024);
+      const bytesRead = fs.readSync(fd, buf, 0, buf.length, 0);
+      const lines = buf.toString('utf-8', 0, bytesRead).split('\n').slice(0, 200);
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let record: Record<string, unknown>;
+        try {
+          record = JSON.parse(line) as Record<string, unknown>;
+        } catch {
+          continue;
+        }
+
+        if (!cwd && typeof record.cwd === 'string') cwd = record.cwd;
+        if (!firstPrompt) firstPrompt = extractClaudePromptTitle(record);
+        if (cwd && firstPrompt) break;
+      }
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    /* best-effort metadata only */
+  }
+
+  return {
+    cwd,
+    projectName: cwd ? path.basename(cwd) : fallbackName,
+    threadName: firstPrompt ?? 'Claude',
+  };
+}
+
+function extractClaudePromptTitle(record: Record<string, unknown>): string | undefined {
+  if (record.type !== 'user' || record.isMeta === true) return undefined;
+  const message = record.message as { content?: unknown; role?: string } | undefined;
+  if (message?.role && message.role !== 'user') return undefined;
+  const text = claudeContentToText(message?.content);
+  if (!text) return undefined;
+  if (text.includes('<command-name>') || text.includes('<tool_use_id>')) return undefined;
+  return truncateTitle(
+    text
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim(),
+  );
+}
+
+function claudeContentToText(content: unknown): string | undefined {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return undefined;
+  const parts: string[] = [];
+  for (const block of content) {
+    if (!block || typeof block !== 'object') continue;
+    const typedBlock = block as { type?: unknown; text?: unknown };
+    if (typedBlock.type !== 'text' || typeof typedBlock.text !== 'string') continue;
+    parts.push(typedBlock.text);
+  }
+  return parts.length > 0 ? parts.join(' ') : undefined;
+}
+
+function truncateTitle(title: string): string {
+  const normalized = title.trim();
+  if (normalized.length <= 64) return normalized;
+  return `${normalized.slice(0, 61)}...`;
+}
+
 /** Scan ALL ~/.claude/projects/ directories for active sessions (global discovery). */
+interface GlobalScanOptions {
+  includeInactive?: boolean;
+  includeTrackedDirs?: boolean;
+  limit?: number;
+  cwdRoots?: string[];
+}
+
 function scanGlobalProjectDirs(
   knownJsonlFiles: Set<string>,
   nextAgentIdRef: { current: number },
@@ -1191,6 +1431,7 @@ function scanGlobalProjectDirs(
   permissionTimers: Map<number, ReturnType<typeof setTimeout>>,
   webview: vscode.Webview | undefined,
   persistAgents: () => void,
+  options: GlobalScanOptions = {},
 ): void {
   const projectsRoot = path.join(os.homedir(), '.claude', 'projects');
   let dirs: fs.Dirent[];
@@ -1201,10 +1442,12 @@ function scanGlobalProjectDirs(
   }
 
   const now = Date.now();
+  const candidates: Array<{ file: string; dirPath: string; folderName: string; mtimeMs: number }> =
+    [];
   for (const dir of dirs) {
     const dirPath = path.join(projectsRoot, dir.name);
     // Skip directories already tracked by workspace scanning
-    if (trackedProjectDirs.has(dirPath)) continue;
+    if (!options.includeTrackedDirs && trackedProjectDirs.has(dirPath)) continue;
 
     let files: string[];
     try {
@@ -1217,7 +1460,7 @@ function scanGlobalProjectDirs(
     }
 
     for (const file of files) {
-      if (knownJsonlFiles.has(file)) continue;
+      if (!options.includeInactive && knownJsonlFiles.has(file)) continue;
       let tracked = false;
       for (const agent of agents.values()) {
         if (agent.jsonlFile === file) {
@@ -1226,34 +1469,135 @@ function scanGlobalProjectDirs(
         }
       }
       if (tracked) continue;
-      // Activity filter: >3KB AND modified within 10 minutes
       try {
         const stat = fs.statSync(file);
         if (stat.size < GLOBAL_SCAN_ACTIVE_MIN_SIZE) continue;
-        if (now - stat.mtimeMs > GLOBAL_SCAN_ACTIVE_MAX_AGE_MS) continue;
+        if (!options.includeInactive && now - stat.mtimeMs > GLOBAL_SCAN_ACTIVE_MAX_AGE_MS) {
+          continue;
+        }
+        const metadata = readClaudeSessionMetadata(
+          file,
+          dirPath,
+          folderNameFromProjectDir(dir.name),
+        );
+        if (options.cwdRoots && !isCwdInRoots(metadata.cwd, options.cwdRoots)) continue;
+
+        candidates.push({
+          file,
+          dirPath,
+          folderName: metadata.projectName ?? folderNameFromProjectDir(dir.name),
+          mtimeMs: stat.mtimeMs,
+        });
       } catch {
         continue;
       }
-
-      const folderName = folderNameFromProjectDir(dir.name);
-      knownJsonlFiles.add(file);
-      console.log(
-        `[Pixel Agents] Watcher: detected global session ${path.basename(file)} (${folderName})`,
-      );
-      adoptExternalSession(
-        file,
-        dirPath,
-        nextAgentIdRef,
-        agents,
-        fileWatchers,
-        pollingTimers,
-        waitingTimers,
-        permissionTimers,
-        webview,
-        persistAgents,
-        folderName,
-      );
     }
+  }
+
+  candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  const limitedCandidates =
+    options.limit === undefined ? candidates : candidates.slice(0, options.limit);
+
+  for (const candidate of limitedCandidates) {
+    knownJsonlFiles.add(candidate.file);
+    seededMtimes.delete(candidate.file);
+    console.log(
+      `[Pixel Agents] Watcher: detected global session ${path.basename(candidate.file)} (${candidate.folderName})`,
+    );
+    adoptExternalSession(
+      candidate.file,
+      candidate.dirPath,
+      nextAgentIdRef,
+      agents,
+      fileWatchers,
+      pollingTimers,
+      waitingTimers,
+      permissionTimers,
+      webview,
+      persistAgents,
+      candidate.folderName,
+    );
+  }
+}
+
+function isCwdInRoots(cwd: string | undefined, roots: string[]): boolean {
+  if (!cwd) return false;
+  const resolvedCwd = path.resolve(cwd);
+  return roots.some((root) => {
+    const resolvedRoot = path.resolve(root);
+    return resolvedCwd === resolvedRoot || resolvedCwd.startsWith(`${resolvedRoot}${path.sep}`);
+  });
+}
+
+interface CoworkSessionMetadata {
+  sessionId: string;
+  auditPath: string;
+  projectDir: string;
+  projectName: string;
+  title: string;
+  userSelectedFolders: string[];
+  isArchived: boolean;
+  isAgentCompleted: boolean;
+}
+
+function findCoworkSessionMetadataFiles(root: string): string[] {
+  const out: string[] = [];
+  function walk(dir: string, depth: number): void {
+    if (depth > 3) return;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === 'skills-plugin') continue;
+        walk(fullPath, depth + 1);
+      } else if (/^local_[\w-]+\.json$/.test(entry.name)) {
+        out.push(fullPath);
+      }
+    }
+  }
+  walk(root, 0);
+  return out;
+}
+
+function readCoworkSessionMetadata(metadataFile: string): CoworkSessionMetadata | null {
+  try {
+    const raw = JSON.parse(fs.readFileSync(metadataFile, 'utf-8')) as Record<string, unknown>;
+    const sessionId =
+      typeof raw.sessionId === 'string' ? raw.sessionId : path.basename(metadataFile, '.json');
+    const sessionDir = path.join(path.dirname(metadataFile), sessionId);
+    const auditPath = path.join(sessionDir, 'audit.jsonl');
+    const userSelectedFolders = Array.isArray(raw.userSelectedFolders)
+      ? raw.userSelectedFolders.filter((folder): folder is string => typeof folder === 'string')
+      : [];
+    const projectDir =
+      userSelectedFolders.find((folder) => fs.existsSync(folder)) ??
+      (typeof raw.cwd === 'string' ? raw.cwd : sessionDir);
+    const title =
+      typeof raw.title === 'string' && raw.title.trim()
+        ? raw.title.trim()
+        : typeof raw.initialMessage === 'string' && raw.initialMessage.trim()
+          ? truncateTitle(raw.initialMessage)
+          : typeof raw.processName === 'string'
+            ? raw.processName
+            : 'Claude Cowork';
+
+    return {
+      sessionId,
+      auditPath,
+      projectDir,
+      projectName: path.basename(projectDir),
+      title,
+      userSelectedFolders,
+      isArchived: raw.isArchived === true,
+      isAgentCompleted: raw.isAgentCompleted === true,
+    };
+  } catch {
+    return null;
   }
 }
 

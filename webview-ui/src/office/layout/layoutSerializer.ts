@@ -165,14 +165,17 @@ function orientationToFacing(orientation: string): Direction {
 export function layoutToSeats(furniture: PlacedFurniture[]): Map<string, Seat> {
   const seats = new Map<string, Seat>();
 
-  // Build set of all desk tiles
+  // Build set of all desk and electronics tiles. Seats near electronics are work seats.
   const deskTiles = new Set<string>();
+  const electronicsTiles = new Set<string>();
   for (const item of furniture) {
     const entry = getCatalogEntry(item.type);
-    if (!entry || !entry.isDesk) continue;
+    if (!entry) continue;
     for (let dr = 0; dr < entry.footprintH; dr++) {
       for (let dc = 0; dc < entry.footprintW; dc++) {
-        deskTiles.add(`${item.col + dc},${item.row + dr}`);
+        const key = `${item.col + dc},${item.row + dr}`;
+        if (entry.isDesk) deskTiles.add(key);
+        if (entry.category === 'electronics') electronicsTiles.add(key);
       }
     }
   }
@@ -220,6 +223,7 @@ export function layoutToSeats(furniture: PlacedFurniture[]): Map<string, Seat> {
           seatCol: tileCol,
           seatRow: tileRow,
           facingDir,
+          seatKind: isNearElectronics(tileCol, tileRow, electronicsTiles) ? 'work' : 'rest',
           assigned: false,
         });
         seatCount++;
@@ -228,6 +232,19 @@ export function layoutToSeats(furniture: PlacedFurniture[]): Map<string, Seat> {
   }
 
   return seats;
+}
+
+function isNearElectronics(
+  seatCol: number,
+  seatRow: number,
+  electronicsTiles: Set<string>,
+): boolean {
+  for (let dr = -1; dr <= 1; dr++) {
+    for (let dc = -1; dc <= 1; dc++) {
+      if (electronicsTiles.has(`${seatCol + dc},${seatRow + dr}`)) return true;
+    }
+  }
+  return false;
 }
 
 /** Get the set of tiles occupied by seats (so they can be excluded from blocked tiles)

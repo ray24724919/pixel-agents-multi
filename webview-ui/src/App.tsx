@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { toMajorMinor } from './changelogData.js';
+import { AgentCenter } from './components/AgentCenter.js';
 import { BottomToolbar } from './components/BottomToolbar.js';
 import { ChangelogModal } from './components/ChangelogModal.js';
 import { DebugView } from './components/DebugView.js';
@@ -56,12 +57,14 @@ function App() {
     selectedAgent,
     agentTools,
     agentStatuses,
+    agentEventTrace,
     subagentTools,
     subagentCharacters,
     layoutReady,
     layoutWasReset,
     loadedAssets,
     workspaceFolders,
+    codexProjects,
     externalAssetDirectories,
     lastSeenVersion,
     extensionVersion,
@@ -79,10 +82,13 @@ function App() {
 
   const [isChangelogOpen, setIsChangelogOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isAgentCenterOpen, setIsAgentCenterOpen] = useState(false);
   const [isHooksInfoOpen, setIsHooksInfoOpen] = useState(false);
   const [hooksTooltipDismissed, setHooksTooltipDismissed] = useState(false);
   const [isDebugMode, setIsDebugMode] = useState(false);
   const [alwaysShowOverlay, setAlwaysShowOverlay] = useState(false);
+  const [agentProviderFilter, setAgentProviderFilter] = useState<'all' | 'codex' | 'claude'>('all');
+  const [pendingCloseAgentId, setPendingCloseAgentId] = useState<number | null>(null);
 
   const currentMajorMinor = toMajorMinor(extensionVersion);
 
@@ -129,7 +135,7 @@ function App() {
   );
 
   const handleCloseAgent = useCallback((id: number) => {
-    vscode.postMessage({ type: 'closeAgent', id });
+    setPendingCloseAgentId(id);
   }, []);
 
   const handleClick = useCallback((agentId: number) => {
@@ -141,6 +147,40 @@ function App() {
   }, []);
 
   const officeState = getOfficeState();
+  const agentProviderKey = [...officeState.characters]
+    .map(([id, ch]) => `${id}:${ch.providerId ?? 'claude'}`)
+    .join('|');
+  const visibleAgentIds = useMemo(() => {
+    void agentProviderKey;
+    const ids = new Set<number>();
+    for (const [id, ch] of officeState.characters) {
+      const providerId = ch.providerId ?? 'claude';
+      if (agentProviderFilter === 'all' || providerId === agentProviderFilter) {
+        ids.add(id);
+      }
+    }
+    return ids;
+  }, [agentProviderFilter, agentProviderKey, officeState]);
+  const visibleAgents = useMemo(
+    () => agents.filter((id) => visibleAgentIds.has(id)),
+    [agents, visibleAgentIds],
+  );
+  const visibleSubagentCharacters = useMemo(
+    () => subagentCharacters.filter((subagent) => visibleAgentIds.has(subagent.id)),
+    [subagentCharacters, visibleAgentIds],
+  );
+
+  useEffect(() => {
+    if (officeState.selectedAgentId !== null && !visibleAgentIds.has(officeState.selectedAgentId)) {
+      officeState.selectedAgentId = null;
+    }
+    if (officeState.cameraFollowId !== null && !visibleAgentIds.has(officeState.cameraFollowId)) {
+      officeState.cameraFollowId = null;
+    }
+    if (officeState.hoveredAgentId !== null && !visibleAgentIds.has(officeState.hoveredAgentId)) {
+      officeState.hoveredAgentId = null;
+    }
+  }, [officeState, visibleAgentIds]);
 
   // Force dependency on editorTickForKeyboard to propagate keyboard-triggered re-renders
   void editorTickForKeyboard;
@@ -163,15 +203,28 @@ function App() {
       }
       return false;
     })();
+  const agentNames = agents
+    .map((id) => officeState.characters.get(id)?.agentName)
+    .filter((name): name is string => !!name)
+    .join('|');
+  const pendingCloseCharacter =
+    pendingCloseAgentId === null ? undefined : officeState.characters.get(pendingCloseAgentId);
 
   if (!layoutReady) {
     return <div className="w-full h-full flex items-center justify-center ">Loading...</div>;
   }
 
   return (
-    <div ref={containerRef} className="w-full h-full relative overflow-hidden">
+    <div
+      ref={containerRef}
+      className="w-full h-full relative overflow-hidden"
+      data-testid="pixel-agents-root"
+      data-agent-count={agents.length}
+      data-agent-names={agentNames}
+    >
       <OfficeCanvas
         officeState={officeState}
+        visibleAgentIds={visibleAgentIds}
         onClick={handleClick}
         isEditMode={editor.isEditMode}
         editorState={editorState}
@@ -240,9 +293,9 @@ function App() {
 
           <ToolOverlay
             officeState={officeState}
-            agents={agents}
+            agents={visibleAgents}
             agentTools={agentTools}
-            subagentCharacters={subagentCharacters}
+            subagentCharacters={visibleSubagentCharacters}
             containerRef={containerRef}
             zoom={editor.zoom}
             panRef={editor.panRef}
@@ -252,12 +305,15 @@ function App() {
         </>
       ) : (
         <DebugView
-          agents={agents}
+          agents={visibleAgents}
           selectedAgent={selectedAgent}
           agentTools={agentTools}
           agentStatuses={agentStatuses}
+          agentEventTrace={agentEventTrace}
           subagentTools={subagentTools}
+          officeState={officeState}
           onSelectAgent={handleSelectAgent}
+          onCloseAgent={handleCloseAgent}
         />
       )}
 
@@ -302,8 +358,8 @@ function App() {
             <li className="text-sm mb-2">Sound notifications play immediately</li>
           </ul>
           <p className="mb-12 text-text-muted">
-            This works through Claude Code Hooks, small event listeners that notify Pixel Agents
-            whenever something happens in your Claude sessions.
+            This works through Codex event listeners that notify Pixel Agents whenever something
+            happens in your coding sessions.
           </p>
           <div className="text-center">
             <button
@@ -321,11 +377,15 @@ function App() {
 
       <BottomToolbar
         isEditMode={editor.isEditMode}
-        onOpenClaude={editor.handleOpenClaude}
+        onOpenAgent={editor.handleOpenAgent}
         onToggleEditMode={editor.handleToggleEditMode}
+        onToggleAgentCenter={() => setIsAgentCenterOpen((v) => !v)}
         isSettingsOpen={isSettingsOpen}
         onToggleSettings={() => setIsSettingsOpen((v) => !v)}
         workspaceFolders={workspaceFolders}
+        codexProjects={codexProjects}
+        agentProviderFilter={agentProviderFilter}
+        onAgentProviderFilterChange={setAgentProviderFilter}
       />
 
       <VersionIndicator
@@ -340,6 +400,60 @@ function App() {
         onClose={() => setIsChangelogOpen(false)}
         currentVersion={extensionVersion}
       />
+
+      <AgentCenter
+        isOpen={isAgentCenterOpen}
+        onClose={() => setIsAgentCenterOpen(false)}
+        agents={agents}
+        selectedAgent={selectedAgent}
+        agentTools={agentTools}
+        agentStatuses={agentStatuses}
+        officeState={officeState}
+        onCloseAgent={handleCloseAgent}
+      />
+
+      <Modal
+        isOpen={pendingCloseAgentId !== null}
+        onClose={() => setPendingCloseAgentId(null)}
+        title="Kill agent?"
+        zIndex={54}
+      >
+        <div className="px-10 pb-8">
+          <p className="text-base text-text">
+            Really kill{' '}
+            <span className="text-accent-bright">
+              {pendingCloseCharacter?.agentName ?? `Agent #${pendingCloseAgentId ?? ''}`}
+            </span>
+            ?
+          </p>
+          {pendingCloseCharacter?.folderName && (
+            <p className="mt-2 text-sm text-text-muted">{pendingCloseCharacter.folderName}</p>
+          )}
+          <p className="mt-5 text-sm text-text-muted">
+            This closes the linked VS Code terminal when available. Codex threads are archived;
+            external Claude sessions are removed from tracking.
+          </p>
+          <div className="mt-8 flex justify-end gap-3">
+            <button
+              className="border-2 border-border bg-btn-bg px-12 py-3 text-text"
+              onClick={() => setPendingCloseAgentId(null)}
+            >
+              Cancel
+            </button>
+            <button
+              className="border-2 border-accent bg-accent px-12 py-3 text-white"
+              onClick={() => {
+                if (pendingCloseAgentId !== null) {
+                  vscode.postMessage({ type: 'closeAgent', id: pendingCloseAgentId });
+                }
+                setPendingCloseAgentId(null);
+              }}
+            >
+              Kill
+            </button>
+          </div>
+        </div>
+      </Modal>
 
       <SettingsModal
         isOpen={isSettingsOpen}

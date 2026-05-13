@@ -1,10 +1,11 @@
 /**
- * E2E: Clicking "+ Agent" in the Pixel Agents webview spawns a mock Claude terminal.
+ * E2E: Clicking "+ Agent" in the Pixel Agents webview spawns a mock Codex terminal.
  *
  * Assertions:
- *   1. The mock `claude` binary was invoked (invocations.log exists and is non-empty).
- *   2. The expected JSONL session file was created in the isolated HOME.
- *   3. A VS Code terminal named "Claude Code #1" appears in the workbench.
+ *   1. The mock `codex` binary was invoked (invocations.log exists and is non-empty).
+ *   2. The expected Codex state DB and rollout JSONL files were created in the isolated HOME.
+ *   3. A VS Code terminal named "Codex #1" appears in the workbench.
+ *   4. A mock Codex child thread is adopted as a Pixel Agents teammate.
  *
  * NOTE FOR NEW TESTS: As more specs are added, refactor session setup into a
  * Playwright fixture using test.extend<{ session: VSCodeSession }>() so that
@@ -18,7 +19,7 @@ import path from 'path';
 import { launchVSCode, waitForWorkbench } from '../helpers/launch';
 import { clickAddAgent, getPixelAgentsFrame, openPixelAgentsPanel } from '../helpers/webview';
 
-test('clicking + Agent spawns mock claude and creates a JSONL session file', async ({}, testInfo) => {
+test('clicking + Agent spawns mock codex and adopts a child thread teammate', async ({}, testInfo) => {
   const session = await launchVSCode(testInfo.title);
   const { window, tmpHome, mockLogFile } = session;
   const runVideo = window.video();
@@ -36,8 +37,8 @@ test('clicking + Agent spawns mock claude and creates a JSONL session file', asy
     const frame = await getPixelAgentsFrame(window);
     await clickAddAgent(frame);
 
-    // 4. Assert: mock claude was invoked
-    //    The mock script writes to $HOME/.claude-mock/invocations.log
+    // 4. Assert: mock codex was invoked.
+    //    The mock script writes to $HOME/.codex-mock/invocations.log.
     await expect
       .poll(
         () => {
@@ -57,54 +58,79 @@ test('clicking + Agent spawns mock claude and creates a JSONL session file', asy
       .toBe(true);
 
     const invocationLog = fs.readFileSync(mockLogFile, 'utf8');
-    expect(invocationLog).toContain('session-id=');
-    await testInfo.attach('mock-claude-invocations', {
+    expect(invocationLog).toContain('cwd=');
+    await testInfo.attach('mock-codex-invocations', {
       body: invocationLog,
       contentType: 'text/plain',
     });
 
-    // 5. Assert: JSONL session file was created.
-    //    Scan all subdirectories under .claude/projects/ rather than hard-coding a
-    //    specific hash. On Windows, os.tmpdir() may return an 8.3 short path while
-    //    the VS Code terminal sees the long path, making the hashes differ even after
-    //    normalisation attempts.
-    const projectsDir = path.join(tmpHome, '.claude', 'projects');
+    // 5. Assert: Codex state DB and rollout JSONL session file were created.
+    const codexDir = path.join(tmpHome, '.codex');
+    const stateDb = path.join(codexDir, 'state_5.sqlite');
+    const sessionsDir = path.join(codexDir, 'sessions');
 
-    const findJsonlFiles = (): string[] => {
-      try {
-        if (!fs.existsSync(projectsDir)) return [];
-        return fs.readdirSync(projectsDir).flatMap((entry) => {
-          const sub = path.join(projectsDir, entry);
-          try {
-            return fs.statSync(sub).isDirectory()
-              ? fs.readdirSync(sub).filter((f) => f.endsWith('.jsonl'))
-              : [];
-          } catch {
-            return [];
+    const findRolloutFiles = (): string[] => {
+      const files: string[] = [];
+      const visit = (dir: string): void => {
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+          const entryPath = path.join(dir, entry.name);
+          if (entry.isDirectory()) {
+            visit(entryPath);
+          } else if (entry.name.startsWith('rollout-') && entry.name.endsWith('.jsonl')) {
+            files.push(entryPath);
           }
-        });
+        }
+      };
+      try {
+        if (fs.existsSync(sessionsDir)) visit(sessionsDir);
       } catch {
         return [];
       }
+      return files;
     };
 
     await expect
-      .poll(findJsonlFiles, {
-        message: `Expected at least one .jsonl file under ${projectsDir}`,
+      .poll(() => fs.existsSync(stateDb), {
+        message: `Expected Codex state DB at ${stateDb}`,
         timeout: 20_000,
         intervals: [500, 1000],
       })
-      .not.toHaveLength(0);
+      .toBe(true);
 
-    await testInfo.attach('jsonl-files', {
-      body: findJsonlFiles().join('\n'),
+    await expect
+      .poll(findRolloutFiles, {
+        message: `Expected parent and child rollout JSONL files under ${sessionsDir}`,
+        timeout: 20_000,
+        intervals: [500, 1000],
+      })
+      .toHaveLength(2);
+
+    await testInfo.attach('rollout-files', {
+      body: findRolloutFiles().join('\n'),
       contentType: 'text/plain',
     });
 
-    // 6. Assert: terminal "Claude Code #1" is visible in VS Code UI
+    // 6. Assert: terminal "Codex #1" is visible in VS Code UI
     //    VS Code renders the terminal name as visible text in the tab bar.
-    const terminalTab = window.getByText(/Claude Code #\d+/);
+    const terminalTab = window.getByText(/Codex #\d+/);
     await expect(terminalTab.first()).toBeVisible({ timeout: 15_000 });
+
+    // 7. Assert: the child Codex thread was adopted as a teammate in the webview.
+    const root = frame.locator('[data-testid="pixel-agents-root"]');
+    await expect
+      .poll(async () => Number((await root.getAttribute('data-agent-count')) ?? '0'), {
+        message: 'Expected Pixel Agents to show parent + Codex child teammate',
+        timeout: 20_000,
+        intervals: [500, 1000],
+      })
+      .toBeGreaterThanOrEqual(2);
+    await expect
+      .poll(async () => (await root.getAttribute('data-agent-names')) ?? '', {
+        message: 'Expected Codex child teammate name to be visible in webview state',
+        timeout: 20_000,
+        intervals: [500, 1000],
+      })
+      .toContain('Curie');
   } finally {
     // Save a screenshot of the final state regardless of outcome
     const screenshotPath = path.join(

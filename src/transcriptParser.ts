@@ -11,6 +11,10 @@ import {
 } from '../server/src/constants.js';
 import type { HookProvider } from '../server/src/provider.js';
 import {
+  formatCodexToolStatus,
+  parseCodexTranscriptLine,
+} from '../server/src/providers/file/codex/codex.js';
+import {
   cancelPermissionTimer,
   cancelWaitingTimer,
   clearAgentActivity,
@@ -20,6 +24,23 @@ import {
 import type { AgentState } from './types.js';
 
 const PERMISSION_EXEMPT_TOOLS = new Set(['Task', 'Agent', 'AskUserQuestion']);
+
+export interface CodexSubagentSpawn {
+  parentAgentId: number;
+  childThreadId: string;
+  parentThreadId?: string;
+  nickname?: string;
+  role?: string;
+  callId?: string;
+}
+
+let codexSubagentSpawnHandler: ((event: CodexSubagentSpawn) => void) | null = null;
+
+export function setCodexSubagentSpawnHandler(
+  handler: ((event: CodexSubagentSpawn) => void) | null,
+): void {
+  codexSubagentSpawnHandler = handler;
+}
 
 /** Hook provider: supplies formatToolStatus + team.extractTeamMetadataFromRecord.
  *  Registered once at startup via setHookProvider(). Functions below assume it's set. */
@@ -98,6 +119,10 @@ export function processTranscriptLine(
   if (!agent) return;
   agent.lastDataAt = Date.now();
   agent.linesProcessed++;
+  if (agent.providerId === 'codex') {
+    processCodexTranscriptLine(agentId, line, agents, waitingTimers, permissionTimers, webview);
+    return;
+  }
   try {
     const record = JSON.parse(line);
 
@@ -427,6 +452,99 @@ export function processTranscriptLine(
     }
   } catch {
     // Ignore malformed lines
+  }
+}
+
+function processCodexTranscriptLine(
+  agentId: number,
+  line: string,
+  agents: Map<number, AgentState>,
+  waitingTimers: Map<number, ReturnType<typeof setTimeout>>,
+  permissionTimers: Map<number, ReturnType<typeof setTimeout>>,
+  webview: vscode.Webview | undefined,
+): void {
+  const agent = agents.get(agentId);
+  if (!agent) return;
+  const event = parseCodexTranscriptLine(line);
+  if (!event) return;
+
+  switch (event.kind) {
+    case 'toolStart': {
+      cancelWaitingTimer(agentId, waitingTimers);
+      agent.isWaiting = false;
+      agent.hadToolsInTurn = true;
+      const status = formatCodexToolStatus(event.toolName, event.input);
+      agent.activeToolIds.add(event.toolId);
+      agent.activeToolStatuses.set(event.toolId, status);
+      agent.activeToolNames.set(event.toolId, event.toolName);
+      webview?.postMessage({ type: 'agentStatus', id: agentId, status: 'active' });
+      webview?.postMessage({
+        type: 'agentToolStart',
+        id: agentId,
+        toolId: event.toolId,
+        status,
+        toolName: event.toolName,
+        permissionActive: agent.permissionSent,
+      });
+      break;
+    }
+    case 'toolEnd': {
+      const toolId = event.toolId;
+      agent.activeToolIds.delete(toolId);
+      agent.activeToolStatuses.delete(toolId);
+      agent.activeToolNames.delete(toolId);
+      setTimeout(() => {
+        webview?.postMessage({ type: 'agentToolDone', id: agentId, toolId });
+      }, TOOL_DONE_DELAY_MS);
+      break;
+    }
+    case 'permissionRequest':
+      cancelPermissionTimer(agentId, permissionTimers);
+      agent.permissionSent = true;
+      webview?.postMessage({ type: 'agentToolPermission', id: agentId });
+      break;
+    case 'permissionClear':
+      agent.permissionSent = false;
+      webview?.postMessage({ type: 'agentToolPermissionClear', id: agentId });
+      break;
+    case 'turnEnd':
+      cancelWaitingTimer(agentId, waitingTimers);
+      cancelPermissionTimer(agentId, permissionTimers);
+      agent.isWaiting = true;
+      agent.permissionSent = false;
+      agent.hadToolsInTurn = false;
+      agent.activeToolIds.clear();
+      agent.activeToolStatuses.clear();
+      agent.activeToolNames.clear();
+      agent.activeSubagentToolIds.clear();
+      agent.activeSubagentToolNames.clear();
+      webview?.postMessage({ type: 'agentToolsClear', id: agentId });
+      webview?.postMessage({ type: 'agentStatus', id: agentId, status: 'waiting' });
+      break;
+    case 'userTurn':
+      cancelWaitingTimer(agentId, waitingTimers);
+      clearAgentActivity(agent, agentId, permissionTimers, webview);
+      agent.hadToolsInTurn = false;
+      webview?.postMessage({ type: 'agentStatus', id: agentId, status: 'active' });
+      break;
+    case 'subagentStart':
+    case 'subagentEnd':
+    case 'subagentTurnEnd':
+    case 'progress':
+    case 'sessionStart':
+    case 'sessionEnd':
+    case 'tokenUsage':
+      break;
+    case 'codexSubagentSpawn':
+      codexSubagentSpawnHandler?.({
+        parentAgentId: agentId,
+        childThreadId: event.childThreadId,
+        parentThreadId: event.parentThreadId,
+        nickname: event.nickname,
+        role: event.role,
+        callId: event.callId,
+      });
+      break;
   }
 }
 
