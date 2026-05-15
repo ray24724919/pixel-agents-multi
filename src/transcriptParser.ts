@@ -176,7 +176,14 @@ export function processTranscriptLine(
     // Claude Code may change the JSONL structure across versions
     const assistantContent = record.message?.content ?? record.content;
 
-    if (record.type === 'assistant' && Array.isArray(assistantContent)) {
+    if (record.type === 'system' && record.subtype === 'status' && record.status === 'requesting') {
+      // Claude Desktop/Cowork local-agent-mode writes frequent audit status records
+      // while the model is thinking/requesting, before the next tool_use arrives.
+      // Treat this as active so the visual agent returns to the work desk promptly.
+      cancelWaitingTimer(agentId, waitingTimers);
+      agent.isWaiting = false;
+      webview?.postMessage({ type: 'agentStatus', id: agentId, status: 'active' });
+    } else if (record.type === 'assistant' && Array.isArray(assistantContent)) {
       const blocks = assistantContent as Array<{
         type: string;
         id?: string;
