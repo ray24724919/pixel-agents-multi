@@ -149,59 +149,105 @@ Both packages target user-facing blockers. Wave gate: user can launch a Claude a
 
 ---
 
-### Wave 2 — Pipeline consolidation
+### Wave 2 — Functional completeness (redefined post-Wave-1)
 
-These reduce surface area and accidental complexity before later phases pile more on. Wave gate: webview has one canonical "what is this agent doing" pipeline; AgentCenter rendering is split into phase-aligned modules.
+Originally Wave 2 was "Pipeline consolidation" (an internal cleanup). After Wave 1 landed and the user articulated their actual product vision — a Claude + Codex work-status platform with lifecycle control — Wave 2 was redefined to deliver the missing user-facing capabilities. Internal cleanup moves to Wave 3.
 
-**W2-A — Consolidate webview agent-state pipelines** (counters ANN-2)
+User vision check (2026-05-27):
+
+- See Claude (code + cowork modes) and Codex (code) agents side-by-side
+- Auto-sync sessions started externally (outside +Agent), with one agent per cwd
+- Filter out Claude chat-mode sessions (only show working agents)
+- Control agents: Kill, Pause, Resume
+
+Wave gate: a user can boot pixel-agents on a fresh window and within ~30s see all their active Claude+Codex working sessions across providers + cwds, none of them is a chat-mode session, and they can Kill/Pause/Resume any of them with predictable semantics.
+
+**W2-A — Smart external Codex session sync** (replaces W1-B's "stop adoption" approach)
+
+- **In scope**:
+  - Re-enable Codex external thread adoption in `scanCodexWorkspaceThreads()`, but with cwd-grouping invariant: one cwd = at most one Codex agent (regardless of how many threads SQLite has for that cwd).
+  - For each candidate cwd, adopt the LATEST thread; future threads in the same cwd update the existing agent via `startCodexCwdPoll` (the helper W1-C already extracted). No ghosts even after many `/clear`s.
+  - Default scope filter: workspace folder roots + any cwd already owning a +Agent-spawned agent. Setting `pixel-agents.codex.discoverAllCwds` to expand to all non-archived threads when user wants the full view.
+  - Persisted external agents survive reload (already work via W1-C Fix A); newly-adopted external agents also start the poll immediately.
+- **Out of scope**: Claude-side external sync (already works via existing scanners), AgentCenter UI redesign, anything in W2-B/C/D.
+- **Dependencies**: Wave 1 merged.
+- **Branch**: `cleanup/w2-a-codex-external-sync`.
+
+**W2-B — Claude chat-mode filter** (user vision: hide chat noise)
+
+- **In scope**:
+  - Research how Claude marks chat vs cowork vs code mode in transcripts and/or session metadata. Likely candidates: a top-level field in the first JSONL record, or the cowork metadata sidecar. Document the discovered marker in the work-package's report.
+  - Filter in `scanClaudeRecentSessions` / `scanClaudeCoworkSessions` so chat-mode sessions are NOT adopted into Agent Center. Cowork and code remain visible.
+  - Provide an `pixel-agents.claude.showChatSessions` setting (default `false`) so the user can opt in if they ever need to see chat mode.
+- **Out of scope**: Codex (no chat mode), changes to Claude code/cowork behavior.
+- **Dependencies**: Wave 1 merged. Can run in parallel with W2-A.
+- **Branch**: `cleanup/w2-b-claude-chat-filter`.
+
+**W2-C — Pause / Resume agent** (user vision: "tell agent to wait")
+
+- **In scope**:
+  - Research what Pause/Resume can safely mean per provider. Claude is a terminal process; SIGSTOP/SIGCONT works but is heavy-handed (mid-tool processes get frozen, which may leave partial state). Codex similarly.
+  - Recommended initial implementation: a lightweight UI-level Pause that **suppresses new prompts from being sent** but does not stop in-flight tools. Resume re-enables. If the user wants harder pause, that's a follow-up package.
+  - Backend changes: `agent.paused: boolean` state, `agentManager` ignores Pause-targeted inputs, `agentStatus` 'paused' value in lifecycle, UI shows pause indicator.
+  - Pause persists across reload (so the agent stays paused if you reload).
+- **Out of scope**: Process-level signal-based pause (deferred unless lightweight pause proves insufficient).
+- **Dependencies**: Wave 1 merged, W2-D's lifecycle action plumbing recommended first if doing serially.
+- **Branch**: `cleanup/w2-c-pause-resume`.
+
+**W2-D — Complete Hide / Archive / Kill semantics** (Phase 4 of original roadmap)
+
+- **In scope**:
+  - Wire Hide to actually hide (UI-only) without touching the underlying session.
+  - Wire Archive to mark the agent archived (provider-specific: for Codex, set `archived=1` in SQLite; for Claude, move JSONL to an archived folder or just stop tracking + remember in workspaceState).
+  - Wire Kill to genuinely terminate: for Codex, archive the thread in SQLite AND dispose the terminal AND stop polling; for Claude, terminate the `claude` process AND dispose the terminal.
+  - Confirmation modal that explains the difference: "Hide: I'm not interested right now. Archive: I'm done with this thread. Kill: stop the process running this agent." Modal text already partially exists per audit — finish wiring it.
+- **Out of scope**: Bulk actions, multi-agent kill, undo.
+- **Dependencies**: Wave 1 merged.
+- **Branch**: `cleanup/w2-d-kill-hide-archive`.
+
+---
+
+### Wave 3 — Internal cleanup (moved from old Wave 2 + tail)
+
+Internal hygiene that helps future development but isn't user-visible. Sequenced after Wave 2 so the functional surface is settled before consolidating it.
+
+**W3-A — Consolidate webview agent-state pipelines** (was old W2-A, counters ANN-2)
 
 - **In scope**:
   - Audit and consolidate `agentStatuses`, `agentTools`, `agentLifecycleStatuses`, `agentLifecycleEvents`, `agentTimelineEvents` in `webview-ui/src/hooks/useExtensionMessages.ts`. End state: lifecycle + timeline are the two canonical stores. Legacy `agentStatus` / `agentTool*` are either (a) folded into lifecycle on the extension side at emission time, or (b) kept as a thin compat layer that derives from lifecycle, clearly labeled.
   - Document in code comments (only the few that explain _why_) which store is authoritative for which UI concern.
-- **Out of scope**: New features, AgentCenter component split (W2-B), backend lifecycle helper changes (the contract is fine per audit).
-- **Dependencies**: W1 wave gate passed.
-- **Branch**: `cleanup/w2-a-state-pipeline-consolidation`.
+- **Branch**: `cleanup/w3-a-state-pipeline-consolidation`.
 
-**W2-B — Split AgentCenter.tsx along phase boundaries** (counters ANN-1)
+**W3-B — Split AgentCenter.tsx along phase boundaries** (was old W2-B, counters ANN-1)
 
 - **In scope**:
-  - `webview-ui/src/components/AgentCenter.tsx` (937 lines, 4 feature surfaces) is split into: `AgentList.tsx` (agents tab), `ProjectsTab.tsx` (projects), `TimelinePanel.tsx` (timeline), `TeamDashboard.tsx` (team — this was Phase 9 scope creep but is already built; preserve as a separate file so removing later is easy).
-  - `AgentCenter.tsx` itself becomes ~150 lines of layout + tab routing.
-  - No behavioral changes — pure split. Visual identical.
-- **Out of scope**: Trimming team functionality (deferred to whether Phase 9 actually stays), Hide/Archive/Kill safe-action model (separate package later), behavioral rework.
-- **Dependencies**: W2-A.
-- **Branch**: `cleanup/w2-b-agentcenter-split`.
+  - `webview-ui/src/components/AgentCenter.tsx` is split into `AgentList.tsx` / `ProjectsTab.tsx` / `TimelinePanel.tsx` / `TeamDashboard.tsx`. `AgentCenter.tsx` becomes ~150 lines of layout + tab routing.
+- **Branch**: `cleanup/w3-b-agentcenter-split`.
 
----
+**W3-C — e2e provider matrix + restore mock-claude** (was old W3-B, ANN-5) — recover the deleted mock-claude fixture; parametrize `e2e/tests/agent-spawn.spec.ts` over provider; run both.
 
-### Wave 3 — Cleanup tail
+**W3-D — Run-and-fix existing tests** (was old W3-C, ANN-6) — actually execute `server/__tests__/codex.test.ts` and the Playwright e2e; fix anything red; document pass status in the symptoms log.
 
-Smaller, mostly independent packages addressing ANN-3 through ANN-8 and the COS items. Some can be done in parallel by separate executor runs.
+**W3-E — Resolve `openClaude` / `openAgent` alias** (was old W3-D, ANN-7) — keep both as true aliases or deprecate `openClaude` in webview. Single small package.
 
-**W3-A — Cwd-scope `removeStaleCodexAgents`** (ANN-3) — likely absorbed into W1-B; verify.
+**W3-F — Lifecycle reload flicker fix** (was old W3-E, ANN-8) — investigate the Codex reload-mid-tool flicker; either harden the snapshot path or document the known limitation.
 
-**W3-B — e2e provider matrix + restore mock-claude** (ANN-5) — recover the deleted mock-claude fixture; parametrize `e2e/tests/agent-spawn.spec.ts` over provider; run both.
-
-**W3-C — Run-and-fix existing tests** (ANN-6) — actually execute `server/__tests__/codex.test.ts` and the Playwright e2e; fix anything red; document pass status in the symptoms log.
-
-**W3-D — Resolve `openClaude` / `openAgent` alias** (ANN-7) — once W1-A restores Claude semantics behind both names, decide: keep both as true aliases or deprecate `openClaude` in webview. Single small package.
-
-**W3-E — Lifecycle reload flicker fix** (ANN-8) — investigate the Codex reload-mid-tool flicker; either harden the snapshot path or document the known limitation.
-
-**W3-F — Roadmap status correction** (COS-1) — update `docs/roadmap/visual-agent-control-room-roadmap.md:44-57` so "Done" ↔ "committed on main." Phases marked Done that are actually uncommitted get re-labeled to "Implemented (post-cleanup verification pending)" until they ride through Waves 1-3 verifications.
+**W3-G — Roadmap status correction** (was old W3-F, COS-1) — update `docs/roadmap/visual-agent-control-room-roadmap.md:44-57` so "Done" reflects what's committed on main plus user-verified.
 
 Each W3 package gets its own work-package file when drafted; this section is the placeholder index.
 
 ---
 
-### Wave 4 — Roadmap continuation (deferred until Wave 1-3 land)
+### Wave 4 — Roadmap continuation (deferred)
 
-Once cleanup is complete and the .vsix is stable:
+Once Wave 2 (functional completeness) and Wave 3 (internal cleanup) are done:
 
 - Zone Stage 2 / Stage 3 (Phase 7 of roadmap)
 - Stronger VS Code / terminal integration (Phase 8)
-- Team Meeting Mode polish (Phase 9 — but reconsider whether to keep, given the audit noted it was scope-creep into Phase 3's work)
+- Team Meeting Mode polish (Phase 9 — reconsider scope first)
 - Session Replay (Phase 10) — depends on whether `timelineEvents.ts` gets the persistence/buffer it needs
+- Token cost settings UI (Phase 5 polish — currently estimates with hardcoded pricing)
+- Project Dashboard standalone (Phase 6 polish — currently only a tab in AgentCenter)
 
 This wave is intentionally underspecified. We re-plan it after Wave 3, once we have a stable base and clearer signal from your actual usage.
 
@@ -210,21 +256,26 @@ This wave is intentionally underspecified. We re-plan it after Wave 3, once we h
 ## 4. Dependency graph
 
 ```
-W0 (baseline)
-  ├─→ W1-A (claude launch)
-  │     └─→ W3-D (alias)
-  └─→ W1-B (codex thread)
-        └─→ W3-A (verify cwd-scope) [likely no-op if W1-B handles]
+W0 baseline ✅
+  ├─→ W1-A claude launch ✅ merged
+  └─→ W1-B codex thread ✅ merged
+        └─→ W1-C wave1 corrections ✅ merged
 
-W1 gate
-  └─→ W2-A (state pipelines)
-        └─→ W2-B (agentcenter split)
+W1 gate ✅ (static)
+  └─→ Wave 2 — functional completeness
+        ├─→ W2-A codex external sync       (depends on Wave 1)
+        ├─→ W2-B claude chat filter        (parallel with W2-A)
+        ├─→ W2-D kill/hide/archive         (parallel)
+        └─→ W2-C pause/resume              (after W2-D's action plumbing)
 
-W2 gate
-  └─→ W3-B, W3-C, W3-E, W3-F (parallel)
+Wave 2 gate
+  └─→ Wave 3 — internal cleanup
+        ├─→ W3-A state pipeline consolidation
+        │     └─→ W3-B agentcenter split
+        └─→ W3-C..W3-G (parallel cleanup tail)
 
-W3 gate
-  └─→ Wave 4 (re-planned)
+Wave 3 gate
+  └─→ Wave 4 (replan)
 ```
 
 Wave gates require:
