@@ -8,6 +8,10 @@ import type { CodexThread } from '../src/providers/file/codex/codex.js';
 
 const createTerminalMock = vi.hoisted(() => vi.fn());
 const terminalListMock = vi.hoisted(() => [] as Array<{ name: string }>);
+const workspaceFoldersMock = vi.hoisted(() => [
+  { name: 'project', uri: { fsPath: '/workspace/project' } },
+]);
+const discoverAllCwdsMock = vi.hoisted(() => ({ current: false }));
 const buildCodexLaunchCommandMock = vi.hoisted(() => vi.fn());
 const findCodexThreadByIdMock = vi.hoisted(() => vi.fn());
 const findLatestCodexThreadMock = vi.hoisted(() => vi.fn());
@@ -38,8 +42,11 @@ vi.mock('vscode', () => ({
   },
   workspace: {
     fs: { readFile: vi.fn() },
+    getConfiguration: vi.fn(() => ({
+      get: vi.fn((_key: string, fallback: boolean) => discoverAllCwdsMock.current ?? fallback),
+    })),
     openTextDocument: vi.fn(),
-    workspaceFolders: [{ name: 'project', uri: { fsPath: '/workspace/project' } }],
+    workspaceFolders: workspaceFoldersMock,
   },
 }));
 
@@ -151,6 +158,11 @@ describe('Codex thread follow-on', () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pxl-codex-followon-'));
     createTerminalMock.mockReset();
     terminalListMock.length = 0;
+    workspaceFoldersMock.splice(0, workspaceFoldersMock.length, {
+      name: 'project',
+      uri: { fsPath: '/workspace/project' },
+    });
+    discoverAllCwdsMock.current = false;
     createTerminalMock.mockReturnValue({
       name: 'Pixel Agent #1',
       show: vi.fn(),
@@ -362,4 +374,134 @@ describe('Codex thread follow-on', () => {
     await vi.advanceTimersByTimeAsync(10_000);
     expect(agents.has(3)).toBe(true);
   });
+
+  it('adopts one latest external Codex agent per cwd', () => {
+    const provider = createProviderHarness();
+    const olderPath = path.join(tmpDir, 'foo-older.jsonl');
+    const latestPath = path.join(tmpDir, 'foo-latest.jsonl');
+    writeCodexTokenFile(olderPath, 1, 0);
+    writeCodexTokenFile(latestPath, 5, 2);
+    const older = { ...codexThread('foo-older', olderPath, '/workspace/project'), updatedAtMs: 10 };
+    const latest = {
+      ...codexThread('foo-latest', latestPath, '/workspace/project'),
+      updatedAtMs: 20,
+    };
+    findRecentCodexThreadsMock.mockReturnValue([older, latest]);
+    findCodexThreadByIdMock.mockImplementation((id: string) => (id === latest.id ? latest : null));
+
+    scanCodex(provider);
+
+    expect(provider.agents.size).toBe(1);
+    const agent = [...provider.agents.values()][0]!;
+    expect(agent.sessionId).toBe('foo-latest');
+    expect(agent.jsonlFile).toBe(latestPath);
+    expect(agent.inputTokens).toBe(5);
+    expect(agent.outputTokens).toBe(2);
+  });
+
+  it('uses workspace scope by default and discoverAllCwds when enabled', () => {
+    workspaceFoldersMock.splice(0, workspaceFoldersMock.length, {
+      name: 'foo',
+      uri: { fsPath: '/foo' },
+    });
+    const fooPath = path.join(tmpDir, 'foo.jsonl');
+    const barPath = path.join(tmpDir, 'bar.jsonl');
+    writeCodexTokenFile(fooPath, 1, 0);
+    writeCodexTokenFile(barPath, 1, 0);
+    const foo = codexThread('foo-thread', fooPath, '/foo');
+    const bar = codexThread('bar-thread', barPath, '/bar');
+    findRecentCodexThreadsMock.mockReturnValue([foo, bar]);
+    findCodexThreadByIdMock.mockImplementation((id: string) => {
+      if (id === foo.id) return foo;
+      if (id === bar.id) return bar;
+      return null;
+    });
+
+    const defaultProvider = createProviderHarness();
+    scanCodex(defaultProvider);
+    expect([...defaultProvider.agents.values()].map((agent) => agent.projectDir)).toEqual(['/foo']);
+
+    discoverAllCwdsMock.current = true;
+    const discoverAllProvider = createProviderHarness();
+    scanCodex(discoverAllProvider);
+    expect(
+      new Set([...discoverAllProvider.agents.values()].map((agent) => agent.projectDir)),
+    ).toEqual(new Set(['/foo', '/bar']));
+  });
+
+  it('does not adopt an external Codex thread for a cwd that already has a spawned agent', () => {
+    const provider = createProviderHarness();
+    const threadPath = path.join(tmpDir, 'external.jsonl');
+    writeCodexTokenFile(threadPath, 1, 0);
+    const thread = codexThread('external-thread', threadPath, '/workspace/project');
+    provider.agents.set(
+      1,
+      makeAgent(1, {
+        sessionId: thread.id,
+        isExternal: false,
+        projectDir: '/workspace/project',
+        jsonlFile: threadPath,
+      }),
+    );
+    findRecentCodexThreadsMock.mockReturnValue([thread]);
+    findCodexThreadByIdMock.mockReturnValue(thread);
+
+    scanCodex(provider);
+
+    expect(provider.agents.size).toBe(1);
+    expect(provider.agents.get(1)?.isExternal).toBe(false);
+  });
+
+  it('wires adopted external Codex agents through cwd polling for later thread switches', async () => {
+    const firstPath = path.join(tmpDir, 'first.jsonl');
+    const secondPath = path.join(tmpDir, 'second.jsonl');
+    writeCodexTokenFile(firstPath, 1, 0);
+    writeCodexTokenFile(secondPath, 2, 0);
+    const first = codexThread('first-thread', firstPath, '/workspace/project');
+    const second = codexThread('second-thread', secondPath, '/workspace/project');
+    findRecentCodexThreadsMock.mockReturnValue([first]);
+    findCodexThreadByIdMock.mockImplementation((id: string) => {
+      if (id === first.id) return first;
+      if (id === second.id) return second;
+      return null;
+    });
+    findLatestCodexThreadMock.mockReturnValue(second);
+    const provider = createProviderHarness();
+
+    scanCodex(provider);
+    expect(provider.agents.size).toBe(1);
+    const agent = [...provider.agents.values()][0]!;
+    expect(agent.sessionId).toBe('first-thread');
+
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(agent.sessionId).toBe('second-thread');
+    expect(agent.jsonlFile).toBe(secondPath);
+    expect(provider.agents.size).toBe(1);
+  });
 });
+
+function createProviderHarness(): InstanceType<typeof PixelAgentsViewProvider> {
+  const provider = Object.create(PixelAgentsViewProvider.prototype) as InstanceType<
+    typeof PixelAgentsViewProvider
+  >;
+  provider.agents = new Map();
+  provider.knownJsonlFiles = new Set();
+  provider.fileWatchers = new Map();
+  provider.pollingTimers = new Map();
+  provider.waitingTimers = new Map();
+  provider.permissionTimers = new Map();
+  provider.jsonlPollTimers = new Map();
+  provider.webviewView = {
+    webview: { postMessage: vi.fn() },
+  } as unknown as import('vscode').WebviewView;
+  Object.assign(provider, {
+    nextAgentId: { current: 1 },
+    persistAgents: vi.fn(),
+  });
+  return provider;
+}
+
+function scanCodex(provider: InstanceType<typeof PixelAgentsViewProvider>): void {
+  const providerWithPrivate = provider as unknown as { scanCodexWorkspaceThreads: () => void };
+  providerWithPrivate.scanCodexWorkspaceThreads();
+}

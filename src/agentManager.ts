@@ -348,7 +348,7 @@ function clearCodexTransientState(agent: AgentState): void {
   agent.lineBuffer = '';
 }
 
-function startCodexCwdPoll(
+export function startCodexCwdPoll(
   agentId: number,
   cwd: string,
   agents: Map<number, AgentState>,

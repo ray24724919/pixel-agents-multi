@@ -27,6 +27,7 @@ import {
   sendCurrentAgentStatuses,
   sendExistingAgents,
   sendLayout,
+  startCodexCwdPoll,
 } from './agentManager.js';
 import type { LoadedAssets, LoadedCharacterSprites } from './assetLoader.js';
 import {
@@ -75,6 +76,7 @@ import {
 } from './fileWatcher.js';
 import type { LayoutWatcher } from './layoutPersistence.js';
 import { readLayoutFromFile, watchLayoutFile, writeLayoutToFile } from './layoutPersistence.js';
+import { readTokenUsageFromTranscript } from './tokenUsage.js';
 import {
   type CodexSubagentSpawn,
   setCodexSubagentSpawnHandler,
@@ -96,6 +98,26 @@ export function getLiveCodexThreadIdsForSpawnedAgentCwds(
   const liveThreadIds = new Set<string>();
   for (const thread of threads) {
     if (thread.cwd && spawnedCwds.has(path.resolve(thread.cwd))) {
+      liveThreadIds.add(thread.id);
+    }
+  }
+  return liveThreadIds;
+}
+
+export function getLiveCodexThreadIdsForAgentCwds(
+  agents: Map<number, AgentState>,
+  threads: CodexThread[],
+): Set<string> {
+  const agentCwds = new Set<string>();
+  for (const agent of agents.values()) {
+    if (agent.providerId === 'codex' && agent.leadAgentId === undefined && agent.projectDir) {
+      agentCwds.add(path.resolve(agent.projectDir));
+    }
+  }
+
+  const liveThreadIds = new Set<string>();
+  for (const thread of threads) {
+    if (thread.cwd && agentCwds.has(path.resolve(thread.cwd))) {
       liveThreadIds.add(thread.id);
     }
   }
@@ -387,13 +409,164 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 
   private scanCodexWorkspaceThreads(): void {
     const threads = findRecentCodexThreads(50);
-    const topLevelThreadIds = getLiveCodexThreadIdsForSpawnedAgentCwds(this.agents, threads);
+    const candidates = this.getAdoptionCandidates(threads);
+    for (const thread of candidates) {
+      const adopted = this.adoptCodexExternalThread(thread);
+      if (adopted) {
+        console.log(
+          `[Pixel Agents] Codex: adopted external thread ${thread.id.slice(0, 8)} (${path.basename(thread.cwd)}/${path.basename(thread.rolloutPath)})`,
+        );
+      }
+    }
 
+    const topLevelThreadIds = getLiveCodexThreadIdsForAgentCwds(this.agents, threads);
     this.removeStaleCodexAgents(topLevelThreadIds);
     this.webview?.postMessage({
       type: 'codexProjects',
       projects: this.getRecentCodexProjects(threads),
     });
+  }
+
+  private adoptCodexExternalThread(thread: CodexThread): AgentState | null {
+    if (!thread.cwd) return null;
+    const targetCwd = path.resolve(thread.cwd);
+    for (const agent of this.agents.values()) {
+      if (
+        agent.providerId === 'codex' &&
+        agent.projectDir &&
+        path.resolve(agent.projectDir) === targetCwd
+      ) {
+        return null;
+      }
+    }
+
+    let fileOffset = 0;
+    try {
+      fileOffset = fs.statSync(thread.rolloutPath).size;
+    } catch {
+      /* start from the beginning if stat fails */
+    }
+
+    const transcriptUsage = readTokenUsageFromTranscript(thread.rolloutPath, 'codex');
+    const id = this.nextAgentId.current++;
+    const projectName = path.basename(thread.cwd);
+    const agentName = thread.title ?? thread.agentNickname ?? thread.agentRole ?? 'Codex';
+    const agent: AgentState = {
+      id,
+      sessionId: thread.id,
+      terminalRef: undefined,
+      isExternal: true,
+      providerId: 'codex',
+      projectDir: thread.cwd,
+      jsonlFile: thread.rolloutPath,
+      fileOffset,
+      lineBuffer: '',
+      activeToolIds: new Set(),
+      activeToolStatuses: new Map(),
+      activeToolNames: new Map(),
+      activeSubagentToolIds: new Map(),
+      activeSubagentToolNames: new Map(),
+      backgroundAgentToolIds: new Set(),
+      isWaiting: false,
+      permissionSent: false,
+      hadToolsInTurn: false,
+      folderName: projectName,
+      projectName,
+      lastDataAt: Date.now(),
+      linesProcessed: 0,
+      seenUnknownRecordTypes: new Set(),
+      hookDelivered: false,
+      inputTokens: transcriptUsage?.inputTokens ?? thread.tokensUsed,
+      outputTokens: transcriptUsage?.outputTokens ?? 0,
+      artifactOutputTokens: transcriptUsage?.artifactOutputTokens ?? 0,
+      agentName,
+    };
+
+    this.agents.set(id, agent);
+    this.knownJsonlFiles.add(thread.rolloutPath);
+    this.persistAgents();
+    this.webview?.postMessage({
+      type: 'agentCreated',
+      id,
+      isExternal: true,
+      folderName: projectName,
+      agentName,
+      providerId: 'codex',
+      projectDir: agent.projectDir,
+      transcriptPath: agent.jsonlFile,
+    });
+    if (agent.inputTokens > 0 || agent.outputTokens > 0 || (agent.artifactOutputTokens ?? 0) > 0) {
+      this.webview?.postMessage({
+        type: 'agentTokenUsage',
+        id,
+        inputTokens: agent.inputTokens,
+        outputTokens: agent.outputTokens,
+        artifactOutputTokens: agent.artifactOutputTokens ?? 0,
+        estimated: transcriptUsage?.estimated ?? false,
+      });
+    }
+
+    startFileWatching(
+      id,
+      agent.jsonlFile,
+      this.agents,
+      this.fileWatchers,
+      this.pollingTimers,
+      this.waitingTimers,
+      this.permissionTimers,
+      this.webview,
+    );
+    startCodexCwdPoll(
+      id,
+      thread.cwd,
+      this.agents,
+      this.knownJsonlFiles,
+      this.fileWatchers,
+      this.pollingTimers,
+      this.waitingTimers,
+      this.permissionTimers,
+      this.jsonlPollTimers,
+      this.webview,
+      this.persistAgents,
+    );
+    return agent;
+  }
+
+  private getAdoptionCandidates(threads: CodexThread[]): CodexThread[] {
+    const discoverAll = vscode.workspace
+      .getConfiguration('pixel-agents')
+      .get<boolean>('codex.discoverAllCwds', false);
+    const allowedCwds = new Set<string>();
+    if (!discoverAll) {
+      for (const folder of vscode.workspace.workspaceFolders ?? []) {
+        allowedCwds.add(path.resolve(folder.uri.fsPath));
+      }
+      for (const agent of this.agents.values()) {
+        if (agent.providerId === 'codex' && !agent.isExternal && agent.projectDir) {
+          allowedCwds.add(path.resolve(agent.projectDir));
+        }
+      }
+    }
+
+    const existingAgentCwds = new Set<string>();
+    for (const agent of this.agents.values()) {
+      if (agent.providerId === 'codex' && agent.projectDir) {
+        existingAgentCwds.add(path.resolve(agent.projectDir));
+      }
+    }
+
+    const byCwd = new Map<string, CodexThread>();
+    for (const thread of threads) {
+      if (!thread.cwd) continue;
+      const cwd = path.resolve(thread.cwd);
+      if (existingAgentCwds.has(cwd)) continue;
+      if (!discoverAll && !allowedCwds.has(cwd)) continue;
+      const previous = byCwd.get(cwd);
+      if (!previous || thread.updatedAtMs > previous.updatedAtMs) {
+        byCwd.set(cwd, thread);
+      }
+    }
+    return [...byCwd.values()];
   }
 
   private scanClaudeWorkspaceThreads(includeInactive = false): void {
