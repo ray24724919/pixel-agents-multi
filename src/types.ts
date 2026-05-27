@@ -53,6 +53,9 @@ export interface AgentState {
   outputTokens: number;
   /** Estimated generated artifact/code tokens from tool-call payloads; not used for billing. */
   artifactOutputTokens?: number;
+  /** Codex token total before the currently-bound thread; new thread totals are added to this. */
+  codexInputTokenBase?: number;
+  codexOutputTokenBase?: number;
 
   // -- Agent Teams --
   teamName?: string;
@@ -73,6 +76,8 @@ export interface PersistedAgent {
   jsonlFile: string;
   projectDir: string;
   providerId?: string;
+  codexInputTokenBase?: number;
+  codexOutputTokenBase?: number;
   /** Workspace folder name (only set for multi-root workspaces) */
   folderName?: string;
   projectName?: string;

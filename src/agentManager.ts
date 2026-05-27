@@ -92,7 +92,6 @@ export async function launchNewTerminal(
   });
   terminal.show();
 
-  const launchedAt = Date.now();
   const sessionId = crypto.randomUUID();
   terminal.sendText(buildCodexLaunchCommand(cwd, bypassPermissions ?? false, prompt));
 
@@ -156,16 +155,33 @@ export async function launchNewTerminal(
   const pollTimer = setInterval(() => {
     pollCount++;
     try {
-      const thread = findLatestCodexThread(cwd, launchedAt - 1000);
-      if (thread) {
+      const thread = findLatestCodexThread(cwd, 0);
+      if (thread && thread.id !== agent.sessionId) {
+        const previousSessionId = agent.sessionId;
+        const previousJsonlFile = agent.jsonlFile;
+        const isInitialBind = !agent.jsonlFile;
+        const previousInputTokens = agent.inputTokens;
+        const previousOutputTokens = agent.outputTokens;
+
         agent.sessionId = thread.id;
         agent.jsonlFile = thread.rolloutPath;
         agent.projectDir = cwd;
         agent.agentName = thread.title ?? thread.agentNickname ?? thread.agentRole ?? 'Codex';
-        const transcriptUsage = readTokenUsageFromTranscript(thread.rolloutPath, 'codex');
-        agent.inputTokens = transcriptUsage?.inputTokens ?? thread.tokensUsed;
-        agent.outputTokens = transcriptUsage?.outputTokens ?? 0;
-        agent.artifactOutputTokens = transcriptUsage?.artifactOutputTokens ?? 0;
+        agent.codexInputTokenBase = isInitialBind ? 0 : previousInputTokens;
+        agent.codexOutputTokenBase = isInitialBind ? 0 : previousOutputTokens;
+        const transcriptUsage = isInitialBind
+          ? readTokenUsageFromTranscript(thread.rolloutPath, 'codex')
+          : null;
+        const threadInputTokens =
+          transcriptUsage?.inputTokens ?? (isInitialBind ? thread.tokensUsed : 0);
+        const threadOutputTokens = transcriptUsage?.outputTokens ?? 0;
+        agent.inputTokens = (agent.codexInputTokenBase ?? 0) + threadInputTokens;
+        agent.outputTokens = (agent.codexOutputTokenBase ?? 0) + threadOutputTokens;
+        agent.artifactOutputTokens =
+          (agent.artifactOutputTokens ?? 0) + (transcriptUsage?.artifactOutputTokens ?? 0);
+        clearCodexTransientState(agent);
+        cancelWaitingTimer(id, waitingTimers);
+        cancelPermissionTimer(id, permissionTimers);
         knownJsonlFiles.add(thread.rolloutPath);
         persistAgents();
         webview?.postMessage({
@@ -185,11 +201,30 @@ export async function launchNewTerminal(
           artifactOutputTokens: agent.artifactOutputTokens ?? 0,
           estimated: transcriptUsage?.estimated ?? false,
         });
-        console.log(
-          `[Pixel Agents] Terminal: Agent ${id} - found Codex rollout ${path.basename(thread.rolloutPath)} (after ${pollCount}s)`,
-        );
-        clearInterval(pollTimer);
-        jsonlPollTimers.delete(id);
+        if (previousJsonlFile) {
+          fileWatchers.get(id)?.close();
+          fileWatchers.delete(id);
+          const filePollTimer = pollingTimers.get(id);
+          if (filePollTimer) {
+            clearInterval(filePollTimer);
+          }
+          pollingTimers.delete(id);
+        }
+        if (!isInitialBind) {
+          try {
+            agent.fileOffset = fs.statSync(thread.rolloutPath).size;
+          } catch {
+            agent.fileOffset = 0;
+          }
+          webview?.postMessage({ type: 'agentToolsClear', id });
+          console.log(
+            `[Pixel Agents] Codex: Agent ${id} - thread ${previousSessionId.slice(0, 8)} → ${thread.id.slice(0, 8)} (same cwd follow-on)`,
+          );
+        } else {
+          console.log(
+            `[Pixel Agents] Terminal: Agent ${id} - found Codex rollout ${path.basename(thread.rolloutPath)} (after ${pollCount}s)`,
+          );
+        }
         startFileWatching(
           id,
           agent.jsonlFile,
@@ -200,7 +235,22 @@ export async function launchNewTerminal(
           permissionTimers,
           webview,
         );
-        readNewLines(id, agents, waitingTimers, permissionTimers, webview);
+        if (isInitialBind) {
+          readNewLines(id, agents, waitingTimers, permissionTimers, webview);
+        }
+      } else if (!thread && agent.jsonlFile && !findCodexThreadById(agent.sessionId)) {
+        fileWatchers.get(id)?.close();
+        fileWatchers.delete(id);
+        const filePollTimer = pollingTimers.get(id);
+        if (filePollTimer) {
+          clearInterval(filePollTimer);
+        }
+        pollingTimers.delete(id);
+        clearCodexTransientState(agent);
+        cancelWaitingTimer(id, waitingTimers);
+        cancelPermissionTimer(id, permissionTimers);
+        webview?.postMessage({ type: 'agentToolsClear', id });
+        persistAgents();
       } else if (pollCount === 10) {
         console.warn(
           `[Pixel Agents] Terminal: Agent ${id} - Codex rollout not found after 10s for cwd ${cwd}`,
@@ -211,6 +261,18 @@ export async function launchNewTerminal(
     }
   }, JSONL_POLL_INTERVAL_MS);
   jsonlPollTimers.set(id, pollTimer);
+}
+
+function clearCodexTransientState(agent: AgentState): void {
+  agent.activeToolIds.clear();
+  agent.activeToolStatuses.clear();
+  agent.activeToolNames.clear();
+  agent.activeSubagentToolIds.clear();
+  agent.activeSubagentToolNames.clear();
+  agent.permissionSent = false;
+  agent.hadToolsInTurn = false;
+  agent.isWaiting = false;
+  agent.lineBuffer = '';
 }
 
 export function removeAgent(
@@ -265,6 +327,8 @@ export function persistAgents(
       jsonlFile: agent.jsonlFile,
       projectDir: agent.projectDir,
       providerId: agent.providerId,
+      codexInputTokenBase: agent.codexInputTokenBase,
+      codexOutputTokenBase: agent.codexOutputTokenBase,
       folderName: agent.folderName,
       projectName: agent.projectName,
       teamName: agent.teamName,
@@ -352,6 +416,8 @@ export function restoreAgents(
       hookDelivered: false,
       inputTokens: 0,
       outputTokens: 0,
+      codexInputTokenBase: p.codexInputTokenBase,
+      codexOutputTokenBase: p.codexOutputTokenBase,
       teamName: p.teamName,
       agentName: p.agentName,
       isTeamLead: p.isTeamLead,
@@ -660,8 +726,8 @@ function scheduleTokenUsageRefresh(agent: AgentState, webview: vscode.Webview): 
   setTimeout(() => {
     const transcriptUsage = readTokenUsageFromTranscript(agent.jsonlFile, agent.providerId);
     if (!transcriptUsage) return;
-    agent.inputTokens = transcriptUsage.inputTokens;
-    agent.outputTokens = transcriptUsage.outputTokens;
+    agent.inputTokens = (agent.codexInputTokenBase ?? 0) + transcriptUsage.inputTokens;
+    agent.outputTokens = (agent.codexOutputTokenBase ?? 0) + transcriptUsage.outputTokens;
     agent.artifactOutputTokens = transcriptUsage.artifactOutputTokens;
     webview.postMessage({
       type: 'agentTokenUsage',

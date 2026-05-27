@@ -580,8 +580,8 @@ function processCodexTranscriptLine(
     case 'sessionEnd':
     case 'tokenUsage':
       if (event.kind === 'tokenUsage') {
-        agent.inputTokens = event.inputTokens;
-        agent.outputTokens = event.outputTokens;
+        agent.inputTokens = (agent.codexInputTokenBase ?? 0) + event.inputTokens;
+        agent.outputTokens = (agent.codexOutputTokenBase ?? 0) + event.outputTokens;
         webview?.postMessage({
           type: 'agentTokenUsage',
           id: agentId,
