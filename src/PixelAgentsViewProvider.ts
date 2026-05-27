@@ -75,13 +75,32 @@ import {
 } from './fileWatcher.js';
 import type { LayoutWatcher } from './layoutPersistence.js';
 import { readLayoutFromFile, watchLayoutFile, writeLayoutToFile } from './layoutPersistence.js';
-import { readTokenUsageFromTranscript } from './tokenUsage.js';
 import {
   type CodexSubagentSpawn,
   setCodexSubagentSpawnHandler,
   setHookProvider,
 } from './transcriptParser.js';
 import type { AgentState } from './types.js';
+
+export function getLiveCodexThreadIdsForSpawnedAgentCwds(
+  agents: Map<number, AgentState>,
+  threads: CodexThread[],
+): Set<string> {
+  const spawnedCwds = new Set<string>();
+  for (const agent of agents.values()) {
+    if (agent.providerId === 'codex' && !agent.isExternal && agent.projectDir) {
+      spawnedCwds.add(path.resolve(agent.projectDir));
+    }
+  }
+
+  const liveThreadIds = new Set<string>();
+  for (const thread of threads) {
+    if (thread.cwd && spawnedCwds.has(path.resolve(thread.cwd))) {
+      liveThreadIds.add(thread.id);
+    }
+  }
+  return liveThreadIds;
+}
 
 export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
   nextAgentId = { current: 1 };
@@ -366,126 +385,9 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     readNewLines(id, this.agents, this.waitingTimers, this.permissionTimers, this.webview);
   }
 
-  private adoptCodexExternalThread(thread: CodexThread, notifyWebview = true): AgentState | null {
-    for (const agent of this.agents.values()) {
-      if (agent.sessionId === thread.id || agent.jsonlFile === thread.rolloutPath) {
-        this.syncCodexThreadMetadata(agent, thread);
-        return null;
-      }
-    }
-    if (this.knownJsonlFiles.has(thread.rolloutPath)) return null;
-
-    let fileOffset = 0;
-    try {
-      fileOffset = fs.statSync(thread.rolloutPath).size;
-    } catch {
-      /* start at beginning if stat fails */
-    }
-
-    const id = this.nextAgentId.current++;
-    const projectName = thread.cwd ? path.basename(thread.cwd) : undefined;
-    const agentName = thread.title ?? thread.agentNickname ?? thread.agentRole ?? 'Codex';
-    const agent: AgentState = {
-      id,
-      sessionId: thread.id,
-      terminalRef: undefined,
-      isExternal: true,
-      providerId: 'codex',
-      projectDir: thread.cwd,
-      jsonlFile: thread.rolloutPath,
-      fileOffset,
-      lineBuffer: '',
-      activeToolIds: new Set(),
-      activeToolStatuses: new Map(),
-      activeToolNames: new Map(),
-      activeSubagentToolIds: new Map(),
-      activeSubagentToolNames: new Map(),
-      backgroundAgentToolIds: new Set(),
-      isWaiting: false,
-      permissionSent: false,
-      hadToolsInTurn: false,
-      folderName: projectName,
-      projectName,
-      lastDataAt: Date.now(),
-      linesProcessed: 0,
-      seenUnknownRecordTypes: new Set(),
-      hookDelivered: false,
-      inputTokens: thread.tokensUsed,
-      outputTokens: 0,
-      agentName,
-    };
-
-    this.agents.set(id, agent);
-    this.knownJsonlFiles.add(thread.rolloutPath);
-    this.persistAgents();
-
-    if (notifyWebview) {
-      this.webview?.postMessage({
-        type: 'agentCreated',
-        id,
-        isExternal: true,
-        folderName: projectName,
-        agentName,
-        providerId: 'codex',
-        projectDir: agent.projectDir,
-        transcriptPath: agent.jsonlFile,
-      });
-    }
-
-    startFileWatching(
-      id,
-      thread.rolloutPath,
-      this.agents,
-      this.fileWatchers,
-      this.pollingTimers,
-      this.waitingTimers,
-      this.permissionTimers,
-      this.webview,
-    );
-    return agent;
-  }
-
-  private syncCodexThreadMetadata(agent: AgentState, thread: CodexThread): void {
-    const agentName = thread.title ?? thread.agentNickname ?? thread.agentRole ?? agent.agentName;
-    const projectName = thread.cwd ? path.basename(thread.cwd) : agent.projectName;
-    agent.projectDir = thread.cwd;
-    agent.agentName = agentName;
-    agent.projectName = projectName;
-    agent.folderName = projectName;
-    const transcriptUsage = readTokenUsageFromTranscript(thread.rolloutPath, 'codex');
-    agent.inputTokens = transcriptUsage?.inputTokens ?? thread.tokensUsed;
-    agent.outputTokens = transcriptUsage?.outputTokens ?? 0;
-    agent.artifactOutputTokens = transcriptUsage?.artifactOutputTokens ?? 0;
-    this.webview?.postMessage({
-      type: 'agentMetadata',
-      id: agent.id,
-      folderName: projectName,
-      agentName,
-      providerId: 'codex',
-      projectDir: agent.projectDir,
-      transcriptPath: agent.jsonlFile,
-    });
-    this.webview?.postMessage({
-      type: 'agentTokenUsage',
-      id: agent.id,
-      inputTokens: agent.inputTokens,
-      outputTokens: agent.outputTokens,
-      artifactOutputTokens: agent.artifactOutputTokens ?? 0,
-      estimated: transcriptUsage?.estimated ?? false,
-    });
-  }
-
-  private scanCodexWorkspaceThreads(notifyWebview = true): void {
+  private scanCodexWorkspaceThreads(): void {
     const threads = findRecentCodexThreads(50);
-    const topLevelThreadIds = new Set(threads.map((thread) => thread.id));
-    for (const thread of threads) {
-      const adopted = this.adoptCodexExternalThread(thread, notifyWebview);
-      if (adopted) {
-        console.log(
-          `[Pixel Agents] Codex: adopted external thread ${thread.id.slice(0, 8)} (${path.basename(thread.cwd)}/${path.basename(thread.rolloutPath)})`,
-        );
-      }
-    }
+    const topLevelThreadIds = getLiveCodexThreadIdsForSpawnedAgentCwds(this.agents, threads);
 
     this.removeStaleCodexAgents(topLevelThreadIds);
     this.webview?.postMessage({
@@ -869,7 +771,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         this.context.workspaceState.update(WORKSPACE_KEY_AGENT_SEATS, message.seats);
       } else if (message.type === 'refreshAgents') {
         this.scanClaudeWorkspaceThreads(true);
-        this.scanCodexWorkspaceThreads(true);
+        this.scanCodexWorkspaceThreads();
         sendExistingAgents(this.agents, this.context, this.webview);
         sendCurrentAgentStatuses(this.agents, this.webview);
       } else if (message.type === 'saveLayout') {
@@ -1032,10 +934,10 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         );
 
         this.scanClaudeWorkspaceThreads();
-        this.scanCodexWorkspaceThreads(false);
+        this.scanCodexWorkspaceThreads();
         if (!this.codexExternalScanTimer) {
           this.codexExternalScanTimer = setInterval(() => {
-            this.scanCodexWorkspaceThreads(true);
+            this.scanCodexWorkspaceThreads();
           }, 3000);
         }
 
