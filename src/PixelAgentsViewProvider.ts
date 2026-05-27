@@ -808,6 +808,10 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     webviewView.webview.onDidReceiveMessage(async (message) => {
       if (message.type === 'openAgent' || message.type === 'openClaude') {
         const prevAgentIds = new Set(this.agents.keys());
+        const providerId =
+          message.providerId === 'codex' || message.providerId === 'claude'
+            ? message.providerId
+            : 'claude';
         await launchNewTerminal(
           this.nextAgentId,
           this.nextTerminalIndex,
@@ -822,6 +826,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
           this.projectScanTimer,
           this.webview,
           this.persistAgents,
+          providerId,
           message.folderPath as string | undefined,
           message.bypassPermissions as boolean | undefined,
           message.prompt as string | undefined,

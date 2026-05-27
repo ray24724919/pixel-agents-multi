@@ -14,7 +14,12 @@ import {
   WORKSPACE_KEY_AGENT_SEATS,
   WORKSPACE_KEY_AGENTS,
 } from './constants.js';
-import { ensureProjectScan, readNewLines, startFileWatching } from './fileWatcher.js';
+import {
+  ensureProjectScan,
+  readNewLines,
+  reassignAgentToFile,
+  startFileWatching,
+} from './fileWatcher.js';
 import { migrateAndLoadLayout } from './layoutPersistence.js';
 import { postAgentLifecycleSnapshot } from './lifecycleStatus.js';
 import { cancelPermissionTimer, cancelWaitingTimer } from './timerManager.js';
@@ -75,6 +80,7 @@ export async function launchNewTerminal(
   projectScanTimerRef: { current: ReturnType<typeof setInterval> | null },
   webview: vscode.Webview | undefined,
   persistAgents: () => void,
+  providerId: 'claude' | 'codex' = 'claude',
   folderPath?: string,
   bypassPermissions?: boolean,
   prompt?: string,
@@ -94,6 +100,171 @@ export async function launchNewTerminal(
 
   const launchedAt = Date.now();
   const sessionId = crypto.randomUUID();
+
+  if (providerId === 'claude') {
+    const claudeCmd = bypassPermissions
+      ? `claude --session-id ${sessionId} --dangerously-skip-permissions`
+      : `claude --session-id ${sessionId}`;
+    terminal.sendText(claudeCmd);
+
+    const projectDir = getProjectDirPath(cwd);
+    const expectedFile = path.join(projectDir, `${sessionId}.jsonl`);
+    knownJsonlFiles.add(expectedFile);
+
+    const id = nextAgentIdRef.current++;
+    const folderName = isMultiRoot && cwd ? path.basename(cwd) : undefined;
+    const projectName = path.basename(cwd);
+    const agent: AgentState = {
+      id,
+      sessionId,
+      terminalRef: terminal,
+      isExternal: false,
+      providerId: 'claude',
+      projectDir,
+      jsonlFile: expectedFile,
+      fileOffset: 0,
+      lineBuffer: '',
+      activeToolIds: new Set(),
+      activeToolStatuses: new Map(),
+      activeToolNames: new Map(),
+      activeSubagentToolIds: new Map(),
+      activeSubagentToolNames: new Map(),
+      backgroundAgentToolIds: new Set(),
+      isWaiting: false,
+      permissionSent: false,
+      hadToolsInTurn: false,
+      lastDataAt: 0,
+      linesProcessed: 0,
+      seenUnknownRecordTypes: new Set(),
+      folderName,
+      projectName,
+      hookDelivered: false,
+      inputTokens: 0,
+      outputTokens: 0,
+      agentName: 'Claude',
+    };
+
+    agents.set(id, agent);
+    activeAgentIdRef.current = id;
+    persistAgents();
+    console.log(`[Pixel Agents] Terminal: Agent ${id} - created for terminal ${terminal.name}`);
+    webview?.postMessage({
+      type: 'agentCreated',
+      id,
+      folderName: folderName ?? projectName,
+      agentName: 'Claude',
+      providerId: 'claude',
+      projectDir,
+      transcriptPath: agent.jsonlFile,
+    });
+
+    ensureProjectScan(
+      projectDir,
+      knownJsonlFiles,
+      projectScanTimerRef,
+      activeAgentIdRef,
+      nextAgentIdRef,
+      agents,
+      fileWatchers,
+      pollingTimers,
+      waitingTimers,
+      permissionTimers,
+      webview,
+      persistAgents,
+    );
+
+    const createdAt = Date.now();
+    let pollCount = 0;
+    console.log(`[Pixel Agents] Terminal: Agent ${id} - waiting for JSONL at ${agent.jsonlFile}`);
+    const pollTimer = setInterval(() => {
+      pollCount++;
+      try {
+        if (fs.existsSync(agent.jsonlFile)) {
+          console.log(
+            `[Pixel Agents] Terminal: Agent ${id} - found JSONL file ${path.basename(agent.jsonlFile)} (after ${pollCount}s)`,
+          );
+          clearInterval(pollTimer);
+          jsonlPollTimers.delete(id);
+          startFileWatching(
+            id,
+            agent.jsonlFile,
+            agents,
+            fileWatchers,
+            pollingTimers,
+            waitingTimers,
+            permissionTimers,
+            webview,
+          );
+          readNewLines(id, agents, waitingTimers, permissionTimers, webview);
+        } else if (pollCount === 10) {
+          const dirExists = fs.existsSync(projectDir);
+          let dirContents = '';
+          if (dirExists) {
+            try {
+              const files = fs.readdirSync(projectDir).filter((f) => f.endsWith('.jsonl'));
+              dirContents =
+                files.length > 0
+                  ? `Dir has ${files.length} JSONL file(s): ${files.slice(0, 3).join(', ')}${files.length > 3 ? '...' : ''}`
+                  : 'Dir exists but has no JSONL files';
+            } catch {
+              dirContents = 'Dir exists but unreadable';
+            }
+          } else {
+            dirContents = 'Dir does not exist';
+          }
+          console.warn(
+            `[Pixel Agents] Terminal: Agent ${id} - JSONL file not found after 10s. ` +
+              `Expected: ${agent.jsonlFile}. ${dirContents}`,
+          );
+        } else if (pollCount > 10) {
+          try {
+            const trackedFiles = new Set(
+              [...agents.values()].map((a) => path.resolve(a.jsonlFile)),
+            );
+            const candidates = fs
+              .readdirSync(projectDir)
+              .filter((f) => f.endsWith('.jsonl'))
+              .map((f) => {
+                const full = path.join(projectDir, f);
+                return { file: full, mtime: fs.statSync(full).mtimeMs };
+              })
+              .filter((candidate) => {
+                return (
+                  !trackedFiles.has(path.resolve(candidate.file)) && candidate.mtime > createdAt
+                );
+              })
+              .sort((a, b) => b.mtime - a.mtime);
+
+            if (candidates.length > 0) {
+              console.log(
+                `[Pixel Agents] Terminal: Agent ${id} - /resume detected, reassigning to ${path.basename(candidates[0].file)}`,
+              );
+              clearInterval(pollTimer);
+              jsonlPollTimers.delete(id);
+              reassignAgentToFile(
+                id,
+                candidates[0].file,
+                agents,
+                fileWatchers,
+                pollingTimers,
+                waitingTimers,
+                permissionTimers,
+                webview,
+                persistAgents,
+              );
+            }
+          } catch {
+            /* ignore scan errors */
+          }
+        }
+      } catch {
+        /* file may not exist yet */
+      }
+    }, JSONL_POLL_INTERVAL_MS);
+    jsonlPollTimers.set(id, pollTimer);
+    return;
+  }
+
   terminal.sendText(buildCodexLaunchCommand(cwd, bypassPermissions ?? false, prompt));
 
   const projectDir = cwd;

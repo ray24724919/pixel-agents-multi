@@ -27,7 +27,6 @@ const TASK_TEMPLATES = [
 
 export function BottomToolbar({
   isEditMode,
-  onOpenAgent,
   onToggleEditMode,
   onToggleAgentCenter,
   isSettingsOpen,
@@ -49,6 +48,7 @@ export function BottomToolbar({
   const [isAgentModalOpen, setIsAgentModalOpen] = useState(false);
   const [projectPath, setProjectPath] = useState(defaultProjectPath);
   const [customProjectPath, setCustomProjectPath] = useState('');
+  const [provider, setProvider] = useState<'claude' | 'codex'>('claude');
   const [prompt, setPrompt] = useState('');
   const [bypassPermissions, setBypassPermissions] = useState(false);
   const promptRef = useRef<HTMLTextAreaElement>(null);
@@ -65,22 +65,24 @@ export function BottomToolbar({
     }
   }, [isAgentModalOpen]);
 
+  const closeAgentModal = () => {
+    setIsAgentModalOpen(false);
+    setProvider('claude');
+    setPrompt('');
+    setBypassPermissions(false);
+  };
+
   const handleSubmit = () => {
     const folderPath = projectPath === '__custom__' ? customProjectPath.trim() : projectPath;
     const trimmedPrompt = prompt.trim();
-    if (!folderPath && !trimmedPrompt && !bypassPermissions) {
-      onOpenAgent();
-    } else {
-      vscode.postMessage({
-        type: 'openAgent',
-        folderPath: folderPath || undefined,
-        prompt: trimmedPrompt || undefined,
-        bypassPermissions,
-      });
-    }
-    setIsAgentModalOpen(false);
-    setPrompt('');
-    setBypassPermissions(false);
+    vscode.postMessage({
+      type: 'openAgent',
+      folderPath: folderPath || undefined,
+      providerId: provider,
+      prompt: trimmedPrompt || undefined,
+      bypassPermissions,
+    });
+    closeAgentModal();
   };
 
   return (
@@ -130,7 +132,7 @@ export function BottomToolbar({
 
       <Modal
         isOpen={isAgentModalOpen}
-        onClose={() => setIsAgentModalOpen(false)}
+        onClose={closeAgentModal}
         title="New Agent"
         className="w-[min(92vw,720px)]"
       >
@@ -163,6 +165,24 @@ export function BottomToolbar({
               />
             </label>
           )}
+
+          <fieldset className="flex flex-col gap-2 text-sm text-text-muted">
+            <legend>Provider</legend>
+            <div className="grid grid-cols-2 border-2 border-border bg-bg p-1">
+              {(['claude', 'codex'] as const).map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  className={`px-3 py-2 text-text ${
+                    provider === option ? 'bg-active-bg' : 'bg-bg hover:bg-btn-hover'
+                  }`}
+                  onClick={() => setProvider(option)}
+                >
+                  {option === 'claude' ? 'Claude' : 'Codex'}
+                </button>
+              ))}
+            </div>
+          </fieldset>
 
           <label className="flex flex-col gap-2 text-sm text-text-muted">
             Task
@@ -198,7 +218,7 @@ export function BottomToolbar({
           </label>
 
           <div className="flex justify-end gap-3 pt-2">
-            <Button variant="ghost" onClick={() => setIsAgentModalOpen(false)}>
+            <Button variant="ghost" onClick={closeAgentModal}>
               Cancel
             </Button>
             <Button variant="accent" onClick={handleSubmit}>
