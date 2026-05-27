@@ -40,6 +40,24 @@ This log captures runtime symptoms observed during supervisor-led cross-testing 
 
 ## Batch T1 — Single Claude agent baseline
 
+### S-T1-02 — Pixel Agents shows 2 Claude agents when CLI has only 1
+
+- **Batch**: T1
+- **Provider**: claude
+- **What user reports** (during W1-A verification 2026-05-27): one Claude session opened via + Agent, but Agent Center shows two Claude agent entries. CLI / `~/.claude/projects/` confirms only one matching JSONL.
+- **Suspect root cause**: four parallel Claude adoption paths (`scanClaudeRecentSessions`, `scanClaudeCoworkSessions`, `adoptExternalSessionFromHook`, `adoptExternalSession`) may race. Dedup against `knownJsonlFiles` may not be sufficient if `launchNewTerminal` and external scanner both create an agent before the set is updated.
+- **Severity**: annoying — primary use case (single Claude session) shows wrong count.
+- **Proposed work-package**: W1-C Fix B.
+
+### S-T1-03 — Claude Code (non-cowork) agent shows generic title `Claude`
+
+- **Batch**: T1
+- **Provider**: claude
+- **What user reports** (during W1-A verification): a regular `claude` (not `claude cowork`) agent appears in Pixel Agents with no per-session title — just `Claude`. Cowork agents do display a title via metadata.
+- **Suspect root cause**: `src/fileWatcher.ts:929` hardcodes `agentName: 'Claude'` for the regular Claude branch. No JSONL title-extraction logic exists; cowork agents are different because they read `metadata.threadName` from a sidecar file.
+- **Severity**: annoying — parity with Codex (which shows thread title) is broken.
+- **Proposed work-package**: W1-C Fix C.
+
 ### S-T1-01 — + Agent button cannot launch Claude (only Codex)
 
 - **Batch**: T1 (discovered before testing started, via code audit)
@@ -51,6 +69,20 @@ This log captures runtime symptoms observed during supervisor-led cross-testing 
 - **Proposed work-package**: part of upcoming framework — re-introduce provider parameter through `openAgent` message + `launchNewTerminal` + UI picker.
 
 ## Batch T2 — Single Codex agent
+
+### S-T2-02 — After W1-B install + reload, all persisted Codex agents disappear (W1-B regression)
+
+- **Batch**: T2 (regression discovered during W1-B verification 2026-05-27)
+- **Provider**: codex
+- **What user reports**: installed pixel-agents-W1B.vsix, reloaded window — all previously visible Codex agents vanished from Agent Center.
+- **Root cause** (confirmed by supervisor):
+  - W1-B added a persistent cwd-keyed poll inside `launchNewTerminal` that switches agents to the latest thread in their cwd.
+  - W1-B did NOT add the same poll inside `restoreAgents` (`src/agentManager.ts`).
+  - W1-B tightened `removeStaleCodexAgents` to require `findCodexThreadById(agent.sessionId)` to succeed.
+  - Restored Codex agents keep their persisted `sessionId`. If that thread was archived/deleted (common after `/clear`), the staleness check kills them and there's no follow-on to rescue.
+- **Severity**: blocker for W1-B merge — restored agents are unusable.
+- **Supervisor failure to catch**: static review focused on `launchNewTerminal` and missed cross-checking `restoreAgents`. Future review must list all agent-state creation paths and verify behavior on each.
+- **Proposed work-package**: W1-C Fix A.
 
 ### S-T2-01 — One +Agent click, but every prompt creates a new agent entry
 
