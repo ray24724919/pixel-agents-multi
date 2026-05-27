@@ -197,6 +197,7 @@ describe('Codex thread follow-on', () => {
       { current: null },
       webview as unknown as import('vscode').Webview,
       vi.fn(),
+      'codex',
       '/workspace/project',
       false,
       undefined,
