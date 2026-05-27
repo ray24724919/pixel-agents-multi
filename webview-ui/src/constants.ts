@@ -148,3 +148,18 @@ export const FUEL_COLOR_CRITICAL = '#ff2222';
 export const FUEL_GAUGE_BG = '#222';
 export const TEAM_LEAD_COLOR = '#ffd700';
 export const TEAM_ROLE_COLOR = '#66aaff';
+
+// ── Room Zones ─────────────────────────────────────────────
+export const WORK_ZONE_BORDER_COLOR = 'rgba(109, 111, 255, 0.75)';
+export const WORK_ZONE_BACKGROUND = 'rgba(109, 111, 255, 0.12)';
+export const WORK_ZONE_LABEL_COLOR = 'rgb(183, 184, 255)';
+export const REST_ZONE_BORDER_COLOR = 'rgba(107, 214, 173, 0.72)';
+export const REST_ZONE_BACKGROUND = 'rgba(107, 214, 173, 0.10)';
+export const REST_ZONE_LABEL_COLOR = 'rgb(169, 239, 211)';
+export const MEETING_ZONE_BORDER_COLOR = 'rgba(255, 198, 92, 0.76)';
+export const MEETING_ZONE_BACKGROUND = 'rgba(255, 198, 92, 0.12)';
+export const MEETING_ZONE_LABEL_COLOR = 'rgb(255, 224, 160)';
+export const NEUTRAL_ZONE_BORDER_COLOR = 'rgba(172, 179, 204, 0.64)';
+export const NEUTRAL_ZONE_BACKGROUND = 'rgba(172, 179, 204, 0.08)';
+export const NEUTRAL_ZONE_LABEL_COLOR = 'rgb(213, 218, 235)';
+export const ZONE_LABEL_BACKGROUND = 'rgba(20, 20, 34, 0.78)';

@@ -1,6 +1,7 @@
 import type * as vscode from 'vscode';
 
 import { PERMISSION_TIMER_DELAY_MS } from '../server/src/constants.js';
+import { postThinking, postWaitingPermission, postWaitingUser } from './lifecycleStatus.js';
 import type { AgentState } from './types.js';
 
 export function clearAgentActivity(
@@ -49,6 +50,7 @@ export function clearAgentActivity(
     }
   }
   webview?.postMessage({ type: 'agentStatus', id: agentId, status: 'active' });
+  postThinking(webview, agentId);
 }
 
 export function cancelWaitingTimer(
@@ -81,6 +83,7 @@ export function startWaitingTimer(
       id: agentId,
       status: 'waiting',
     });
+    postWaitingUser(webview, agentId);
   }, delayMs);
   waitingTimers.set(agentId, timer);
 }
@@ -138,6 +141,7 @@ export function startPermissionTimer(
         type: 'agentToolPermission',
         id: agentId,
       });
+      postWaitingPermission(webview, agentId);
       // Also notify stuck sub-agents
       for (const parentToolId of stuckSubagentParentToolIds) {
         webview?.postMessage({

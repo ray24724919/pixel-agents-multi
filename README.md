@@ -26,7 +26,7 @@
 
 Pixel Agents turns AI coding sessions into something you can actually see and manage. Each Claude or Codex session becomes a character in a pixel art office. Agents walk around when idle, return to computer desks when working, show their current tool activity, and can be filtered, refreshed, inspected, or closed from the UI.
 
-This fork extends the original Claude Code focused project into a Claude + Codex visual agent dashboard for VS Code. The goal is to make multi-project, multi-thread AI work feel observable: you can see which provider an agent came from, which project/thread it belongs to, whether it is active or waiting, and how much tracked token usage it has accumulated.
+This fork extends the original Claude Code-focused project into a Claude + Codex visual agent dashboard for VS Code. The goal is to make multi-project, multi-thread AI work feel observable: you can see which provider an agent came from, which project/thread it belongs to, whether it is active or waiting, and how much tracked token usage it has accumulated.
 
 This repository is my customized fork of [pablodelucca/pixel-agents](https://github.com/pablodelucca/pixel-agents). It is intended for local source installation while the Codex integration is being developed.
 

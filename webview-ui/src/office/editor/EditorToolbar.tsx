@@ -14,7 +14,7 @@ import {
   getCatalogByCategory,
 } from '../layout/furnitureCatalog.js';
 import { getCachedSprite } from '../sprites/spriteCache.js';
-import type { TileType as TileTypeVal } from '../types.js';
+import type { TileType as TileTypeVal, ZoneType } from '../types.js';
 import { EditTool } from '../types.js';
 import { getWallSetCount, getWallSetPreviewSprite } from '../wallTiles.js';
 
@@ -22,6 +22,7 @@ interface EditorToolbarProps {
   activeTool: EditTool;
   selectedTileType: TileTypeVal;
   selectedFurnitureType: string;
+  selectedZone: ZoneType;
   selectedFurnitureUid: string | null;
   selectedFurnitureColor: ColorValue | null;
   floorColor: ColorValue;
@@ -34,6 +35,7 @@ interface EditorToolbarProps {
   onWallSetChange: (setIndex: number) => void;
   onSelectedFurnitureColorChange: (color: ColorValue | null) => void;
   onFurnitureTypeChange: (type: string) => void;
+  onZoneChange: (zone: ZoneType) => void;
   loadedAssets?: LoadedAssetData;
 }
 
@@ -45,6 +47,7 @@ export function EditorToolbar({
   activeTool,
   selectedTileType,
   selectedFurnitureType,
+  selectedZone,
   selectedFurnitureUid,
   selectedFurnitureColor,
   floorColor,
@@ -57,6 +60,7 @@ export function EditorToolbar({
   onWallSetChange,
   onSelectedFurnitureColorChange,
   onFurnitureTypeChange,
+  onZoneChange,
   loadedAssets,
 }: EditorToolbarProps) {
   const [activeCategory, setActiveCategory] = useState<FurnitureCategory>('desks');
@@ -103,6 +107,7 @@ export function EditorToolbar({
   const isFloorActive = activeTool === EditTool.TILE_PAINT || activeTool === EditTool.EYEDROPPER;
   const isWallActive = activeTool === EditTool.WALL_PAINT;
   const isEraseActive = activeTool === EditTool.ERASE;
+  const isZoneActive = activeTool === EditTool.ZONE_PAINT;
   const isFurnitureActive =
     activeTool === EditTool.FURNITURE_PLACE || activeTool === EditTool.FURNITURE_PICK;
 
@@ -133,6 +138,14 @@ export function EditorToolbar({
           title="Paint walls (click to toggle)"
         >
           Wall
+        </Button>
+        <Button
+          variant={isZoneActive ? 'active' : 'default'}
+          size="md"
+          onClick={() => onToolChange(EditTool.ZONE_PAINT)}
+          title="Paint work/rest zones"
+        >
+          Zone
         </Button>
         <Button
           variant={isEraseActive ? 'active' : 'default'}
@@ -293,6 +306,44 @@ export function EditorToolbar({
               />
             ))}
           </div>
+        </div>
+      )}
+
+      {/* Sub-panel: Zones */}
+      {isZoneActive && (
+        <div className="flex gap-4 items-center">
+          <Button
+            variant={selectedZone === 'work' ? 'active' : 'ghost'}
+            size="sm"
+            onClick={() => onZoneChange('work')}
+            title="Mark tiles as work zone"
+          >
+            Work
+          </Button>
+          <Button
+            variant={selectedZone === 'rest' ? 'active' : 'ghost'}
+            size="sm"
+            onClick={() => onZoneChange('rest')}
+            title="Mark tiles as rest zone"
+          >
+            Rest
+          </Button>
+          <Button
+            variant={selectedZone === 'meeting' ? 'active' : 'ghost'}
+            size="sm"
+            onClick={() => onZoneChange('meeting')}
+            title="Mark tiles as meeting zone"
+          >
+            Meeting
+          </Button>
+          <Button
+            variant={selectedZone === 'neutral' ? 'active' : 'ghost'}
+            size="sm"
+            onClick={() => onZoneChange('neutral')}
+            title="Mark tiles as neutral zone"
+          >
+            Neutral
+          </Button>
         </div>
       )}
 

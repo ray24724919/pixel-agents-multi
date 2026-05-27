@@ -3,6 +3,11 @@
 import * as path from 'path';
 import type * as vscode from 'vscode';
 
+import {
+  postCompleted,
+  postToolRunning,
+  postWaitingPermission,
+} from '../../src/lifecycleStatus.js';
 import { cancelPermissionTimer, cancelWaitingTimer } from '../../src/timerManager.js';
 import type { AgentState } from '../../src/types.js';
 import { HOOK_EVENT_BUFFER_MS, SESSION_END_GRACE_MS } from './constants.js';
@@ -444,6 +449,7 @@ export class HookEventHandler {
         toolName,
       });
     }
+    postToolRunning(webview, agentId, toolName, status);
     webview?.postMessage({
       type: 'agentStatus',
       id: agentId,
@@ -624,6 +630,7 @@ export class HookEventHandler {
         cancelPermissionTimer(id, this.permissionTimers);
         a.permissionSent = true;
         webview?.postMessage({ type: 'agentToolPermission', id });
+        postWaitingPermission(webview, id);
       }
       return;
     }
@@ -634,6 +641,7 @@ export class HookEventHandler {
       type: 'agentToolPermission',
       id: agentId,
     });
+    postWaitingPermission(webview, agentId);
     // Also notify any sub-agents with active tools
     for (const parentToolId of agent.activeSubagentToolNames.keys()) {
       webview?.postMessage({
@@ -778,6 +786,7 @@ export class HookEventHandler {
       id: agentId,
       status: 'waiting',
     });
+    postCompleted(webview, agentId);
   }
 
   /** Buffer an event for later delivery when the agent registers. */

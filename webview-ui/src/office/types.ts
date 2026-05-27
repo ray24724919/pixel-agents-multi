@@ -21,6 +21,7 @@ export const TileType = {
   VOID: 255,
 } as const;
 export type TileType = (typeof TileType)[keyof typeof TileType];
+export type ZoneType = 'work' | 'rest' | 'meeting' | 'neutral';
 
 /** Re-export ColorValue for consumers that import color types from office/types */
 export type { ColorValue } from '../components/ui/types.js';
@@ -53,8 +54,10 @@ export interface Seat {
   seatRow: number;
   /** Direction character faces when sitting (toward adjacent desk) */
   facingDir: Direction;
-  /** Work seats are near computers; rest seats are everything else. */
+  /** Work/rest classification derived from nearby computers or room zone. */
   seatKind: 'work' | 'rest';
+  /** Why this seat was classified as work/rest. */
+  zoneSource?: 'computer-adjacent' | 'zone-paint' | 'default-split';
   assigned: boolean;
 }
 
@@ -85,6 +88,7 @@ export const EditTool = {
   SELECT: 'select',
   EYEDROPPER: 'eyedropper',
   ERASE: 'erase',
+  ZONE_PAINT: 'zone_paint',
 } as const;
 export type EditTool = (typeof EditTool)[keyof typeof EditTool];
 
@@ -125,6 +129,8 @@ export interface OfficeLayout {
   furniture: PlacedFurniture[];
   /** Per-tile color settings, parallel to tiles array. null = wall/no color */
   tileColors?: Array<ColorValue | null>;
+  /** Per-tile zone override. null/undefined falls back to default split. */
+  zones?: Array<ZoneType | null>;
   /** Bumped when the bundled default layout changes; forces a reset on existing installs */
   layoutRevision?: number;
 }
@@ -204,4 +210,8 @@ export interface Character {
   inputTokens: number;
   /** Cumulative output tokens consumed */
   outputTokens: number;
+  /** Estimated generated artifact/code tokens; shown separately from API billing proxy. */
+  artifactOutputTokens?: number;
+  /** True when tokens are inferred from transcript text instead of provider usage fields */
+  tokenUsageEstimated?: boolean;
 }

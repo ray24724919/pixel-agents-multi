@@ -75,6 +75,7 @@ import {
 } from './fileWatcher.js';
 import type { LayoutWatcher } from './layoutPersistence.js';
 import { readLayoutFromFile, watchLayoutFile, writeLayoutToFile } from './layoutPersistence.js';
+import { readTokenUsageFromTranscript } from './tokenUsage.js';
 import {
   type CodexSubagentSpawn,
   setCodexSubagentSpawnHandler,
@@ -348,6 +349,8 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       parentAgentId: parentAgent.id,
       teamName: agent.teamName,
       providerId: 'codex',
+      projectDir: agent.projectDir,
+      transcriptPath: agent.jsonlFile,
     });
 
     startFileWatching(
@@ -424,6 +427,8 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         folderName: projectName,
         agentName,
         providerId: 'codex',
+        projectDir: agent.projectDir,
+        transcriptPath: agent.jsonlFile,
       });
     }
 
@@ -447,22 +452,26 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     agent.agentName = agentName;
     agent.projectName = projectName;
     agent.folderName = projectName;
-    agent.inputTokens = thread.tokensUsed;
-    agent.outputTokens = 0;
+    const transcriptUsage = readTokenUsageFromTranscript(thread.rolloutPath, 'codex');
+    agent.inputTokens = transcriptUsage?.inputTokens ?? thread.tokensUsed;
+    agent.outputTokens = transcriptUsage?.outputTokens ?? 0;
+    agent.artifactOutputTokens = transcriptUsage?.artifactOutputTokens ?? 0;
     this.webview?.postMessage({
-      type: 'agentTeamInfo',
+      type: 'agentMetadata',
       id: agent.id,
+      folderName: projectName,
       agentName,
-      teamName: agent.teamName,
-      isTeamLead: agent.isTeamLead,
-      leadAgentId: agent.leadAgentId,
-      teamUsesTmux: agent.teamUsesTmux,
+      providerId: 'codex',
+      projectDir: agent.projectDir,
+      transcriptPath: agent.jsonlFile,
     });
     this.webview?.postMessage({
       type: 'agentTokenUsage',
       id: agent.id,
       inputTokens: agent.inputTokens,
       outputTokens: agent.outputTokens,
+      artifactOutputTokens: agent.artifactOutputTokens ?? 0,
+      estimated: transcriptUsage?.estimated ?? false,
     });
   }
 
@@ -590,7 +599,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     this.webview?.postMessage({ type: 'agentClosed', id });
   }
 
-  private closeAgent(id: number): void {
+  private handleAgentAction(id: number, action: 'hide' | 'archive' | 'kill'): void {
     const agent = this.agents.get(id);
     if (!agent) return;
 
@@ -598,7 +607,12 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       this.removeTeammates(id);
     }
 
-    if (agent.terminalRef) {
+    if (action === 'hide') {
+      this.removeTrackedAgent(id, false);
+      return;
+    }
+
+    if (action === 'kill' && agent.terminalRef) {
       agent.terminalRef.dispose();
       return;
     }
@@ -608,6 +622,68 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     }
 
     this.removeTrackedAgent(id, true);
+  }
+
+  private async openAgentProject(id: number): Promise<void> {
+    const agent = this.agents.get(id);
+    if (!agent?.projectDir) {
+      vscode.window.showWarningMessage(
+        'Pixel Agents: No project path is available for this agent.',
+      );
+      return;
+    }
+    await this.openProjectPath(agent.projectDir);
+  }
+
+  private async openProjectPath(projectDir: string | undefined): Promise<void> {
+    if (!projectDir) {
+      vscode.window.showWarningMessage('Pixel Agents: No project path is available.');
+      return;
+    }
+    let stat: fs.Stats;
+    try {
+      stat = fs.statSync(projectDir);
+    } catch {
+      vscode.window.showWarningMessage(`Pixel Agents: Project path does not exist: ${projectDir}`);
+      return;
+    }
+    const projectPath = stat.isDirectory() ? projectDir : path.dirname(projectDir);
+    try {
+      const uri = vscode.Uri.file(projectPath);
+      const currentFolders = vscode.workspace.workspaceFolders ?? [];
+      const alreadyOpen = currentFolders.some((folder) => folder.uri.fsPath === projectPath);
+      if (alreadyOpen) {
+        await vscode.commands.executeCommand('revealFileInOS', uri);
+        return;
+      }
+      await vscode.commands.executeCommand('vscode.openFolder', uri, false);
+    } catch (err) {
+      vscode.window.showErrorMessage(
+        `Pixel Agents: Failed to open project: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  private async openAgentTranscript(id: number): Promise<void> {
+    const agent = this.agents.get(id);
+    if (!agent?.jsonlFile) {
+      vscode.window.showWarningMessage(
+        'Pixel Agents: No transcript path is available for this agent.',
+      );
+      return;
+    }
+    if (!fs.existsSync(agent.jsonlFile)) {
+      vscode.window.showWarningMessage(
+        `Pixel Agents: Transcript does not exist: ${agent.jsonlFile}`,
+      );
+      return;
+    }
+    const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(agent.jsonlFile));
+    await vscode.window.showTextDocument(doc, { preview: true });
+  }
+
+  private closeAgent(id: number): void {
+    this.handleAgentAction(id, 'kill');
   }
 
   private isCwdInWorkspace(cwd: string | undefined, workspaceRoots: string[]): boolean {
@@ -769,8 +845,19 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
             }
           }
         }
+      } else if (message.type === 'openAgentProject') {
+        await this.openAgentProject(message.id as number);
+      } else if (message.type === 'openProjectPath') {
+        await this.openProjectPath(message.projectDir as string | undefined);
+      } else if (message.type === 'openAgentTranscript') {
+        await this.openAgentTranscript(message.id as number);
       } else if (message.type === 'closeAgent') {
         this.closeAgent(message.id as number);
+      } else if (message.type === 'agentAction') {
+        const action = message.action;
+        if (action === 'hide' || action === 'archive' || action === 'kill') {
+          this.handleAgentAction(message.id as number, action);
+        }
       } else if (message.type === 'saveAgentSeats') {
         // Store seat assignments in a separate key (never touched by persistAgents)
         console.log(`[Pixel Agents] State: saveAgentSeats:`, JSON.stringify(message.seats));

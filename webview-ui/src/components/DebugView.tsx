@@ -1,8 +1,13 @@
 import { useEffect, useState } from 'react';
 
-import type { AgentEventTrace } from '../hooks/useExtensionMessages.js';
+import type {
+  AgentEventTrace,
+  AgentLifecycleEvent,
+  AgentLifecycleState,
+} from '../hooks/useExtensionMessages.js';
 import type { OfficeState } from '../office/engine/officeState.js';
 import type { ToolActivity } from '../office/types.js';
+import { inferAgentZone, zoneSourceLabel } from '../office/zoneUtils.js';
 import { vscode } from '../vscodeApi.js';
 import { Button } from './ui/Button.js';
 
@@ -23,6 +28,8 @@ interface DebugViewProps {
   selectedAgent: number | null;
   agentTools: Record<number, ToolActivity[]>;
   agentStatuses: Record<number, string>;
+  agentLifecycleStatuses: Record<number, AgentLifecycleState>;
+  agentLifecycleEvents: AgentLifecycleEvent[];
   agentEventTrace: Record<number, AgentEventTrace[]>;
   subagentTools: Record<number, Record<string, ToolActivity[]>>;
   officeState: OfficeState;
@@ -68,6 +75,8 @@ export function DebugView({
   selectedAgent,
   agentTools,
   agentStatuses,
+  agentLifecycleStatuses,
+  agentLifecycleEvents,
   agentEventTrace,
   subagentTools,
   officeState,
@@ -106,12 +115,14 @@ export function DebugView({
     const tools = agentTools[id] || [];
     const subs = subagentTools[id] || {};
     const status = agentStatuses[id];
+    const lifecycle = agentLifecycleStatuses[id];
     const hasActiveTools = tools.some((t) => !t.done);
     const diag = diagnostics[id];
     const ch = officeState.characters.get(id);
     const seat = ch?.seatId ? officeState.seats.get(ch.seatId) : undefined;
     const workSeat = ch?.workSeatId ? officeState.seats.get(ch.workSeatId) : undefined;
     const restSeat = ch?.restSeatId ? officeState.seats.get(ch.restSeatId) : undefined;
+    const zone = ch ? inferAgentZone(ch, officeState.getLayout(), officeState.seats) : undefined;
     const trace = agentEventTrace[id] || [];
     return (
       <div
@@ -167,6 +178,10 @@ export function DebugView({
             <div className="grid grid-cols-2 gap-x-8 gap-y-2">
               <span>Provider: {ch.providerId || 'unknown'}</span>
               <span>UI status: {status || (ch.isActive ? 'active' : 'none')}</span>
+              <span>Lifecycle: {lifecycle ? lifecycle.status : 'none'}</span>
+              <span>Lifecycle label: {lifecycle?.label ?? 'none'}</span>
+              <span>Zone: {zone ? zone.zone : 'none'}</span>
+              <span>Zone source: {zone ? zoneSourceLabel(zone.source) : 'none'}</span>
               <span>isActive: {String(ch.isActive)}</span>
               <span>FSM: {ch.state}</span>
               <span>
@@ -187,7 +202,11 @@ export function DebugView({
               <span>Tool: {ch.currentTool || 'none'}</span>
               <span>Seat timer: {ch.seatTimer.toFixed(1)}</span>
               <span>Bubble: {ch.bubbleType || 'none'}</span>
+              {lifecycle?.toolName && <span>Lifecycle tool: {lifecycle.toolName}</span>}
             </div>
+            {lifecycle?.detail && (
+              <span className="opacity-70 break-all">Lifecycle detail: {lifecycle.detail}</span>
+            )}
             {trace.length > 0 && (
               <div className="flex flex-col gap-1 pt-2">
                 <span className="font-bold opacity-90">Recent events</span>
@@ -234,6 +253,23 @@ export function DebugView({
     <div className="absolute inset-0 overflow-auto bg-bg z-15">
       <div className="px-12 py-6 text-2xl">
         <h2 className="text-3xl font-bold mb-8">Debug View</h2>
+        {agentLifecycleEvents.length > 0 && (
+          <div className="mb-8 rounded-none border-2 border-border py-5 px-8">
+            <div className="text-lg font-bold mb-3">Recent lifecycle events</div>
+            <div className="flex flex-col gap-1 text-sm">
+              {agentLifecycleEvents.slice(0, 8).map((event, index) => (
+                <span
+                  key={`${event.receivedAt}-${event.id}-${index}`}
+                  className="opacity-75 break-all"
+                >
+                  {formatTimeAgo(event.receivedAt)} · Agent #{event.id} · {event.status} ·{' '}
+                  {event.label}
+                  {event.detail ? ` · ${event.detail}` : ''}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
         <div className="flex flex-col gap-6">{agents.map(renderAgentCard)}</div>
       </div>
     </div>

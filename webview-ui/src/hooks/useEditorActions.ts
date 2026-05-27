@@ -9,6 +9,7 @@ import {
   getWallPlacementRow,
   moveFurniture,
   paintTile,
+  paintZone,
   placeFurniture,
   removeFurniture,
   rotateFurniture,
@@ -27,6 +28,7 @@ import type {
   OfficeLayout,
   PlacedFurniture,
   TileType as TileTypeVal,
+  ZoneType,
 } from '../office/types.js';
 import { EditTool } from '../office/types.js';
 import { TileType } from '../office/types.js';
@@ -49,6 +51,7 @@ interface EditorActions {
   handleWallSetChange: (setIndex: number) => void;
   handleSelectedFurnitureColorChange: (color: ColorValue | null) => void;
   handleFurnitureTypeChange: (type: string) => void; // FurnitureType enum or asset ID
+  handleZoneChange: (zone: ZoneType) => void;
   handleDeleteSelected: () => void;
   handleRotateSelected: () => void;
   handleToggleState: () => void;
@@ -254,6 +257,14 @@ export function useEditorActions(
       } else {
         editorState.selectedFurnitureType = type;
       }
+      setEditorTick((n) => n + 1);
+    },
+    [editorState],
+  );
+
+  const handleZoneChange = useCallback(
+    (zone: ZoneType) => {
+      editorState.selectedZone = zone;
       setEditorTick((n) => n + 1);
     },
     [editorState],
@@ -503,6 +514,12 @@ export function useEditorActions(
         if (newLayout !== layout) {
           applyEdit(newLayout);
         }
+      } else if (editorState.activeTool === EditTool.ZONE_PAINT) {
+        if (col < 0 || col >= layout.cols || row < 0 || row >= layout.rows) return;
+        const newLayout = paintZone(layout, col, row, editorState.selectedZone);
+        if (newLayout !== layout) {
+          applyEdit(newLayout);
+        }
       } else if (editorState.activeTool === EditTool.FURNITURE_PLACE) {
         const type = editorState.selectedFurnitureType;
         if (type === '') {
@@ -595,12 +612,15 @@ export function useEditorActions(
       const idx = row * layout.cols + col;
       // Only erase non-VOID tiles
       if (layout.tiles[idx] === TileType.VOID) return;
-      const newLayout = paintTile(layout, col, row, TileType.VOID);
+      const newLayout =
+        editorState.activeTool === EditTool.ZONE_PAINT
+          ? paintZone(layout, col, row, null)
+          : paintTile(layout, col, row, TileType.VOID);
       if (newLayout !== layout) {
         applyEdit(newLayout);
       }
     },
-    [getOfficeState, applyEdit],
+    [getOfficeState, editorState, applyEdit],
   );
 
   return {
@@ -620,6 +640,7 @@ export function useEditorActions(
     handleWallSetChange,
     handleSelectedFurnitureColorChange,
     handleFurnitureTypeChange,
+    handleZoneChange,
     handleDeleteSelected,
     handleRotateSelected,
     handleToggleState,

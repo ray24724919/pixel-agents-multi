@@ -51,6 +51,8 @@ export interface AgentState {
   // -- Token tracking --
   inputTokens: number;
   outputTokens: number;
+  /** Estimated generated artifact/code tokens from tool-call payloads; not used for billing. */
+  artifactOutputTokens?: number;
 
   // -- Agent Teams --
   teamName?: string;

@@ -477,6 +477,7 @@ function adoptTerminalForFile(
     projectDir,
     folderNameFromProjectDir(path.basename(projectDir)),
   );
+  const effectiveProjectDir = metadata.cwd ?? projectDir;
   // Skip to end of file -- adopted terminals show live activity only, not replay history
   let fileOffset = 0;
   try {
@@ -490,7 +491,7 @@ function adoptTerminalForFile(
     sessionId,
     terminalRef: terminal,
     isExternal: false,
-    projectDir,
+    projectDir: effectiveProjectDir,
     jsonlFile,
     fileOffset,
     lineBuffer: '',
@@ -529,6 +530,8 @@ function adoptTerminalForFile(
     folderName: metadata.projectName,
     agentName: metadata.threadName,
     providerId: 'claude',
+    projectDir: effectiveProjectDir,
+    transcriptPath: jsonlFile,
   });
 
   startFileWatching(
@@ -725,6 +728,8 @@ export function scanForTeammateFiles(
       parentAgentId,
       teamName: parentAgent?.teamName,
       providerId: 'claude',
+      projectDir: agent.projectDir,
+      transcriptPath: agent.jsonlFile,
     });
 
     onAgentCreated?.(agent);
@@ -861,8 +866,10 @@ export function adoptExternalSessionFromHook(
     if (clearDismissedFiles.has(transcriptPath)) return;
 
     knownJsonlFiles.add(transcriptPath);
-    const projectDir = path.dirname(transcriptPath);
-    const folderName = folderNameFromProjectDir(path.basename(projectDir));
+    const projectDir = cwd || path.dirname(transcriptPath);
+    const folderName = projectDir
+      ? path.basename(projectDir)
+      : folderNameFromProjectDir(path.basename(path.dirname(transcriptPath)));
 
     adoptExternalSession(
       transcriptPath,
@@ -936,6 +943,7 @@ export function adoptExternalSessionFromHook(
       folderName,
       agentName: agent.agentName,
       providerId: 'claude',
+      projectDir: cwd,
     });
     onAgentCreated?.(agent);
   }
@@ -957,6 +965,7 @@ function adoptExternalSession(
 ): void {
   const id = nextAgentIdRef.current++;
   const metadata = readClaudeSessionMetadata(jsonlFile, projectDir, folderName);
+  const effectiveProjectDir = metadata.cwd ?? projectDir;
   // Skip to end of file -- only show live activity going forward, not replay history
   let fileOffset = 0;
   try {
@@ -970,7 +979,7 @@ function adoptExternalSession(
     sessionId: path.basename(jsonlFile, '.jsonl'),
     terminalRef: undefined,
     isExternal: true,
-    projectDir,
+    projectDir: effectiveProjectDir,
     jsonlFile,
     fileOffset,
     lineBuffer: '',
@@ -1008,6 +1017,8 @@ function adoptExternalSession(
     folderName: metadataOverride?.projectName ?? metadata.projectName,
     agentName: metadataOverride?.agentName ?? metadata.threadName,
     providerId: 'claude',
+    projectDir: effectiveProjectDir,
+    transcriptPath: jsonlFile,
   });
 
   startFileWatching(
@@ -1344,7 +1355,7 @@ export function readClaudeSessionMetadata(
 ): ClaudeSessionMetadata {
   const fallbackName = fallbackProjectName ?? folderNameFromProjectDir(path.basename(projectDir));
   let cwd: string | undefined;
-  let firstPrompt: string | undefined;
+  let explicitTitle: string | undefined;
 
   try {
     const fd = fs.openSync(jsonlFile, 'r');
@@ -1362,8 +1373,8 @@ export function readClaudeSessionMetadata(
         }
 
         if (!cwd && typeof record.cwd === 'string') cwd = record.cwd;
-        if (!firstPrompt) firstPrompt = extractClaudePromptTitle(record);
-        if (cwd && firstPrompt) break;
+        if (!explicitTitle) explicitTitle = extractClaudeExplicitTitle(record);
+        if (cwd && explicitTitle) break;
       }
     } finally {
       fs.closeSync(fd);
@@ -1375,36 +1386,50 @@ export function readClaudeSessionMetadata(
   return {
     cwd,
     projectName: cwd ? path.basename(cwd) : fallbackName,
-    threadName: firstPrompt ?? 'Claude',
+    threadName: explicitTitle ?? 'Claude',
   };
 }
 
-function extractClaudePromptTitle(record: Record<string, unknown>): string | undefined {
-  if (record.type !== 'user' || record.isMeta === true) return undefined;
-  const message = record.message as { content?: unknown; role?: string } | undefined;
-  if (message?.role && message.role !== 'user') return undefined;
-  const text = claudeContentToText(message?.content);
-  if (!text) return undefined;
-  if (text.includes('<command-name>') || text.includes('<tool_use_id>')) return undefined;
-  return truncateTitle(
-    text
-      .replace(/<[^>]+>/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim(),
-  );
+function extractClaudeExplicitTitle(record: Record<string, unknown>): string | undefined {
+  const metadata = asRecord(record.metadata);
+  const session = asRecord(record.session);
+  const message = asRecord(record.message);
+  const candidates = [
+    record.title,
+    record.threadName,
+    record.thread_name,
+    record.conversationTitle,
+    record.conversation_title,
+    record.sessionTitle,
+    record.session_title,
+    record.name,
+    record.summary,
+    metadata?.title,
+    metadata?.threadName,
+    metadata?.conversationTitle,
+    metadata?.sessionTitle,
+    metadata?.name,
+    session?.title,
+    session?.threadName,
+    session?.conversationTitle,
+    session?.sessionTitle,
+    session?.name,
+    message?.title,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate !== 'string') continue;
+    const normalized = candidate.replace(/\s+/g, ' ').trim();
+    if (!normalized) continue;
+    if (normalized.includes('<command-name>') || normalized.includes('<tool_use_id>')) continue;
+    return truncateTitle(normalized);
+  }
+  return undefined;
 }
 
-function claudeContentToText(content: unknown): string | undefined {
-  if (typeof content === 'string') return content;
-  if (!Array.isArray(content)) return undefined;
-  const parts: string[] = [];
-  for (const block of content) {
-    if (!block || typeof block !== 'object') continue;
-    const typedBlock = block as { type?: unknown; text?: unknown };
-    if (typedBlock.type !== 'text' || typeof typedBlock.text !== 'string') continue;
-    parts.push(typedBlock.text);
-  }
-  return parts.length > 0 ? parts.join(' ') : undefined;
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  return value as Record<string, unknown>;
 }
 
 function truncateTitle(title: string): string {

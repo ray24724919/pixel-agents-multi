@@ -41,6 +41,10 @@ function stateDbPath(): string {
   return path.join(codexHome(), 'state_5.sqlite');
 }
 
+function sessionIndexPath(): string {
+  return path.join(codexHome(), 'session_index.jsonl');
+}
+
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
@@ -64,16 +68,56 @@ function parseThreadRow(row: string): CodexThread | null {
   const [id, rolloutPath, cwd, title, updatedAtMs, tokensUsed, agentNickname, agentRole] =
     row.split('\t');
   if (!id || !rolloutPath || !cwd) return null;
+  const indexedTitle = readCodexSessionIndexTitle(id);
   return {
     id,
     rolloutPath,
     cwd,
-    title: title || undefined,
+    title: indexedTitle ?? (title || undefined),
     updatedAtMs: Number(updatedAtMs) || 0,
     tokensUsed: Number(tokensUsed) || 0,
     agentNickname: agentNickname || undefined,
     agentRole: agentRole || undefined,
   };
+}
+
+let sessionIndexCache:
+  | {
+      mtimeMs: number;
+      titles: Map<string, string>;
+    }
+  | undefined;
+
+function readCodexSessionIndexTitle(threadId: string): string | undefined {
+  const indexPath = sessionIndexPath();
+  try {
+    const stat = fs.statSync(indexPath);
+    if (!sessionIndexCache || sessionIndexCache.mtimeMs !== stat.mtimeMs) {
+      const titles = new Map<string, string>();
+      const lines = fs.readFileSync(indexPath, 'utf-8').split('\n');
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const record = JSON.parse(line) as Record<string, unknown>;
+          const id = typeof record.id === 'string' ? record.id : undefined;
+          const threadName =
+            typeof record.thread_name === 'string'
+              ? record.thread_name
+              : typeof record.title === 'string'
+                ? record.title
+                : undefined;
+          const normalized = threadName?.replace(/\s+/g, ' ').trim();
+          if (id && normalized) titles.set(id, normalized);
+        } catch {
+          /* ignore malformed index rows */
+        }
+      }
+      sessionIndexCache = { mtimeMs: stat.mtimeMs, titles };
+    }
+    return sessionIndexCache.titles.get(threadId);
+  } catch {
+    return undefined;
+  }
 }
 
 function queryCodexThread(sql: string): CodexThread | null {
@@ -262,6 +306,22 @@ export function parseCodexTranscriptLine(line: string): CodexTranscriptEvent | n
     ) {
       return { kind: 'toolEnd', toolId: callId(payload) ?? 'unknown' };
     }
+
+    if (payloadType === 'reasoning') {
+      return {
+        kind: 'progress',
+        toolId: callId(payload) ?? 'codex-reasoning',
+        data: { label: 'Thinking' },
+      };
+    }
+
+    if (payloadType === 'message' && payload.role === 'assistant') {
+      return {
+        kind: 'progress',
+        toolId: callId(payload) ?? 'codex-response',
+        data: { label: 'Responding' },
+      };
+    }
   }
 
   if (outerType === 'event_msg') {
@@ -282,6 +342,29 @@ export function parseCodexTranscriptLine(line: string): CodexTranscriptEvent | n
     }
     if (payloadType === 'task_started') {
       return { kind: 'userTurn' };
+    }
+    if (payloadType === 'token_count') {
+      const info =
+        typeof payload.info === 'object' && payload.info !== null
+          ? (payload.info as Record<string, unknown>)
+          : {};
+      const total =
+        typeof info.total_token_usage === 'object' && info.total_token_usage !== null
+          ? (info.total_token_usage as Record<string, unknown>)
+          : {};
+      const inputTokens =
+        typeof total.input_tokens === 'number' && Number.isFinite(total.input_tokens)
+          ? total.input_tokens
+          : 0;
+      const outputTokens =
+        (typeof total.output_tokens === 'number' && Number.isFinite(total.output_tokens)
+          ? total.output_tokens
+          : 0) +
+        (typeof total.reasoning_output_tokens === 'number' &&
+        Number.isFinite(total.reasoning_output_tokens)
+          ? total.reasoning_output_tokens
+          : 0);
+      return { kind: 'tokenUsage', inputTokens, outputTokens };
     }
     if (
       payloadType === 'task_complete' ||

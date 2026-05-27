@@ -137,6 +137,7 @@ export function OfficeCanvas({
           const showGhostBorder =
             editorState.activeTool === EditTool.TILE_PAINT ||
             editorState.activeTool === EditTool.WALL_PAINT ||
+            editorState.activeTool === EditTool.ZONE_PAINT ||
             editorState.activeTool === EditTool.ERASE;
           editorRender = {
             showGrid: true,
@@ -342,6 +343,7 @@ export function OfficeCanvas({
         isEditMode &&
         (editorState.activeTool === EditTool.TILE_PAINT ||
           editorState.activeTool === EditTool.WALL_PAINT ||
+          editorState.activeTool === EditTool.ZONE_PAINT ||
           editorState.activeTool === EditTool.ERASE)
       ) {
         if (col < -1 || col > layout.cols || row < -1 || row > layout.rows) return null;
@@ -384,6 +386,7 @@ export function OfficeCanvas({
 
       if (isEditMode) {
         const tile = screenToTile(e.clientX, e.clientY);
+        officeState.hoveredTile = tile;
         if (tile) {
           editorState.ghostCol = tile.col;
           editorState.ghostRow = tile.row;
@@ -400,6 +403,7 @@ export function OfficeCanvas({
             editorState.isDragging &&
             (editorState.activeTool === EditTool.TILE_PAINT ||
               editorState.activeTool === EditTool.WALL_PAINT ||
+              editorState.activeTool === EditTool.ZONE_PAINT ||
               editorState.activeTool === EditTool.ERASE) &&
             !editorState.dragUid
           ) {
@@ -410,6 +414,7 @@ export function OfficeCanvas({
             isEraseDraggingRef.current &&
             (editorState.activeTool === EditTool.TILE_PAINT ||
               editorState.activeTool === EditTool.WALL_PAINT ||
+              editorState.activeTool === EditTool.ZONE_PAINT ||
               editorState.activeTool === EditTool.ERASE)
           ) {
             const layout = officeState.getLayout();
@@ -552,6 +557,7 @@ export function OfficeCanvas({
           tile &&
           (editorState.activeTool === EditTool.TILE_PAINT ||
             editorState.activeTool === EditTool.WALL_PAINT ||
+            editorState.activeTool === EditTool.ZONE_PAINT ||
             editorState.activeTool === EditTool.ERASE)
         ) {
           const layout = officeState.getLayout();

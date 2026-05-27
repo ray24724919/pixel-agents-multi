@@ -6,8 +6,10 @@ import type {
   PlacedFurniture,
   Seat,
   TileType as TileTypeVal,
+  ZoneType,
 } from '../types.js';
 import { DEFAULT_COLS, DEFAULT_ROWS, Direction, TILE_SIZE, TileType } from '../types.js';
+import { inferTileZone } from '../zoneUtils.js';
 import { getCatalogEntry, getOrientationInGroup } from './furnitureCatalog.js';
 
 /** Convert flat tile array from layout into 2D grid */
@@ -162,8 +164,9 @@ function orientationToFacing(orientation: string): Direction {
 
 /** Generate seats from chair furniture.
  *  Facing priority: 1) chair orientation, 2) adjacent desk, 3) forward (DOWN). */
-export function layoutToSeats(furniture: PlacedFurniture[]): Map<string, Seat> {
+export function layoutToSeats(layout: OfficeLayout): Map<string, Seat> {
   const seats = new Map<string, Seat>();
+  const { furniture } = layout;
 
   // Build set of all desk and electronics tiles. Seats near electronics are work seats.
   const deskTiles = new Set<string>();
@@ -218,12 +221,22 @@ export function layoutToSeats(furniture: PlacedFurniture[]): Map<string, Seat> {
 
         // First seat uses chair uid (backward compat), subsequent use uid:N
         const seatUid = seatCount === 0 ? item.uid : `${item.uid}:${seatCount}`;
+        const isWorkFurnitureSeat = isNearElectronics(tileCol, tileRow, electronicsTiles);
+        const inferredZone = inferTileZone(layout, tileCol, tileRow);
+        const zone: Seat['seatKind'] =
+          isWorkFurnitureSeat || inferredZone.zone === 'work' ? 'work' : 'rest';
+        const zoneSource = isWorkFurnitureSeat
+          ? 'computer-adjacent'
+          : inferredZone.source === 'zone-paint'
+            ? 'zone-paint'
+            : 'default-split';
         seats.set(seatUid, {
           uid: seatUid,
           seatCol: tileCol,
           seatRow: tileRow,
           facingDir,
-          seatKind: isNearElectronics(tileCol, tileRow, electronicsTiles) ? 'work' : 'rest',
+          seatKind: zone,
+          zoneSource,
           assigned: false,
         });
         seatCount++;
@@ -269,24 +282,36 @@ export function createDefaultLayout(): OfficeLayout {
 
   const tiles: TileTypeVal[] = [];
   const tileColors: Array<ColorValue | null> = [];
+  const zones: Array<ZoneType | null> = [];
 
   for (let r = 0; r < DEFAULT_ROWS; r++) {
     for (let c = 0; c < DEFAULT_COLS; c++) {
       if (r === 0 || r === DEFAULT_ROWS - 1 || c === 0 || c === DEFAULT_COLS - 1) {
         tiles.push(W);
         tileColors.push(null);
+        zones.push(null);
       } else if (c < 10) {
         tiles.push(F1);
         tileColors.push(DEFAULT_LEFT_ROOM_COLOR);
+        zones.push(null);
       } else {
         tiles.push(F2);
         tileColors.push(DEFAULT_RIGHT_ROOM_COLOR);
+        zones.push(null);
       }
     }
   }
 
   // Minimal fallback with no furniture — the default-layout.json provides the real default
-  return { version: 1, cols: DEFAULT_COLS, rows: DEFAULT_ROWS, tiles, tileColors, furniture: [] };
+  return {
+    version: 1,
+    cols: DEFAULT_COLS,
+    rows: DEFAULT_ROWS,
+    tiles,
+    tileColors,
+    zones,
+    furniture: [],
+  };
 }
 
 /** Serialize layout to JSON string
@@ -366,7 +391,7 @@ function migrateLayout(layout: OfficeLayout): OfficeLayout {
   }
 
   if (layout.tileColors && layout.tileColors.length === layout.tiles.length) {
-    return layout; // Already migrated tile colors
+    return normalizeLayoutZones(layout);
   }
 
   // Check if any tiles use old values (1-4) — these map directly to FLOOR_1-4
@@ -395,5 +420,12 @@ function migrateLayout(layout: OfficeLayout): OfficeLayout {
     }
   }
 
-  return { ...layout, tileColors };
+  return normalizeLayoutZones({ ...layout, tileColors });
+}
+
+function normalizeLayoutZones(layout: OfficeLayout): OfficeLayout {
+  if (layout.zones && layout.zones.length === layout.tiles.length) {
+    return layout;
+  }
+  return { ...layout, zones: new Array(layout.tiles.length).fill(null) };
 }

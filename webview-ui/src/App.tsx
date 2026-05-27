@@ -16,6 +16,9 @@ import { useEditorActions } from './hooks/useEditorActions.js';
 import { useEditorKeyboard } from './hooks/useEditorKeyboard.js';
 import { useExtensionMessages } from './hooks/useExtensionMessages.js';
 import { OfficeCanvas } from './office/components/OfficeCanvas.js';
+import { RoomTokenCostSummary } from './office/components/RoomTokenCostSummary.js';
+import { RoomZoneOverlay } from './office/components/RoomZoneOverlay.js';
+import { RoomZoneStatus } from './office/components/RoomZoneStatus.js';
 import { ToolOverlay } from './office/components/ToolOverlay.js';
 import { EditorState } from './office/editor/editorState.js';
 import { EditorToolbar } from './office/editor/EditorToolbar.js';
@@ -57,6 +60,10 @@ function App() {
     selectedAgent,
     agentTools,
     agentStatuses,
+    agentLifecycleStatuses,
+    agentLifecycleEvents,
+    agentTimelineEvents,
+    agentRuntimeMetadata,
     agentEventTrace,
     subagentTools,
     subagentCharacters,
@@ -244,6 +251,28 @@ function App() {
         <>
           <ZoomControls zoom={editor.zoom} onZoomChange={editor.handleZoomChange} />
 
+          {!editor.isEditMode && (
+            <RoomTokenCostSummary
+              officeState={officeState}
+              agents={agents}
+              containerRef={containerRef}
+              zoom={editor.zoom}
+              panRef={editor.panRef}
+            />
+          )}
+
+          {editor.isEditMode && (
+            <>
+              <RoomZoneOverlay
+                officeState={officeState}
+                containerRef={containerRef}
+                zoom={editor.zoom}
+                panRef={editor.panRef}
+              />
+              <RoomZoneStatus officeState={officeState} />
+            </>
+          )}
+
           {/* Vignette overlay */}
           <div
             className="absolute inset-0 pointer-events-none"
@@ -274,6 +303,7 @@ function App() {
                   activeTool={editorState.activeTool}
                   selectedTileType={editorState.selectedTileType}
                   selectedFurnitureType={editorState.selectedFurnitureType}
+                  selectedZone={editorState.selectedZone}
                   selectedFurnitureUid={selUid}
                   selectedFurnitureColor={selColor}
                   floorColor={editorState.floorColor}
@@ -286,6 +316,7 @@ function App() {
                   onWallSetChange={editor.handleWallSetChange}
                   onSelectedFurnitureColorChange={editor.handleSelectedFurnitureColorChange}
                   onFurnitureTypeChange={editor.handleFurnitureTypeChange}
+                  onZoneChange={editor.handleZoneChange}
                   loadedAssets={loadedAssets}
                 />
               );
@@ -295,6 +326,8 @@ function App() {
             officeState={officeState}
             agents={visibleAgents}
             agentTools={agentTools}
+            agentLifecycleStatuses={agentLifecycleStatuses}
+            agentRuntimeMetadata={agentRuntimeMetadata}
             subagentCharacters={visibleSubagentCharacters}
             containerRef={containerRef}
             zoom={editor.zoom}
@@ -309,6 +342,8 @@ function App() {
           selectedAgent={selectedAgent}
           agentTools={agentTools}
           agentStatuses={agentStatuses}
+          agentLifecycleStatuses={agentLifecycleStatuses}
+          agentLifecycleEvents={agentLifecycleEvents}
           agentEventTrace={agentEventTrace}
           subagentTools={subagentTools}
           officeState={officeState}
@@ -408,6 +443,10 @@ function App() {
         selectedAgent={selectedAgent}
         agentTools={agentTools}
         agentStatuses={agentStatuses}
+        agentLifecycleStatuses={agentLifecycleStatuses}
+        agentLifecycleEvents={agentLifecycleEvents}
+        agentTimelineEvents={agentTimelineEvents}
+        agentRuntimeMetadata={agentRuntimeMetadata}
         officeState={officeState}
         onCloseAgent={handleCloseAgent}
       />
@@ -415,42 +454,58 @@ function App() {
       <Modal
         isOpen={pendingCloseAgentId !== null}
         onClose={() => setPendingCloseAgentId(null)}
-        title="Kill agent?"
+        title="Agent actions"
         zIndex={54}
       >
         <div className="px-10 pb-8">
           <p className="text-base text-text">
-            Really kill{' '}
+            Choose what to do with{' '}
             <span className="text-accent-bright">
               {pendingCloseCharacter?.agentName ?? `Agent #${pendingCloseAgentId ?? ''}`}
             </span>
-            ?
+            .
           </p>
           {pendingCloseCharacter?.folderName && (
             <p className="mt-2 text-sm text-text-muted">{pendingCloseCharacter.folderName}</p>
           )}
-          <p className="mt-5 text-sm text-text-muted">
-            This closes the linked VS Code terminal when available. Codex threads are archived;
-            external Claude sessions are removed from tracking.
-          </p>
-          <div className="mt-8 flex justify-end gap-3">
+          <div className="mt-5 grid gap-3 text-sm text-text-muted">
+            <p>
+              Hide removes only the visual agent for now. It can appear again after refresh if the
+              session is still active.
+            </p>
+            <p>
+              Archive removes it from the active roster. Codex threads are archived; Claude
+              transcripts are dismissed from tracking.
+            </p>
+            <p>Kill closes the linked VS Code terminal when available.</p>
+          </div>
+          <div className="mt-8 flex flex-wrap justify-end gap-3">
             <button
               className="border-2 border-border bg-btn-bg px-12 py-3 text-text"
               onClick={() => setPendingCloseAgentId(null)}
             >
               Cancel
             </button>
-            <button
-              className="border-2 border-accent bg-accent px-12 py-3 text-white"
-              onClick={() => {
-                if (pendingCloseAgentId !== null) {
-                  vscode.postMessage({ type: 'closeAgent', id: pendingCloseAgentId });
-                }
-                setPendingCloseAgentId(null);
-              }}
-            >
-              Kill
-            </button>
+            {(['hide', 'archive', 'kill'] as const).map((action) => (
+              <button
+                key={action}
+                className={`border-2 px-12 py-3 text-white ${
+                  action === 'kill'
+                    ? 'border-danger bg-danger'
+                    : action === 'archive'
+                      ? 'border-accent bg-accent'
+                      : 'border-border bg-btn-bg text-text'
+                }`}
+                onClick={() => {
+                  if (pendingCloseAgentId !== null) {
+                    vscode.postMessage({ type: 'agentAction', id: pendingCloseAgentId, action });
+                  }
+                  setPendingCloseAgentId(null);
+                }}
+              >
+                {action[0].toUpperCase() + action.slice(1)}
+              </button>
+            ))}
           </div>
         </div>
       </Modal>

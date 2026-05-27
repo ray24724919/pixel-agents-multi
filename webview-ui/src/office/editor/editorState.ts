@@ -1,6 +1,6 @@
 import type { ColorValue } from '../../components/ui/types.js';
 import { DEFAULT_FLOOR_COLOR, DEFAULT_WALL_COLOR, UNDO_STACK_MAX_SIZE } from '../../constants.js';
-import type { OfficeLayout, TileType as TileTypeVal } from '../types.js';
+import type { OfficeLayout, TileType as TileTypeVal, ZoneType } from '../types.js';
 import { EditTool, TileType } from '../types.js';
 
 export class EditorState {
@@ -8,6 +8,7 @@ export class EditorState {
   activeTool: EditTool = EditTool.SELECT;
   selectedTileType: TileTypeVal = TileType.FLOOR_1;
   selectedFurnitureType = ''; // asset ID, set when catalog loads
+  selectedZone: ZoneType = 'rest';
 
   // Floor color settings (applied to new tiles when painting)
   floorColor: ColorValue = { ...DEFAULT_FLOOR_COLOR };

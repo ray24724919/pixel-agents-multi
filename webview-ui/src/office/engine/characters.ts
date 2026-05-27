@@ -88,6 +88,8 @@ export function createCharacter(
     matrixEffectSeeds: [],
     inputTokens: 0,
     outputTokens: 0,
+    artifactOutputTokens: 0,
+    tokenUsageEstimated: false,
   };
 }
 
@@ -173,9 +175,9 @@ export function updateCharacter(
       // Countdown wander timer
       ch.wanderTimer -= dt;
       if (ch.wanderTimer <= 0) {
-        // Check if we've wandered enough — return to seat for a rest
-        if (ch.wanderCount >= ch.wanderLimit && ch.seatId) {
-          const seat = seats.get(ch.seatId);
+        // Check if we've wandered enough — maybe claim a rest seat for a while.
+        if (ch.wanderCount >= ch.wanderLimit) {
+          const seat = claimIdleRestSeat(ch, seats);
           if (seat) {
             const path = findPath(
               ch.tileCol,
@@ -189,6 +191,18 @@ export function updateCharacter(
               ch.path = path;
               ch.moveProgress = 0;
               ch.state = CharacterState.WALK;
+              ch.frame = 0;
+              ch.frameTimer = 0;
+              break;
+            } else if (ch.tileCol === seat.seatCol && ch.tileRow === seat.seatRow) {
+              ch.state = CharacterState.TYPE;
+              ch.dir = seat.facingDir;
+              ch.seatTimer = randomRange(SEAT_REST_MIN_SEC, SEAT_REST_MAX_SEC);
+              ch.wanderCount = 0;
+              ch.wanderLimit = randomInt(
+                WANDER_MOVES_BEFORE_REST_MIN,
+                WANDER_MOVES_BEFORE_REST_MAX,
+              );
               ch.frame = 0;
               ch.frameTimer = 0;
               break;
@@ -325,10 +339,39 @@ export function updateCharacter(
   }
 }
 
+function claimIdleRestSeat(ch: Character, seats: Map<string, Seat>): Seat | null {
+  if (ch.seatId) {
+    const current = seats.get(ch.seatId);
+    if (current?.seatKind === 'rest') return current;
+  }
+
+  if (ch.restSeatId) {
+    const preferred = seats.get(ch.restSeatId);
+    if (preferred && preferred.seatKind === 'rest' && !preferred.assigned) {
+      preferred.assigned = true;
+      ch.seatId = ch.restSeatId;
+      return preferred;
+    }
+  }
+
+  const candidates = [...seats.entries()].filter(
+    ([, seat]) => seat.seatKind === 'rest' && !seat.assigned,
+  );
+  if (candidates.length === 0) return null;
+  const [uid, seat] = candidates[Math.floor(Math.random() * candidates.length)];
+  seat.assigned = true;
+  ch.seatId = uid;
+  ch.restSeatId = uid;
+  return seat;
+}
+
 /** Get the correct sprite frame for a character's current state and direction */
 export function getCharacterSprite(ch: Character, sprites: CharacterSprites): SpriteData {
   switch (ch.state) {
     case CharacterState.TYPE:
+      if (!ch.isActive) {
+        return sprites.walk[ch.dir][1];
+      }
       if (isReadingTool(ch.currentTool)) {
         return sprites.reading[ch.dir][ch.frame % 2];
       }

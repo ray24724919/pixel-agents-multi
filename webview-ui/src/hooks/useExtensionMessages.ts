@@ -24,6 +24,52 @@ export interface AgentEventTrace {
   detail?: string;
 }
 
+export type AgentLifecycleStatus =
+  | 'idle'
+  | 'thinking'
+  | 'tool_running'
+  | 'waiting_user'
+  | 'waiting_permission'
+  | 'completed'
+  | 'error';
+
+export interface AgentLifecycleState {
+  id: number;
+  status: AgentLifecycleStatus;
+  label: string;
+  detail?: string;
+  severity?: 'info' | 'success' | 'warning' | 'error';
+  toolName?: string;
+  updatedAt: number;
+}
+
+export interface AgentLifecycleEvent extends AgentLifecycleState {
+  receivedAt: number;
+}
+
+export interface AgentTimelineEvent {
+  id: string;
+  agentId: number;
+  providerId?: string;
+  projectName?: string;
+  sessionId?: string;
+  runId?: string;
+  timestamp: number;
+  kind: string;
+  title: string;
+  summary?: string;
+  statusAfter?: AgentLifecycleStatus;
+  severity?: 'info' | 'success' | 'warning' | 'error';
+  source?: 'user' | 'agent' | 'tool' | 'system';
+  visibility?: 'default' | 'verbose' | 'debug';
+  payload?: unknown;
+}
+
+export interface AgentRuntimeMetadata {
+  projectDir?: string;
+  transcriptPath?: string;
+}
+
 interface FurnitureAsset {
   id: string;
   name: string;
@@ -57,6 +103,10 @@ interface ExtensionMessageState {
   selectedAgent: number | null;
   agentTools: Record<number, ToolActivity[]>;
   agentStatuses: Record<number, string>;
+  agentLifecycleStatuses: Record<number, AgentLifecycleState>;
+  agentLifecycleEvents: AgentLifecycleEvent[];
+  agentTimelineEvents: AgentTimelineEvent[];
+  agentRuntimeMetadata: Record<number, AgentRuntimeMetadata>;
   agentEventTrace: Record<number, AgentEventTrace[]>;
   subagentTools: Record<number, Record<string, ToolActivity[]>>;
   subagentCharacters: SubagentCharacter[];
@@ -94,6 +144,14 @@ export function useExtensionMessages(
   const [selectedAgent, setSelectedAgent] = useState<number | null>(null);
   const [agentTools, setAgentTools] = useState<Record<number, ToolActivity[]>>({});
   const [agentStatuses, setAgentStatuses] = useState<Record<number, string>>({});
+  const [agentLifecycleStatuses, setAgentLifecycleStatuses] = useState<
+    Record<number, AgentLifecycleState>
+  >({});
+  const [agentLifecycleEvents, setAgentLifecycleEvents] = useState<AgentLifecycleEvent[]>([]);
+  const [agentTimelineEvents, setAgentTimelineEvents] = useState<AgentTimelineEvent[]>([]);
+  const [agentRuntimeMetadata, setAgentRuntimeMetadata] = useState<
+    Record<number, AgentRuntimeMetadata>
+  >({});
   const [agentEventTrace, setAgentEventTrace] = useState<Record<number, AgentEventTrace[]>>({});
   const [subagentTools, setSubagentTools] = useState<
     Record<number, Record<string, ToolActivity[]>>
@@ -127,6 +185,8 @@ export function useExtensionMessages(
       folderName?: string;
       agentName?: string;
       providerId?: string;
+      projectDir?: string;
+      transcriptPath?: string;
       initialActive?: boolean;
     }> = [];
 
@@ -181,11 +241,20 @@ export function useExtensionMessages(
         const folderName = msg.folderName as string | undefined;
         const agentName = msg.agentName as string | undefined;
         const providerId = msg.providerId as string | undefined;
+        const projectDir = msg.projectDir as string | undefined;
+        const transcriptPath = msg.transcriptPath as string | undefined;
         const isTeammate = msg.isTeammate as boolean | undefined;
         const teammateName = msg.teammateName as string | undefined;
         const teammateParentId = msg.parentAgentId as number | undefined;
         const teamName = msg.teamName as string | undefined;
         setAgents((prev) => (prev.includes(id) ? prev : [...prev, id]));
+        setAgentRuntimeMetadata((prev) => ({
+          ...prev,
+          [id]: {
+            projectDir: projectDir ?? prev[id]?.projectDir,
+            transcriptPath: transcriptPath ?? prev[id]?.transcriptPath,
+          },
+        }));
         // Don't auto-select teammates (keep focus on lead)
         if (!isTeammate) {
           setSelectedAgent(id);
@@ -229,6 +298,19 @@ export function useExtensionMessages(
           delete next[id];
           return next;
         });
+        setAgentLifecycleStatuses((prev) => {
+          if (!(id in prev)) return prev;
+          const next = { ...prev };
+          delete next[id];
+          return next;
+        });
+        setAgentRuntimeMetadata((prev) => {
+          if (!(id in prev)) return prev;
+          const next = { ...prev };
+          delete next[id];
+          return next;
+        });
+        setAgentTimelineEvents((prev) => prev.filter((event) => event.agentId !== id));
         setSubagentTools((prev) => {
           if (!(id in prev)) return prev;
           const next = { ...prev };
@@ -247,6 +329,13 @@ export function useExtensionMessages(
           ch.agentName = msg.agentName as string | undefined;
           ch.providerId = msg.providerId as string | undefined;
         }
+        setAgentRuntimeMetadata((prev) => ({
+          ...prev,
+          [id]: {
+            projectDir: (msg.projectDir as string | undefined) ?? prev[id]?.projectDir,
+            transcriptPath: (msg.transcriptPath as string | undefined) ?? prev[id]?.transcriptPath,
+          },
+        }));
       } else if (msg.type === 'existingAgents') {
         const incoming = msg.agents as number[];
         const meta = (msg.agentMeta || {}) as Record<
@@ -256,6 +345,18 @@ export function useExtensionMessages(
         const folderNames = (msg.folderNames || {}) as Record<number, string>;
         const agentNames = (msg.agentNames || {}) as Record<number, string>;
         const providerIds = (msg.providerIds || {}) as Record<number, string>;
+        const projectDirs = (msg.projectDirs || {}) as Record<number, string>;
+        const transcriptPaths = (msg.transcriptPaths || {}) as Record<number, string>;
+        setAgentRuntimeMetadata((prev) => {
+          const next = { ...prev };
+          for (const id of incoming) {
+            next[id] = {
+              projectDir: projectDirs[id] ?? next[id]?.projectDir,
+              transcriptPath: transcriptPaths[id] ?? next[id]?.transcriptPath,
+            };
+          }
+          return next;
+        });
         // Buffer agents — they'll be added in layoutLoaded after seats are built
         for (const id of incoming) {
           const m = meta[id];
@@ -273,6 +374,8 @@ export function useExtensionMessages(
             folderName: folderNames[id],
             agentName: agentNames[id],
             providerId: providerIds[id],
+            projectDir: projectDirs[id],
+            transcriptPath: transcriptPaths[id],
             initialActive: false,
           });
         }
@@ -392,6 +495,94 @@ export function useExtensionMessages(
         if (status === 'waiting') {
           os.showWaitingBubble(id);
           playDoneSound();
+        }
+      } else if (msg.type === 'agentLifecycleStatus') {
+        const lifecycle = {
+          id: msg.id as number,
+          status: msg.status as AgentLifecycleStatus,
+          label: msg.label as string,
+          detail: msg.detail as string | undefined,
+          severity: msg.severity as AgentLifecycleState['severity'],
+          toolName: msg.toolName as string | undefined,
+          updatedAt: msg.updatedAt as number,
+        };
+        traceAgentEvent(
+          lifecycle.id,
+          'agentLifecycleStatus',
+          [lifecycle.status, lifecycle.label, lifecycle.detail].filter(Boolean).join(' · '),
+        );
+        setAgentLifecycleStatuses((prev) => ({ ...prev, [lifecycle.id]: lifecycle }));
+        setAgentLifecycleEvents((prev) =>
+          [{ ...lifecycle, receivedAt: Date.now() }, ...prev].slice(0, 30),
+        );
+        if (lifecycle.status === 'thinking' || lifecycle.status === 'tool_running') {
+          os.setAgentActive(lifecycle.id, true);
+        } else if (
+          lifecycle.status === 'completed' ||
+          lifecycle.status === 'idle' ||
+          lifecycle.status === 'waiting_user' ||
+          lifecycle.status === 'error'
+        ) {
+          os.setAgentTool(lifecycle.id, null);
+          os.setAgentActive(lifecycle.id, false);
+        }
+        if (lifecycle.status === 'completed') {
+          window.setTimeout(() => {
+            setAgentLifecycleStatuses((prev) => {
+              const current = prev[lifecycle.id];
+              if (!current || current.updatedAt !== lifecycle.updatedAt) return prev;
+              os.setAgentTool(lifecycle.id, null);
+              os.setAgentActive(lifecycle.id, false);
+              return {
+                ...prev,
+                [lifecycle.id]: {
+                  id: lifecycle.id,
+                  status: 'idle',
+                  label: 'Idle',
+                  severity: 'info',
+                  updatedAt: Date.now(),
+                },
+              };
+            });
+          }, 2500);
+        }
+      } else if (msg.type === 'agentTimelineEvent') {
+        const raw = (msg.event ?? msg) as Partial<AgentTimelineEvent> & {
+          agentId?: number | string;
+          id?: string;
+          timestamp?: number | string;
+          type?: string;
+          summary?: string;
+          title?: string;
+        };
+        const agentId =
+          typeof raw.agentId === 'string' ? Number.parseInt(raw.agentId, 10) : raw.agentId;
+        if (typeof agentId === 'number' && Number.isFinite(agentId)) {
+          const timestamp =
+            typeof raw.timestamp === 'string'
+              ? Date.parse(raw.timestamp)
+              : typeof raw.timestamp === 'number'
+                ? raw.timestamp
+                : Date.now();
+          const event: AgentTimelineEvent = {
+            id: raw.id ?? `${agentId}-${timestamp}-${raw.kind ?? raw.type ?? 'event'}`,
+            agentId,
+            providerId: raw.providerId,
+            projectName: raw.projectName,
+            sessionId: raw.sessionId,
+            runId: raw.runId,
+            timestamp: Number.isFinite(timestamp) ? timestamp : Date.now(),
+            kind: raw.kind ?? raw.type ?? 'event',
+            title: raw.title ?? raw.summary ?? raw.kind ?? raw.type ?? 'Event',
+            summary: raw.summary,
+            statusAfter: raw.statusAfter,
+            severity: raw.severity,
+            source: raw.source,
+            visibility: raw.visibility,
+            payload: raw.payload,
+          };
+          traceAgentEvent(event.agentId, 'agentTimelineEvent', `${event.kind} · ${event.title}`);
+          setAgentTimelineEvents((prev) => [event, ...prev].slice(0, 120));
         }
       } else if (msg.type === 'agentToolPermission') {
         const id = msg.id as number;
@@ -571,7 +762,13 @@ export function useExtensionMessages(
       } else if (msg.type === 'agentTokenUsage') {
         const id = msg.id as number;
         traceAgentEvent(id, 'agentTokenUsage', `${msg.inputTokens ?? 0}/${msg.outputTokens ?? 0}`);
-        os.setAgentTokens(id, msg.inputTokens as number, msg.outputTokens as number);
+        os.setAgentTokens(
+          id,
+          msg.inputTokens as number,
+          msg.outputTokens as number,
+          msg.estimated === true,
+          (msg.artifactOutputTokens as number | undefined) ?? 0,
+        );
       }
     };
     window.addEventListener('message', handler);
@@ -585,6 +782,10 @@ export function useExtensionMessages(
     selectedAgent,
     agentTools,
     agentStatuses,
+    agentLifecycleStatuses,
+    agentLifecycleEvents,
+    agentTimelineEvents,
+    agentRuntimeMetadata,
     agentEventTrace,
     subagentTools,
     subagentCharacters,

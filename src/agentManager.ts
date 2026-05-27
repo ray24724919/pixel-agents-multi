@@ -6,6 +6,7 @@ import * as vscode from 'vscode';
 import { JSONL_POLL_INTERVAL_MS } from '../server/src/constants.js';
 import {
   buildCodexLaunchCommand,
+  findCodexThreadById,
   findLatestCodexThread,
 } from '../server/src/providers/file/codex/codex.js';
 import {
@@ -15,7 +16,9 @@ import {
 } from './constants.js';
 import { ensureProjectScan, readNewLines, startFileWatching } from './fileWatcher.js';
 import { migrateAndLoadLayout } from './layoutPersistence.js';
+import { postAgentLifecycleSnapshot } from './lifecycleStatus.js';
 import { cancelPermissionTimer, cancelWaitingTimer } from './timerManager.js';
+import { readTokenUsageFromTranscript } from './tokenUsage.js';
 import type { AgentState, PersistedAgent } from './types.js';
 
 export function getProjectDirPath(cwd?: string): string {
@@ -139,6 +142,8 @@ export async function launchNewTerminal(
     folderName: folderName ?? projectName,
     agentName: 'Codex',
     providerId: 'codex',
+    projectDir,
+    transcriptPath: agent.jsonlFile,
   });
 
   void projectScanTimerRef;
@@ -157,10 +162,29 @@ export async function launchNewTerminal(
         agent.jsonlFile = thread.rolloutPath;
         agent.projectDir = cwd;
         agent.agentName = thread.title ?? thread.agentNickname ?? thread.agentRole ?? 'Codex';
-        agent.inputTokens = thread.tokensUsed;
-        agent.outputTokens = 0;
+        const transcriptUsage = readTokenUsageFromTranscript(thread.rolloutPath, 'codex');
+        agent.inputTokens = transcriptUsage?.inputTokens ?? thread.tokensUsed;
+        agent.outputTokens = transcriptUsage?.outputTokens ?? 0;
+        agent.artifactOutputTokens = transcriptUsage?.artifactOutputTokens ?? 0;
         knownJsonlFiles.add(thread.rolloutPath);
         persistAgents();
+        webview?.postMessage({
+          type: 'agentMetadata',
+          id,
+          folderName: folderName ?? projectName,
+          agentName: agent.agentName,
+          providerId: 'codex',
+          projectDir: agent.projectDir,
+          transcriptPath: agent.jsonlFile,
+        });
+        webview?.postMessage({
+          type: 'agentTokenUsage',
+          id,
+          inputTokens: agent.inputTokens,
+          outputTokens: agent.outputTokens,
+          artifactOutputTokens: agent.artifactOutputTokens ?? 0,
+          estimated: transcriptUsage?.estimated ?? false,
+        });
         console.log(
           `[Pixel Agents] Terminal: Agent ${id} - found Codex rollout ${path.basename(thread.rolloutPath)} (after ${pollCount}s)`,
         );
@@ -486,8 +510,11 @@ export function sendExistingAgents(
   const folderNames: Record<number, string> = {};
   const agentNames: Record<number, string> = {};
   const providerIds: Record<number, string> = {};
+  const projectDirs: Record<number, string> = {};
+  const transcriptPaths: Record<number, string> = {};
   const externalAgents: Record<number, boolean> = {};
   for (const [id, agent] of agents) {
+    refreshCodexAgentMetadata(agent);
     const projectLabel = agent.projectName ?? agent.folderName;
     if (projectLabel) {
       folderNames[id] = projectLabel;
@@ -496,6 +523,12 @@ export function sendExistingAgents(
       agentNames[id] = agent.agentName;
     }
     providerIds[id] = agent.providerId ?? 'claude';
+    if (agent.projectDir) {
+      projectDirs[id] = agent.projectDir;
+    }
+    if (agent.jsonlFile) {
+      transcriptPaths[id] = agent.jsonlFile;
+    }
     if (agent.isExternal) {
       externalAgents[id] = true;
     }
@@ -511,11 +544,35 @@ export function sendExistingAgents(
     folderNames,
     agentNames,
     providerIds,
+    projectDirs,
+    transcriptPaths,
     externalAgents,
   });
   // Note: sendCurrentAgentStatuses is called separately AFTER layoutLoaded
   // so that agentStatus/agentToolStart messages arrive after characters are created.
 }
+
+function refreshCodexAgentMetadata(agent: AgentState): boolean {
+  if (agent.providerId !== 'codex' || !agent.sessionId) return false;
+  const thread = findCodexThreadById(agent.sessionId);
+  if (!thread) return false;
+  const agentName = thread.title ?? thread.agentNickname ?? thread.agentRole ?? agent.agentName;
+  const projectName = thread.cwd ? path.basename(thread.cwd) : agent.projectName;
+  const changed =
+    agent.agentName !== agentName ||
+    agent.projectDir !== thread.cwd ||
+    agent.jsonlFile !== thread.rolloutPath ||
+    agent.projectName !== projectName ||
+    agent.folderName !== projectName;
+  agent.agentName = agentName;
+  agent.projectDir = thread.cwd;
+  agent.jsonlFile = thread.rolloutPath;
+  agent.projectName = projectName;
+  agent.folderName = projectName;
+  return changed;
+}
+
+const ACTIVE_FILE_MTIME_WINDOW_MS = 30_000;
 
 export function sendCurrentAgentStatuses(
   agents: Map<number, AgentState>,
@@ -523,6 +580,17 @@ export function sendCurrentAgentStatuses(
 ): void {
   if (!webview) return;
   for (const [agentId, agent] of agents) {
+    if (refreshCodexAgentMetadata(agent)) {
+      webview.postMessage({
+        type: 'agentMetadata',
+        id: agentId,
+        folderName: agent.projectName ?? agent.folderName,
+        agentName: agent.agentName,
+        providerId: agent.providerId,
+        projectDir: agent.projectDir,
+        transcriptPath: agent.jsonlFile,
+      });
+    }
     // Re-send active tools
     for (const [toolId, status] of agent.activeToolStatuses) {
       const toolName = agent.activeToolNames.get(toolId) ?? '';
@@ -541,6 +609,12 @@ export function sendCurrentAgentStatuses(
         id: agentId,
         status: 'waiting',
       });
+    } else if (isTranscriptRecentlyActive(agent)) {
+      webview.postMessage({
+        type: 'agentStatus',
+        id: agentId,
+        status: 'active',
+      });
     }
     // Re-send team metadata
     if (agent.teamName) {
@@ -554,16 +628,50 @@ export function sendCurrentAgentStatuses(
         teamUsesTmux: agent.teamUsesTmux,
       });
     }
-    // Re-send token usage
-    if (agent.inputTokens > 0 || agent.outputTokens > 0) {
+    // Re-send cached token usage immediately. Full transcript scans can be very
+    // large, so they are deferred to keep the panel responsive on open.
+    if (agent.inputTokens > 0 || agent.outputTokens > 0 || (agent.artifactOutputTokens ?? 0) > 0) {
       webview.postMessage({
         type: 'agentTokenUsage',
         id: agentId,
         inputTokens: agent.inputTokens,
         outputTokens: agent.outputTokens,
+        artifactOutputTokens: agent.artifactOutputTokens ?? 0,
+        estimated: false,
       });
     }
+    scheduleTokenUsageRefresh(agent, webview);
+    postAgentLifecycleSnapshot(webview, agent);
   }
+}
+
+function isTranscriptRecentlyActive(agent: AgentState): boolean {
+  if (!agent.jsonlFile) return false;
+  try {
+    const stat = fs.statSync(agent.jsonlFile);
+    return Date.now() - stat.mtimeMs < ACTIVE_FILE_MTIME_WINDOW_MS;
+  } catch {
+    return false;
+  }
+}
+
+function scheduleTokenUsageRefresh(agent: AgentState, webview: vscode.Webview): void {
+  if (!agent.jsonlFile) return;
+  setTimeout(() => {
+    const transcriptUsage = readTokenUsageFromTranscript(agent.jsonlFile, agent.providerId);
+    if (!transcriptUsage) return;
+    agent.inputTokens = transcriptUsage.inputTokens;
+    agent.outputTokens = transcriptUsage.outputTokens;
+    agent.artifactOutputTokens = transcriptUsage.artifactOutputTokens;
+    webview.postMessage({
+      type: 'agentTokenUsage',
+      id: agent.id,
+      inputTokens: agent.inputTokens,
+      outputTokens: agent.outputTokens,
+      artifactOutputTokens: agent.artifactOutputTokens ?? 0,
+      estimated: transcriptUsage.estimated,
+    });
+  }, 250);
 }
 
 export function sendLayout(

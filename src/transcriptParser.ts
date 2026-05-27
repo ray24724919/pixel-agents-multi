@@ -15,12 +15,20 @@ import {
   parseCodexTranscriptLine,
 } from '../server/src/providers/file/codex/codex.js';
 import {
+  postCompleted,
+  postError,
+  postThinking,
+  postToolRunning,
+  postWaitingPermission,
+} from './lifecycleStatus.js';
+import {
   cancelPermissionTimer,
   cancelWaitingTimer,
   clearAgentActivity,
   startPermissionTimer,
   startWaitingTimer,
 } from './timerManager.js';
+import { estimateArtifactOutputTokens, extractClaudeUsage } from './tokenUsage.js';
 import type { AgentState } from './types.js';
 
 const PERMISSION_EXEMPT_TOOLS = new Set(['Task', 'Agent', 'AskUserQuestion']);
@@ -154,21 +162,21 @@ export function processTranscriptLine(
     }
 
     // -- Token usage extraction from assistant records --
-    const usage = record.message?.usage as
-      | { input_tokens?: number; output_tokens?: number }
-      | undefined;
-    if (usage) {
-      if (typeof usage.input_tokens === 'number') {
-        agent.inputTokens += usage.input_tokens;
-      }
-      if (typeof usage.output_tokens === 'number') {
-        agent.outputTokens += usage.output_tokens;
-      }
+    const artifactOutputTokens = estimateArtifactOutputTokens(record, agent.providerId);
+    if (artifactOutputTokens > 0) {
+      agent.artifactOutputTokens = (agent.artifactOutputTokens ?? 0) + artifactOutputTokens;
+    }
+    const usage = extractClaudeUsage(record);
+    if (usage || artifactOutputTokens > 0) {
+      agent.inputTokens += usage?.inputTokens ?? 0;
+      agent.outputTokens += usage?.outputTokens ?? 0;
       webview?.postMessage({
         type: 'agentTokenUsage',
         id: agentId,
         inputTokens: agent.inputTokens,
         outputTokens: agent.outputTokens,
+        artifactOutputTokens: agent.artifactOutputTokens ?? 0,
+        estimated: usage?.estimated ?? true,
       });
     }
 
@@ -183,6 +191,7 @@ export function processTranscriptLine(
       cancelWaitingTimer(agentId, waitingTimers);
       agent.isWaiting = false;
       webview?.postMessage({ type: 'agentStatus', id: agentId, status: 'active' });
+      postThinking(webview, agentId);
     } else if (record.type === 'assistant' && Array.isArray(assistantContent)) {
       const blocks = assistantContent as Array<{
         type: string;
@@ -197,6 +206,7 @@ export function processTranscriptLine(
         agent.isWaiting = false;
         agent.hadToolsInTurn = true;
         webview?.postMessage({ type: 'agentStatus', id: agentId, status: 'active' });
+        postThinking(webview, agentId);
         let hasNonExemptTool = false;
         for (const block of blocks) {
           if (block.type === 'tool_use' && block.id) {
@@ -208,6 +218,7 @@ export function processTranscriptLine(
             agent.activeToolIds.add(block.id);
             agent.activeToolStatuses.set(block.id, status);
             agent.activeToolNames.set(block.id, toolName);
+            postToolRunning(webview, agentId, toolName, status);
             if (!PERMISSION_EXEMPT_TOOLS.has(toolName)) {
               hasNonExemptTool = true;
             }
@@ -434,6 +445,7 @@ export function processTranscriptLine(
       agent.isWaiting = true;
       agent.permissionSent = false;
       agent.hadToolsInTurn = false;
+      postCompleted(webview, agentId);
       // Skip status post when hooks already handled it
       if (!agent.hookDelivered) {
         webview?.postMessage({
@@ -472,8 +484,27 @@ function processCodexTranscriptLine(
 ): void {
   const agent = agents.get(agentId);
   if (!agent) return;
+  let record: Record<string, unknown> | null = null;
+  try {
+    record = JSON.parse(line) as Record<string, unknown>;
+  } catch {
+    /* non-JSON lines are ignored by the Codex parser below */
+  }
+  const artifactOutputTokens = record ? estimateArtifactOutputTokens(record, agent.providerId) : 0;
+  if (artifactOutputTokens > 0) {
+    agent.artifactOutputTokens = (agent.artifactOutputTokens ?? 0) + artifactOutputTokens;
+    webview?.postMessage({
+      type: 'agentTokenUsage',
+      id: agentId,
+      inputTokens: agent.inputTokens,
+      outputTokens: agent.outputTokens,
+      artifactOutputTokens: agent.artifactOutputTokens,
+      estimated: false,
+    });
+  }
   const event = parseCodexTranscriptLine(line);
   if (!event) return;
+  const codexErrorDetail = getCodexErrorDetail(line);
 
   switch (event.kind) {
     case 'toolStart': {
@@ -485,6 +516,7 @@ function processCodexTranscriptLine(
       agent.activeToolStatuses.set(event.toolId, status);
       agent.activeToolNames.set(event.toolId, event.toolName);
       webview?.postMessage({ type: 'agentStatus', id: agentId, status: 'active' });
+      postToolRunning(webview, agentId, event.toolName, status);
       webview?.postMessage({
         type: 'agentToolStart',
         id: agentId,
@@ -509,6 +541,7 @@ function processCodexTranscriptLine(
       cancelPermissionTimer(agentId, permissionTimers);
       agent.permissionSent = true;
       webview?.postMessage({ type: 'agentToolPermission', id: agentId });
+      postWaitingPermission(webview, agentId);
       break;
     case 'permissionClear':
       agent.permissionSent = false;
@@ -527,20 +560,43 @@ function processCodexTranscriptLine(
       agent.activeSubagentToolNames.clear();
       webview?.postMessage({ type: 'agentToolsClear', id: agentId });
       webview?.postMessage({ type: 'agentStatus', id: agentId, status: 'waiting' });
+      if (codexErrorDetail) {
+        postError(webview, agentId, codexErrorDetail);
+      } else {
+        postCompleted(webview, agentId);
+      }
       break;
     case 'userTurn':
       cancelWaitingTimer(agentId, waitingTimers);
       clearAgentActivity(agent, agentId, permissionTimers, webview);
       agent.hadToolsInTurn = false;
       webview?.postMessage({ type: 'agentStatus', id: agentId, status: 'active' });
+      postThinking(webview, agentId);
       break;
     case 'subagentStart':
     case 'subagentEnd':
     case 'subagentTurnEnd':
-    case 'progress':
     case 'sessionStart':
     case 'sessionEnd':
     case 'tokenUsage':
+      if (event.kind === 'tokenUsage') {
+        agent.inputTokens = event.inputTokens;
+        agent.outputTokens = event.outputTokens;
+        webview?.postMessage({
+          type: 'agentTokenUsage',
+          id: agentId,
+          inputTokens: agent.inputTokens,
+          outputTokens: agent.outputTokens,
+          artifactOutputTokens: agent.artifactOutputTokens ?? 0,
+          estimated: false,
+        });
+      }
+      break;
+    case 'progress':
+      cancelWaitingTimer(agentId, waitingTimers);
+      agent.isWaiting = false;
+      webview?.postMessage({ type: 'agentStatus', id: agentId, status: 'active' });
+      postThinking(webview, agentId, getCodexProgressDetail(event.data));
       break;
     case 'codexSubagentSpawn':
       codexSubagentSpawnHandler?.({
@@ -553,6 +609,12 @@ function processCodexTranscriptLine(
       });
       break;
   }
+}
+
+function getCodexProgressDetail(data: unknown): string | undefined {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return undefined;
+  const label = (data as Record<string, unknown>).label;
+  return typeof label === 'string' && label.trim() ? label.trim() : undefined;
 }
 
 function processProgressRecord(
@@ -632,6 +694,7 @@ function processProgressRecord(
           toolId: block.id,
           status,
         });
+        postToolRunning(webview, agentId, toolName, status);
       }
     }
     if (hasNonExemptSubTool && !agent.hookDelivered) {
@@ -680,6 +743,21 @@ function processProgressRecord(
     if (stillHasNonExempt && !agent.hookDelivered) {
       startPermissionTimer(agentId, agents, permissionTimers, PERMISSION_EXEMPT_TOOLS, webview);
     }
+  }
+}
+
+function getCodexErrorDetail(line: string): string | undefined {
+  try {
+    const record = JSON.parse(line) as Record<string, unknown>;
+    const payload =
+      typeof record.payload === 'object' && record.payload !== null
+        ? (record.payload as Record<string, unknown>)
+        : {};
+    if (record.type !== 'event_msg' || payload.type !== 'error') return undefined;
+    const message = payload.message ?? payload.error ?? payload.reason;
+    return typeof message === 'string' && message.trim() ? message : 'Codex error';
+  } catch {
+    return undefined;
   }
 }
 

@@ -18,7 +18,12 @@ import {
   TOKEN_WARN_THRESHOLD,
   TOOL_OVERLAY_VERTICAL_OFFSET,
 } from '../../constants.js';
-import type { SubagentCharacter } from '../../hooks/useExtensionMessages.js';
+import type {
+  AgentLifecycleState,
+  AgentRuntimeMetadata,
+  SubagentCharacter,
+} from '../../hooks/useExtensionMessages.js';
+import { vscode } from '../../vscodeApi.js';
 import { isCharacterSeated } from '../engine/characters.js';
 import type { OfficeState } from '../engine/officeState.js';
 import type { ToolActivity } from '../types.js';
@@ -28,6 +33,8 @@ interface ToolOverlayProps {
   officeState: OfficeState;
   agents: number[];
   agentTools: Record<number, ToolActivity[]>;
+  agentLifecycleStatuses: Record<number, AgentLifecycleState>;
+  agentRuntimeMetadata: Record<number, AgentRuntimeMetadata>;
   subagentCharacters: SubagentCharacter[];
   containerRef: React.RefObject<HTMLDivElement | null>;
   zoom: number;
@@ -67,10 +74,20 @@ function getFuelColor(ratio: number): string {
   return FUEL_COLOR_OK;
 }
 
+function getLifecycleDotColor(lifecycle?: AgentLifecycleState): string | null {
+  if (!lifecycle || lifecycle.status === 'idle') return null;
+  if (lifecycle.status === 'waiting_permission') return 'var(--color-status-permission)';
+  if (lifecycle.status === 'completed') return 'var(--color-status-success)';
+  if (lifecycle.status === 'error') return 'var(--color-status-error)';
+  return 'var(--color-status-active)';
+}
+
 export function ToolOverlay({
   officeState,
   agents,
   agentTools,
+  agentLifecycleStatuses,
+  agentRuntimeMetadata,
   subagentCharacters,
   containerRef,
   zoom,
@@ -137,7 +154,8 @@ export function ToolOverlay({
             activityText = sub ? sub.label : 'Subtask';
           }
         } else {
-          activityText = getActivityText(id, agentTools, ch.isActive);
+          activityText =
+            agentLifecycleStatuses[id]?.label ?? getActivityText(id, agentTools, ch.isActive);
         }
 
         // Determine dot color
@@ -145,21 +163,35 @@ export function ToolOverlay({
         const hasPermission = subHasPermission || tools?.some((t) => t.permissionWait && !t.done);
         const hasActiveTools = tools?.some((t) => !t.done);
         const isActive = ch.isActive;
+        const lifecycle = isSub ? undefined : agentLifecycleStatuses[id];
 
-        let dotColor: string | null = null;
-        if (hasPermission) {
+        let dotColor: string | null = getLifecycleDotColor(lifecycle);
+        if (!dotColor && hasPermission) {
           dotColor = 'var(--color-status-permission)';
-        } else if (isActive && hasActiveTools) {
+        } else if (!dotColor && isActive && hasActiveTools) {
           dotColor = 'var(--color-status-active)';
         }
+        const shouldPulse =
+          (isActive && !hasPermission && lifecycle?.status !== 'completed') ||
+          lifecycle?.status === 'thinking' ||
+          lifecycle?.status === 'tool_running';
 
-        // Team info
         const isTeamAgent = !!ch.teamName;
-        const teamRoleLabel = ch.isTeamLead ? 'LEAD' : ch.agentName || null;
+        const conversationTitle = !isSub && !isTeamAgent ? ch.agentName || null : null;
+        const teamRoleLabel = isTeamAgent ? (ch.isTeamLead ? 'LEAD' : ch.agentName || null) : null;
         const totalTokens = ch.inputTokens + ch.outputTokens;
         const tokenRatio = totalTokens / MAX_CONTEXT_TOKENS;
         const providerLabel = providerDisplayName(ch.providerId);
-        const hasExtraLines = !!(ch.folderName || teamRoleLabel || providerLabel);
+        const hasExtraLines = !!(
+          ch.folderName ||
+          conversationTitle ||
+          teamRoleLabel ||
+          providerLabel
+        );
+        const metadata = agentRuntimeMetadata[id];
+        const canOpenProject = !!metadata?.projectDir;
+        const canOpenTranscript = !!metadata?.transcriptPath;
+        const showActions = isSelected && !isSub && (canOpenProject || canOpenTranscript);
 
         return (
           <div
@@ -173,14 +205,25 @@ export function ToolOverlay({
               zIndex: isSelected ? 42 : 41,
             }}
           >
-            <div className="flex items-center border-border px-8 pt-2 pb-4 gap-5 pixel-panel whitespace-nowrap max-w-2xs">
+            <div className="flex items-center border-border px-8 pt-2 pb-4 gap-5 pixel-panel whitespace-nowrap max-w-xs">
               {dotColor && (
                 <span
-                  className={`w-6 h-6 rounded-full shrink-0 ${isActive && !hasPermission ? 'pixel-pulse' : ''}`}
+                  className={`w-6 h-6 rounded-full shrink-0 ${shouldPulse ? 'pixel-pulse' : ''}`}
                   style={{ background: dotColor }}
                 />
               )}
               <div className="flex flex-col gap-0 overflow-hidden">
+                {conversationTitle && (
+                  <span
+                    className="overflow-hidden text-ellipsis block leading-none"
+                    style={{
+                      fontSize: '18px',
+                      color: TEAM_ROLE_COLOR,
+                    }}
+                  >
+                    {conversationTitle}
+                  </span>
+                )}
                 {teamRoleLabel && (
                   <span
                     className="overflow-hidden text-ellipsis block leading-none"
@@ -207,20 +250,59 @@ export function ToolOverlay({
                     {[providerLabel, ch.folderName].filter(Boolean).join(' · ')}
                   </span>
                 )}
+                {lifecycle?.detail && (
+                  <span className="text-2xs leading-none overflow-hidden text-ellipsis block opacity-85">
+                    {lifecycle.detail}
+                  </span>
+                )}
               </div>
               {isSelected && !isSub && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onCloseAgent(id);
-                  }}
-                  title="Close agent"
-                  className="ml-2 shrink-0 leading-none"
-                >
-                  ×
-                </Button>
+                <div className="ml-2 flex shrink-0 items-center gap-1">
+                  {showActions && (
+                    <>
+                      {canOpenProject && (
+                        <Button
+                          variant="default"
+                          size="sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            vscode.postMessage({ type: 'openAgentProject', id });
+                          }}
+                          title={metadata.projectDir}
+                          className="px-4"
+                        >
+                          Project
+                        </Button>
+                      )}
+                      {canOpenTranscript && (
+                        <Button
+                          variant="default"
+                          size="sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            vscode.postMessage({ type: 'openAgentTranscript', id });
+                          }}
+                          title={metadata.transcriptPath}
+                          className="px-4"
+                        >
+                          Log
+                        </Button>
+                      )}
+                    </>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onCloseAgent(id);
+                    }}
+                    title="Close agent"
+                    className="shrink-0 leading-none"
+                  >
+                    ×
+                  </Button>
+                </div>
               )}
             </div>
             {isTeamAgent && totalTokens > 0 && (
