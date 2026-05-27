@@ -40,7 +40,7 @@ import type { TeamProvider } from '../server/src/teamProvider.js';
 import { removeAgent } from './agentManager.js';
 import { TERMINAL_NAME_PREFIX } from './constants.js';
 import { cancelPermissionTimer, cancelWaitingTimer, clearAgentActivity } from './timerManager.js';
-import { processTranscriptLine } from './transcriptParser.js';
+import { extractClaudeUserTitleFromRecord, processTranscriptLine } from './transcriptParser.js';
 import type { AgentState } from './types.js';
 
 /** Files explicitly dismissed by the user (closed via X). Temporarily blocked from re-adoption. */
@@ -54,6 +54,40 @@ export const seededMtimes = new Map<string, number>();
 
 /** /clear files waiting for second tick (gives per-agent check time to claim first). */
 const pendingClearFiles = new Map<string, number>();
+
+function hasAgentForJsonlFile(agents: Map<number, AgentState>, jsonlFile: string): boolean {
+  const normalized = path.resolve(jsonlFile);
+  return [...agents.values()].some((agent) => {
+    return agent.jsonlFile && path.resolve(agent.jsonlFile) === normalized;
+  });
+}
+
+function extractClaudeTitleFromJsonlHeader(jsonlFile: string): string | undefined {
+  try {
+    const fd = fs.openSync(jsonlFile, 'r');
+    try {
+      const stat = fs.fstatSync(fd);
+      const bytesToRead = Math.min(stat.size, 64 * 1024);
+      const buffer = Buffer.alloc(bytesToRead);
+      const bytesRead = fs.readSync(fd, buffer, 0, bytesToRead, 0);
+      const lines = buffer.toString('utf8', 0, bytesRead).split(/\r?\n/).slice(0, 50);
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const title = extractClaudeUserTitleFromRecord(JSON.parse(line));
+          if (title) return title;
+        } catch {
+          /* ignore malformed partial/header lines */
+        }
+      }
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    /* ignore unreadable or not-yet-created transcripts */
+  }
+  return undefined;
+}
 
 /** Dependencies for per-agent /clear detection in readNewLines polling.
  *  Set once by ensureProjectScan; used by startFileWatching's poll loop. */
@@ -120,14 +154,7 @@ export function startFileWatching(
         for (const file of dirFiles) {
           if (deps.knownJsonlFiles.has(file)) continue;
           if (dismissedJsonlFiles.has(file)) continue;
-          let tracked = false;
-          for (const a of agents.values()) {
-            if (a.jsonlFile === file) {
-              tracked = true;
-              break;
-            }
-          }
-          if (tracked) continue;
+          if (hasAgentForJsonlFile(agents, file)) continue;
           // Content-based /clear detection: only claim files with the /clear command
           // record. Dropped "last-prompt" check because it also appears in --resume
           // sessions. "/clear</command-name>" is specific to /clear (~1.5KB in file).
@@ -856,10 +883,9 @@ export function adoptExternalSessionFromHook(
 ): void {
   if (transcriptPath) {
     // File-based provider (Claude, Codex): adopt with JSONL file watching
-    // Guard: don't adopt if file is already tracked by an agent
-    for (const agent of agents.values()) {
-      if (agent.jsonlFile === transcriptPath) return;
-    }
+    // Invariant: one Claude agent per resolved jsonlFile path; all adopters check
+    // both knownJsonlFiles and the live agents map before creating an agent.
+    if (hasAgentForJsonlFile(agents, transcriptPath)) return;
     // Don't check knownJsonlFiles here -- hooks confirmed this is a real session,
     // and seeded files at startup are in knownJsonlFiles but may become active later.
     if (dismissedJsonlFiles.has(transcriptPath)) return;
@@ -963,9 +989,18 @@ function adoptExternalSession(
   folderName?: string,
   metadataOverride?: { sessionId?: string; projectName?: string; agentName?: string },
 ): void {
+  // Invariant: one Claude agent per resolved jsonlFile path; this shared adopter is
+  // the last line of defense across hook, workspace, cowork, and global scanners.
+  if (hasAgentForJsonlFile(agents, jsonlFile)) return;
+
   const id = nextAgentIdRef.current++;
   const metadata = readClaudeSessionMetadata(jsonlFile, projectDir, folderName);
   const effectiveProjectDir = metadata.cwd ?? projectDir;
+  const metadataTitle =
+    metadata.threadName && metadata.threadName !== 'Claude' ? metadata.threadName : undefined;
+  const extractedTitle =
+    metadataOverride?.agentName ?? metadataTitle ?? extractClaudeTitleFromJsonlHeader(jsonlFile);
+  const agentName = extractedTitle ?? 'Claude';
   // Skip to end of file -- only show live activity going forward, not replay history
   let fileOffset = 0;
   try {
@@ -999,7 +1034,8 @@ function adoptExternalSession(
     folderName: metadataOverride?.projectName ?? metadata.projectName,
     projectName: metadataOverride?.projectName ?? metadata.projectName,
     providerId: 'claude',
-    agentName: metadataOverride?.agentName ?? metadata.threadName,
+    agentName,
+    claudeTitleResolved: agentName !== 'Claude',
     inputTokens: 0,
     outputTokens: 0,
   };
@@ -1015,7 +1051,7 @@ function adoptExternalSession(
     id,
     isExternal: true,
     folderName: metadataOverride?.projectName ?? metadata.projectName,
-    agentName: metadataOverride?.agentName ?? metadata.threadName,
+    agentName,
     providerId: 'claude',
     projectDir: effectiveProjectDir,
     transcriptPath: jsonlFile,
@@ -1149,7 +1185,7 @@ export function scanClaudeCoworkSessions(
       continue;
     }
     if (knownJsonlFiles.has(metadata.auditPath)) continue;
-    if ([...agents.values()].some((agent) => agent.jsonlFile === metadata.auditPath)) continue;
+    if (hasAgentForJsonlFile(agents, metadata.auditPath)) continue;
 
     knownJsonlFiles.add(metadata.auditPath);
     console.log(
@@ -1281,15 +1317,7 @@ function scanExternalDir(
     // Check if already tracked by an agent (normalize paths for comparison).
     // This prevents the external scanner from adopting /clear files (already
     // reassigned to a terminal agent) while allowing untracked files through.
-    const normalizedFile = path.resolve(file);
-    let tracked = false;
-    for (const agent of agents.values()) {
-      if (path.resolve(agent.jsonlFile) === normalizedFile) {
-        tracked = true;
-        break;
-      }
-    }
-    if (tracked) continue;
+    if (hasAgentForJsonlFile(agents, file)) continue;
 
     // Only adopt recently-active files (modified within threshold).
     try {
@@ -1486,14 +1514,7 @@ function scanGlobalProjectDirs(
 
     for (const file of files) {
       if (!options.includeInactive && knownJsonlFiles.has(file)) continue;
-      let tracked = false;
-      for (const agent of agents.values()) {
-        if (agent.jsonlFile === file) {
-          tracked = true;
-          break;
-        }
-      }
-      if (tracked) continue;
+      if (hasAgentForJsonlFile(agents, file)) continue;
       try {
         const stat = fs.statSync(file);
         if (stat.size < GLOBAL_SCAN_ACTIVE_MIN_SIZE) continue;

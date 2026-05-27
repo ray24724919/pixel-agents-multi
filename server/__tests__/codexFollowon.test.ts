@@ -7,6 +7,7 @@ import type { AgentState } from '../../src/types.js';
 import type { CodexThread } from '../src/providers/file/codex/codex.js';
 
 const createTerminalMock = vi.hoisted(() => vi.fn());
+const terminalListMock = vi.hoisted(() => [] as Array<{ name: string }>);
 const buildCodexLaunchCommandMock = vi.hoisted(() => vi.fn());
 const findCodexThreadByIdMock = vi.hoisted(() => vi.fn());
 const findLatestCodexThreadMock = vi.hoisted(() => vi.fn());
@@ -33,7 +34,7 @@ vi.mock('vscode', () => ({
     showSaveDialog: vi.fn(),
     showTextDocument: vi.fn(),
     showWarningMessage: vi.fn(),
-    terminals: [],
+    terminals: terminalListMock,
   },
   workspace: {
     fs: { readFile: vi.fn() },
@@ -76,7 +77,7 @@ vi.mock('../../src/fileWatcher.js', async () => {
   };
 });
 
-const { launchNewTerminal } = await import('../../src/agentManager.js');
+const { launchNewTerminal, restoreAgents } = await import('../../src/agentManager.js');
 const { getLiveCodexThreadIdsForSpawnedAgentCwds, PixelAgentsViewProvider } =
   await import('../../src/PixelAgentsViewProvider.js');
 const { processTranscriptLine } = await import('../../src/transcriptParser.js');
@@ -149,6 +150,7 @@ describe('Codex thread follow-on', () => {
     vi.stubGlobal('crypto', { randomUUID: vi.fn(() => 'launch-session') });
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pxl-codex-followon-'));
     createTerminalMock.mockReset();
+    terminalListMock.length = 0;
     createTerminalMock.mockReturnValue({
       name: 'Pixel Agent #1',
       show: vi.fn(),
@@ -303,5 +305,60 @@ describe('Codex thread follow-on', () => {
     expect(provider.agents.has(1)).toBe(true);
     expect(provider.agents.has(2)).toBe(false);
     expect(webview.postMessage).toHaveBeenCalledWith({ type: 'agentClosed', id: 2 });
+  });
+
+  it('restores a Codex terminal agent and follows the latest cwd thread instead of removing it', async () => {
+    const liveThreadPath = path.join(tmpDir, 'live-thread.jsonl');
+    writeCodexTokenFile(liveThreadPath, 7, 3);
+    terminalListMock.push({ name: 'Pixel Agent #3' });
+    findLatestCodexThreadMock.mockReturnValue(
+      codexThread('live-thread', liveThreadPath, '/workspace/project'),
+    );
+    findCodexThreadByIdMock.mockReturnValue(null);
+    const agents = new Map<number, AgentState>();
+    const webview = { postMessage: vi.fn() };
+    const context = {
+      workspaceState: {
+        get: vi.fn(() => [
+          {
+            id: 3,
+            sessionId: 'archived-thread',
+            terminalName: 'Pixel Agent #3',
+            isExternal: false,
+            providerId: 'codex',
+            jsonlFile: path.join(tmpDir, 'missing-old-thread.jsonl'),
+            projectDir: '/workspace/project',
+            agentName: 'Codex',
+          },
+        ]),
+        update: vi.fn(),
+      },
+    } as unknown as import('vscode').ExtensionContext;
+
+    restoreAgents(
+      context,
+      { current: 1 },
+      { current: 1 },
+      agents,
+      new Set<string>(),
+      new Map(),
+      new Map(),
+      new Map(),
+      new Map(),
+      new Map(),
+      { current: null },
+      { current: null },
+      webview as unknown as import('vscode').Webview,
+      vi.fn(),
+    );
+
+    expect(agents.has(3)).toBe(true);
+    await vi.advanceTimersByTimeAsync(1000);
+    const agent = agents.get(3);
+    expect(agent?.sessionId).toBe('live-thread');
+    expect(agent?.jsonlFile).toBe(liveThreadPath);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(agents.has(3)).toBe(true);
   });
 });

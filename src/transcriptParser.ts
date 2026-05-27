@@ -133,6 +133,22 @@ export function processTranscriptLine(
   }
   try {
     const record = JSON.parse(line);
+    if (!agent.claudeTitleResolved && (!agent.agentName || agent.agentName === 'Claude')) {
+      const title = extractClaudeUserTitleFromRecord(record);
+      if (title) {
+        agent.agentName = title;
+        agent.claudeTitleResolved = true;
+        webview?.postMessage({
+          type: 'agentMetadata',
+          id: agentId,
+          folderName: agent.projectName ?? agent.folderName,
+          agentName: title,
+          providerId: 'claude',
+          projectDir: agent.projectDir,
+          transcriptPath: agent.jsonlFile,
+        });
+      }
+    }
 
     // -- Agent Teams: extract team metadata via the active provider --
     // The provider reads its CLI's own field names (Claude: record.teamName + record.agentName).
@@ -472,6 +488,49 @@ export function processTranscriptLine(
   } catch {
     // Ignore malformed lines
   }
+}
+
+export function extractClaudeUserTitleFromRecord(record: unknown): string | undefined {
+  const objectRecord = asRecord(record);
+  if (!objectRecord) return undefined;
+  const message = asRecord(objectRecord.message);
+  const role = stringValue(objectRecord.role) ?? stringValue(message?.role);
+  if (role !== 'user') return undefined;
+  const content = objectRecord.content ?? message?.content;
+  const text = extractTextContent(content);
+  if (!text) return undefined;
+  return text.slice(0, 40);
+}
+
+function extractTextContent(content: unknown): string | undefined {
+  if (typeof content === 'string') {
+    return normalizeTitleText(content);
+  }
+  if (!Array.isArray(content)) return undefined;
+  for (const item of content) {
+    const block = asRecord(item);
+    if (!block) continue;
+    const type = stringValue(block.type);
+    if (type && type !== 'text') continue;
+    const text = normalizeTitleText(stringValue(block.text) ?? stringValue(block.content));
+    if (text) return text;
+  }
+  return undefined;
+}
+
+function normalizeTitleText(value: string | undefined): string | undefined {
+  const text = value?.replace(/\s+/g, ' ').trim();
+  return text || undefined;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined;
 }
 
 function processCodexTranscriptLine(

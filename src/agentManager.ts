@@ -149,11 +149,62 @@ export async function launchNewTerminal(
   void activeAgentIdRef;
   void nextAgentIdRef;
 
-  // Poll Codex's state database until the newly-launched thread has a rollout file.
-  let pollCount = 0;
   console.log(`[Pixel Agents] Terminal: Agent ${id} - waiting for Codex rollout in ${cwd}`);
+  startCodexCwdPoll(
+    id,
+    cwd,
+    agents,
+    knownJsonlFiles,
+    fileWatchers,
+    pollingTimers,
+    waitingTimers,
+    permissionTimers,
+    jsonlPollTimers,
+    webview,
+    persistAgents,
+  );
+}
+
+function clearCodexTransientState(agent: AgentState): void {
+  agent.activeToolIds.clear();
+  agent.activeToolStatuses.clear();
+  agent.activeToolNames.clear();
+  agent.activeSubagentToolIds.clear();
+  agent.activeSubagentToolNames.clear();
+  agent.permissionSent = false;
+  agent.hadToolsInTurn = false;
+  agent.isWaiting = false;
+  agent.lineBuffer = '';
+}
+
+function startCodexCwdPoll(
+  agentId: number,
+  cwd: string,
+  agents: Map<number, AgentState>,
+  knownJsonlFiles: Set<string>,
+  fileWatchers: Map<number, fs.FSWatcher>,
+  pollingTimers: Map<number, ReturnType<typeof setInterval>>,
+  waitingTimers: Map<number, ReturnType<typeof setTimeout>>,
+  permissionTimers: Map<number, ReturnType<typeof setTimeout>>,
+  jsonlPollTimers: Map<number, ReturnType<typeof setInterval>>,
+  webview: vscode.Webview | undefined,
+  persistAgents: () => void,
+): void {
+  const existingTimer = jsonlPollTimers.get(agentId);
+  if (existingTimer) {
+    clearInterval(existingTimer);
+  }
+
+  let pollCount = 0;
   const pollTimer = setInterval(() => {
     pollCount++;
+    const agent = agents.get(agentId);
+    if (!agent) {
+      clearInterval(pollTimer);
+      jsonlPollTimers.delete(agentId);
+      return;
+    }
+
     try {
       const thread = findLatestCodexThread(cwd, 0);
       if (thread && thread.id !== agent.sessionId) {
@@ -166,6 +217,8 @@ export async function launchNewTerminal(
         agent.sessionId = thread.id;
         agent.jsonlFile = thread.rolloutPath;
         agent.projectDir = cwd;
+        agent.projectName = path.basename(cwd);
+        agent.folderName = agent.folderName ?? agent.projectName;
         agent.agentName = thread.title ?? thread.agentNickname ?? thread.agentRole ?? 'Codex';
         agent.codexInputTokenBase = isInitialBind ? 0 : previousInputTokens;
         agent.codexOutputTokenBase = isInitialBind ? 0 : previousOutputTokens;
@@ -180,14 +233,14 @@ export async function launchNewTerminal(
         agent.artifactOutputTokens =
           (agent.artifactOutputTokens ?? 0) + (transcriptUsage?.artifactOutputTokens ?? 0);
         clearCodexTransientState(agent);
-        cancelWaitingTimer(id, waitingTimers);
-        cancelPermissionTimer(id, permissionTimers);
+        cancelWaitingTimer(agentId, waitingTimers);
+        cancelPermissionTimer(agentId, permissionTimers);
         knownJsonlFiles.add(thread.rolloutPath);
         persistAgents();
         webview?.postMessage({
           type: 'agentMetadata',
-          id,
-          folderName: folderName ?? projectName,
+          id: agentId,
+          folderName: agent.folderName ?? agent.projectName,
           agentName: agent.agentName,
           providerId: 'codex',
           projectDir: agent.projectDir,
@@ -195,20 +248,20 @@ export async function launchNewTerminal(
         });
         webview?.postMessage({
           type: 'agentTokenUsage',
-          id,
+          id: agentId,
           inputTokens: agent.inputTokens,
           outputTokens: agent.outputTokens,
           artifactOutputTokens: agent.artifactOutputTokens ?? 0,
           estimated: transcriptUsage?.estimated ?? false,
         });
         if (previousJsonlFile) {
-          fileWatchers.get(id)?.close();
-          fileWatchers.delete(id);
-          const filePollTimer = pollingTimers.get(id);
+          fileWatchers.get(agentId)?.close();
+          fileWatchers.delete(agentId);
+          const filePollTimer = pollingTimers.get(agentId);
           if (filePollTimer) {
             clearInterval(filePollTimer);
           }
-          pollingTimers.delete(id);
+          pollingTimers.delete(agentId);
         }
         if (!isInitialBind) {
           try {
@@ -216,17 +269,17 @@ export async function launchNewTerminal(
           } catch {
             agent.fileOffset = 0;
           }
-          webview?.postMessage({ type: 'agentToolsClear', id });
+          webview?.postMessage({ type: 'agentToolsClear', id: agentId });
           console.log(
-            `[Pixel Agents] Codex: Agent ${id} - thread ${previousSessionId.slice(0, 8)} → ${thread.id.slice(0, 8)} (same cwd follow-on)`,
+            `[Pixel Agents] Codex: Agent ${agentId} - thread ${previousSessionId.slice(0, 8)} → ${thread.id.slice(0, 8)} (same cwd follow-on)`,
           );
         } else {
           console.log(
-            `[Pixel Agents] Terminal: Agent ${id} - found Codex rollout ${path.basename(thread.rolloutPath)} (after ${pollCount}s)`,
+            `[Pixel Agents] Terminal: Agent ${agentId} - found Codex rollout ${path.basename(thread.rolloutPath)} (after ${pollCount}s)`,
           );
         }
         startFileWatching(
-          id,
+          agentId,
           agent.jsonlFile,
           agents,
           fileWatchers,
@@ -236,43 +289,31 @@ export async function launchNewTerminal(
           webview,
         );
         if (isInitialBind) {
-          readNewLines(id, agents, waitingTimers, permissionTimers, webview);
+          readNewLines(agentId, agents, waitingTimers, permissionTimers, webview);
         }
       } else if (!thread && agent.jsonlFile && !findCodexThreadById(agent.sessionId)) {
-        fileWatchers.get(id)?.close();
-        fileWatchers.delete(id);
-        const filePollTimer = pollingTimers.get(id);
+        fileWatchers.get(agentId)?.close();
+        fileWatchers.delete(agentId);
+        const filePollTimer = pollingTimers.get(agentId);
         if (filePollTimer) {
           clearInterval(filePollTimer);
         }
-        pollingTimers.delete(id);
+        pollingTimers.delete(agentId);
         clearCodexTransientState(agent);
-        cancelWaitingTimer(id, waitingTimers);
-        cancelPermissionTimer(id, permissionTimers);
-        webview?.postMessage({ type: 'agentToolsClear', id });
+        cancelWaitingTimer(agentId, waitingTimers);
+        cancelPermissionTimer(agentId, permissionTimers);
+        webview?.postMessage({ type: 'agentToolsClear', id: agentId });
         persistAgents();
-      } else if (pollCount === 10) {
+      } else if (pollCount === 10 && !agent.jsonlFile) {
         console.warn(
-          `[Pixel Agents] Terminal: Agent ${id} - Codex rollout not found after 10s for cwd ${cwd}`,
+          `[Pixel Agents] Terminal: Agent ${agentId} - Codex rollout not found after 10s for cwd ${cwd}`,
         );
       }
     } catch {
-      /* file may not exist yet */
+      /* state database or rollout file may not exist yet */
     }
   }, JSONL_POLL_INTERVAL_MS);
-  jsonlPollTimers.set(id, pollTimer);
-}
-
-function clearCodexTransientState(agent: AgentState): void {
-  agent.activeToolIds.clear();
-  agent.activeToolStatuses.clear();
-  agent.activeToolNames.clear();
-  agent.activeSubagentToolIds.clear();
-  agent.activeSubagentToolNames.clear();
-  agent.permissionSent = false;
-  agent.hadToolsInTurn = false;
-  agent.isWaiting = false;
-  agent.lineBuffer = '';
+  jsonlPollTimers.set(agentId, pollTimer);
 }
 
 export function removeAgent(
@@ -327,6 +368,7 @@ export function persistAgents(
       jsonlFile: agent.jsonlFile,
       projectDir: agent.projectDir,
       providerId: agent.providerId,
+      claudeTitleResolved: agent.claudeTitleResolved,
       codexInputTokenBase: agent.codexInputTokenBase,
       codexOutputTokenBase: agent.codexOutputTokenBase,
       folderName: agent.folderName,
@@ -416,6 +458,7 @@ export function restoreAgents(
       hookDelivered: false,
       inputTokens: 0,
       outputTokens: 0,
+      claudeTitleResolved: p.claudeTitleResolved,
       codexInputTokenBase: p.codexInputTokenBase,
       codexOutputTokenBase: p.codexOutputTokenBase,
       teamName: p.teamName,
@@ -447,6 +490,22 @@ export function restoreAgents(
 
     restoredProjectDir = p.projectDir;
 
+    if (agent.providerId === 'codex') {
+      startCodexCwdPoll(
+        p.id,
+        agent.projectDir,
+        agents,
+        knownJsonlFiles,
+        fileWatchers,
+        pollingTimers,
+        waitingTimers,
+        permissionTimers,
+        jsonlPollTimers,
+        webview,
+        doPersist,
+      );
+    }
+
     // Start file watching if JSONL exists, skipping to end of file
     try {
       if (fs.existsSync(p.jsonlFile)) {
@@ -462,7 +521,7 @@ export function restoreAgents(
           permissionTimers,
           webview,
         );
-      } else {
+      } else if (agent.providerId !== 'codex') {
         // Poll for the file to appear
         const pollTimer = setInterval(() => {
           try {
@@ -498,7 +557,7 @@ export function restoreAgents(
   // These are dead terminals restored by VS Code (e.g., after /clear or restart)
   // where Claude is no longer running.
   const restoredTerminalIds = [...agents.entries()]
-    .filter(([, a]) => !a.isExternal && a.terminalRef)
+    .filter(([, a]) => !a.isExternal && a.terminalRef && a.providerId !== 'codex')
     .map(([id]) => id);
   if (restoredTerminalIds.length > 0) {
     setTimeout(() => {
