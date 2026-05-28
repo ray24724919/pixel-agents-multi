@@ -13,6 +13,7 @@ export type AgentLifecycleStatus =
   | 'tool_running'
   | 'waiting_user'
   | 'waiting_permission'
+  | 'paused'
   | 'completed'
   | 'error';
 
@@ -30,6 +31,31 @@ export interface AgentLifecycleStatusMessage {
 type LifecyclePayload = Omit<AgentLifecycleStatusMessage, 'type' | 'updatedAt'> & {
   updatedAt?: number;
 };
+
+type DetailOrAgent = string | AgentState | undefined;
+
+function pausedPayload(id: number): LifecyclePayload {
+  return {
+    id,
+    status: 'paused',
+    label: 'Paused',
+    severity: 'warning',
+  };
+}
+
+function payloadWithPauseGuard(payload: LifecyclePayload, agent?: AgentState): LifecyclePayload {
+  return agent?.paused ? pausedPayload(payload.id) : payload;
+}
+
+function splitDetailAndAgent(
+  detailOrAgent?: DetailOrAgent,
+  agent?: AgentState,
+): { detail?: string; agent?: AgentState } {
+  if (typeof detailOrAgent === 'object') {
+    return { agent: detailOrAgent };
+  }
+  return { detail: detailOrAgent, agent };
+}
 
 interface TimelineOptions {
   kind?: TimelineEventKind;
@@ -91,15 +117,23 @@ export function postIdle(webview: vscode.Webview | undefined, id: number): void 
 export function postThinking(
   webview: vscode.Webview | undefined,
   id: number,
-  detail?: string,
+  detailOrAgent?: DetailOrAgent,
+  agentMaybe?: AgentState,
 ): void {
-  postAgentLifecycleStatus(webview, {
-    id,
-    status: 'thinking',
-    label: 'Thinking',
-    detail,
-    severity: 'info',
-  });
+  const { detail, agent } = splitDetailAndAgent(detailOrAgent, agentMaybe);
+  postAgentLifecycleStatus(
+    webview,
+    payloadWithPauseGuard(
+      {
+        id,
+        status: 'thinking',
+        label: 'Thinking',
+        detail,
+        severity: 'info',
+      },
+      agent,
+    ),
+  );
 }
 
 export function postToolRunning(
@@ -107,8 +141,9 @@ export function postToolRunning(
   id: number,
   toolName: string | undefined,
   status: string | undefined,
+  agent?: AgentState,
 ): void {
-  const payload = lifecycleFromTool(id, toolName, status);
+  const payload = payloadWithPauseGuard(lifecycleFromTool(id, toolName, status), agent);
   postAgentLifecycleStatus(webview, payload, {
     kind: 'tool.started',
     title: payload.label,
@@ -120,17 +155,22 @@ export function postToolRunning(
 export function postWaitingUser(
   webview: vscode.Webview | undefined,
   id: number,
-  detail?: string,
+  detailOrAgent?: DetailOrAgent,
+  agentMaybe?: AgentState,
 ): void {
+  const { detail, agent } = splitDetailAndAgent(detailOrAgent, agentMaybe);
   postAgentLifecycleStatus(
     webview,
-    {
-      id,
-      status: 'waiting_user',
-      label: 'Waiting for input',
-      detail,
-      severity: 'info',
-    },
+    payloadWithPauseGuard(
+      {
+        id,
+        status: 'waiting_user',
+        label: 'Waiting for input',
+        detail,
+        severity: 'info',
+      },
+      agent,
+    ),
     {
       kind: 'user_input.requested',
       title: 'Waiting for input',
@@ -142,17 +182,22 @@ export function postWaitingUser(
 export function postWaitingPermission(
   webview: vscode.Webview | undefined,
   id: number,
-  detail?: string,
+  detailOrAgent?: DetailOrAgent,
+  agentMaybe?: AgentState,
 ): void {
+  const { detail, agent } = splitDetailAndAgent(detailOrAgent, agentMaybe);
   postAgentLifecycleStatus(
     webview,
-    {
-      id,
-      status: 'waiting_permission',
-      label: 'Waiting for permission',
-      detail,
-      severity: 'warning',
-    },
+    payloadWithPauseGuard(
+      {
+        id,
+        status: 'waiting_permission',
+        label: 'Waiting for permission',
+        detail,
+        severity: 'warning',
+      },
+      agent,
+    ),
     {
       kind: 'permission.requested',
       title: 'Waiting for permission',
@@ -164,17 +209,22 @@ export function postWaitingPermission(
 export function postCompleted(
   webview: vscode.Webview | undefined,
   id: number,
-  detail?: string,
+  detailOrAgent?: DetailOrAgent,
+  agentMaybe?: AgentState,
 ): void {
+  const { detail, agent } = splitDetailAndAgent(detailOrAgent, agentMaybe);
   postAgentLifecycleStatus(
     webview,
-    {
-      id,
-      status: 'completed',
-      label: 'Completed',
-      detail,
-      severity: 'success',
-    },
+    payloadWithPauseGuard(
+      {
+        id,
+        status: 'completed',
+        label: 'Completed',
+        detail,
+        severity: 'success',
+      },
+      agent,
+    ),
     {
       kind: 'run.completed',
       title: 'Completed',
@@ -183,16 +233,25 @@ export function postCompleted(
   );
 }
 
-export function postError(webview: vscode.Webview | undefined, id: number, detail?: string): void {
+export function postError(
+  webview: vscode.Webview | undefined,
+  id: number,
+  detailOrAgent?: DetailOrAgent,
+  agentMaybe?: AgentState,
+): void {
+  const { detail, agent } = splitDetailAndAgent(detailOrAgent, agentMaybe);
   postAgentLifecycleStatus(
     webview,
-    {
-      id,
-      status: 'error',
-      label: 'Error',
-      detail,
-      severity: 'error',
-    },
+    payloadWithPauseGuard(
+      {
+        id,
+        status: 'error',
+        label: 'Error',
+        detail,
+        severity: 'error',
+      },
+      agent,
+    ),
     {
       kind: 'run.failed',
       title: 'Error',
@@ -201,24 +260,33 @@ export function postError(webview: vscode.Webview | undefined, id: number, detai
   );
 }
 
+export function postAgentPaused(webview: vscode.Webview | undefined, agentId: number): void {
+  postAgentLifecycleStatus(webview, pausedPayload(agentId));
+}
+
 export function postAgentLifecycleSnapshot(
   webview: vscode.Webview | undefined,
   agent: AgentState,
 ): void {
+  if (agent.paused) {
+    postAgentPaused(webview, agent.id);
+    return;
+  }
+
   if (agent.permissionSent) {
-    postWaitingPermission(webview, agent.id);
+    postWaitingPermission(webview, agent.id, agent);
     return;
   }
 
   const activeTool = agent.activeToolStatuses.entries().next();
   if (!activeTool.done) {
     const [toolId, status] = activeTool.value;
-    postToolRunning(webview, agent.id, agent.activeToolNames.get(toolId), status);
+    postToolRunning(webview, agent.id, agent.activeToolNames.get(toolId), status, agent);
     return;
   }
 
   if (agent.isWaiting) {
-    postWaitingUser(webview, agent.id);
+    postWaitingUser(webview, agent.id, agent);
     return;
   }
 

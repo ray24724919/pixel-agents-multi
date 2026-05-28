@@ -50,7 +50,7 @@ export function clearAgentActivity(
     }
   }
   webview?.postMessage({ type: 'agentStatus', id: agentId, status: 'active' });
-  postThinking(webview, agentId);
+  postThinking(webview, agentId, agent);
 }
 
 export function cancelWaitingTimer(
@@ -83,7 +83,7 @@ export function startWaitingTimer(
       id: agentId,
       status: 'waiting',
     });
-    postWaitingUser(webview, agentId);
+    postWaitingUser(webview, agentId, agent);
   }, delayMs);
   waitingTimers.set(agentId, timer);
 }
@@ -141,7 +141,7 @@ export function startPermissionTimer(
         type: 'agentToolPermission',
         id: agentId,
       });
-      postWaitingPermission(webview, agentId);
+      postWaitingPermission(webview, agentId, agent);
       // Also notify stuck sub-agents
       for (const parentToolId of stuckSubagentParentToolIds) {
         webview?.postMessage({

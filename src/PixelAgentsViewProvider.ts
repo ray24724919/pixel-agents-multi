@@ -27,6 +27,7 @@ import {
   sendCurrentAgentStatuses,
   sendExistingAgents,
   sendLayout,
+  setAgentPaused,
   startCodexCwdPoll,
 } from './agentManager.js';
 import type { LoadedAssets, LoadedCharacterSprites } from './assetLoader.js';
@@ -938,6 +939,10 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         if (action === 'hide' || action === 'archive' || action === 'kill') {
           this.handleAgentAction(message.id as number, action);
         }
+      } else if (message.type === 'agentPause') {
+        setAgentPaused(message.id as number, true, this.agents, this.webview, this.persistAgents);
+      } else if (message.type === 'agentResume') {
+        setAgentPaused(message.id as number, false, this.agents, this.webview, this.persistAgents);
       } else if (message.type === 'saveAgentSeats') {
         // Store seat assignments in a separate key (never touched by persistAgents)
         console.log(`[Pixel Agents] State: saveAgentSeats:`, JSON.stringify(message.seats));

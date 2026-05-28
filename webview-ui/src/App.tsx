@@ -7,6 +7,7 @@ import { ChangelogModal } from './components/ChangelogModal.js';
 import { DebugView } from './components/DebugView.js';
 import { EditActionBar } from './components/EditActionBar.js';
 import { MigrationNotice } from './components/MigrationNotice.js';
+import { buildPauseResumeMessage } from './components/pauseResume.js';
 import { SettingsModal } from './components/SettingsModal.js';
 import { Tooltip } from './components/Tooltip.js';
 import { Modal } from './components/ui/Modal.js';
@@ -449,6 +450,8 @@ function App() {
         agentRuntimeMetadata={agentRuntimeMetadata}
         officeState={officeState}
         onCloseAgent={handleCloseAgent}
+        onPauseAgent={(id) => vscode.postMessage(buildPauseResumeMessage(id, false))}
+        onResumeAgent={(id) => vscode.postMessage(buildPauseResumeMessage(id, true))}
       />
 
       <Modal

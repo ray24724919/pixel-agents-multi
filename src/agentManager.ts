@@ -21,7 +21,7 @@ import {
   startFileWatching,
 } from './fileWatcher.js';
 import { migrateAndLoadLayout } from './layoutPersistence.js';
-import { postAgentLifecycleSnapshot } from './lifecycleStatus.js';
+import { postAgentLifecycleSnapshot, postAgentPaused } from './lifecycleStatus.js';
 import { cancelPermissionTimer, cancelWaitingTimer } from './timerManager.js';
 import { readTokenUsageFromTranscript } from './tokenUsage.js';
 import type { AgentState, PersistedAgent } from './types.js';
@@ -539,6 +539,7 @@ export function persistAgents(
       jsonlFile: agent.jsonlFile,
       projectDir: agent.projectDir,
       providerId: agent.providerId,
+      paused: agent.paused,
       claudeTitleResolved: agent.claudeTitleResolved,
       codexInputTokenBase: agent.codexInputTokenBase,
       codexOutputTokenBase: agent.codexOutputTokenBase,
@@ -627,6 +628,7 @@ export function restoreAgents(
       folderName: p.folderName,
       projectName: p.projectName,
       hookDelivered: false,
+      paused: p.paused,
       inputTokens: 0,
       outputTokens: 0,
       claudeTitleResolved: p.claudeTitleResolved,
@@ -939,6 +941,25 @@ export function sendCurrentAgentStatuses(
     scheduleTokenUsageRefresh(agent, webview);
     postAgentLifecycleSnapshot(webview, agent);
   }
+}
+
+export function setAgentPaused(
+  agentId: number,
+  paused: boolean,
+  agents: Map<number, AgentState>,
+  webview: vscode.Webview | undefined,
+  persistAgents: () => void,
+): void {
+  const agent = agents.get(agentId);
+  if (!agent) return;
+
+  agent.paused = paused || undefined;
+  persistAgents();
+  if (paused) {
+    postAgentPaused(webview, agentId);
+    return;
+  }
+  postAgentLifecycleSnapshot(webview, agent);
 }
 
 function isTranscriptRecentlyActive(agent: AgentState): boolean {
