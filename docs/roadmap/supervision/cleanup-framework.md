@@ -92,11 +92,27 @@ Where multiple implementations are valid, say "you may pick X or Y; pick one and
 Includes .vsix repackage + reinstall + reload window + the actual scenario being verified.]
 
 ## Reporting back
+
+Write your final report to a markdown file at
+`docs/roadmap/supervision/reports/<package-id>-report.md` and commit
+it as part of THIS work-package's single commit (G-2). The supervisor
+reads the file directly from the repo — do NOT paste the report back
+via the user as a stdout dump.
+
+The report MUST contain:
+
 1. Branch name + commit SHA
-2. Files touched (paste `git diff --stat <branch>...main`)
-3. Test results (paste final `npm run build` and `npm test` summary lines)
-4. Where you deviated from suggestions and why
-5. Out-of-scope findings flagged for future packages
+2. Files touched (output of `git diff --stat <branch>...main`)
+3. Per-file change narrative (one paragraph per modified/created file)
+4. Implementation choices made (where the spec allowed latitude)
+5. Final summary lines of `npm run build` and `npm test`
+6. Acceptance criteria check (PASS/FAIL/one-line each)
+7. Out-of-scope findings (file:line + one-line, or "none")
+8. Deviations from spec, with reason (or "none")
+9. Items for supervisor to double-check
+
+Refer to `reports/W2-A-codex-external-sync-report.md` as a reference
+example of the expected shape and depth.
 ```
 
 ---
