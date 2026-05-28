@@ -1,0 +1,6 @@
+{"type":"queue-operation","sessionId":"chat-session"}
+{"type":"queue-operation","sessionId":"chat-session"}
+{"parentUuid":null,"isSidechain":false,"promptId":"chat-prompt","type":"user","message":{"role":"user","content":"Reply with exactly: w2b no tools"},"uuid":"chat-user","timestamp":"2026-05-28T00:00:00.000Z","permissionMode":"default","userType":"external","entrypoint":"sdk-cli","cwd":"/tmp/pixel-agents-w2b-claude-modes","sessionId":"chat-session","version":"2.1.152","gitBranch":"main"}
+{"type":"ai-title","sessionId":"chat-session","title":"W2B chat reference"}
+{"parentUuid":"chat-user","isSidechain":false,"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"w2b no tools"}]},"uuid":"chat-assistant","timestamp":"2026-05-28T00:00:01.000Z","permissionMode":"default","userType":"external","entrypoint":"sdk-cli","cwd":"/tmp/pixel-agents-w2b-claude-modes","sessionId":"chat-session","version":"2.1.152","gitBranch":"main"}
+{"type":"last-prompt","sessionId":"chat-session"}

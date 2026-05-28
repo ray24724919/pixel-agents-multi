@@ -1,0 +1,7 @@
+{"type":"queue-operation","sessionId":"code-session"}
+{"type":"queue-operation","sessionId":"code-session"}
+{"parentUuid":null,"isSidechain":false,"promptId":"code-prompt","type":"user","message":{"role":"user","content":"Reply with exactly: w2b normal"},"uuid":"code-user","timestamp":"2026-05-28T00:00:00.000Z","permissionMode":"default","userType":"external","entrypoint":"sdk-cli","cwd":"/tmp/pixel-agents-w2b-claude-modes","sessionId":"code-session","version":"2.1.152","gitBranch":"main"}
+{"parentUuid":"code-user","isSidechain":false,"type":"attachment","uuid":"code-attachment","timestamp":"2026-05-28T00:00:00.100Z","entrypoint":"sdk-cli","cwd":"/tmp/pixel-agents-w2b-claude-modes","sessionId":"code-session","version":"2.1.152","gitBranch":"main"}
+{"type":"ai-title","sessionId":"code-session","title":"W2B code reference"}
+{"parentUuid":"code-attachment","isSidechain":false,"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"w2b normal"}]},"uuid":"code-assistant","timestamp":"2026-05-28T00:00:01.000Z","permissionMode":"default","userType":"external","entrypoint":"sdk-cli","cwd":"/tmp/pixel-agents-w2b-claude-modes","sessionId":"code-session","version":"2.1.152","gitBranch":"main"}
+{"type":"last-prompt","sessionId":"code-session"}

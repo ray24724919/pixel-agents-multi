@@ -1,21 +1,36 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { fileURLToPath } from 'url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AgentState } from '../../src/types.js';
+
+const showChatSessionsMock = vi.hoisted(() => ({ current: false }));
 
 vi.mock('vscode', () => ({
   window: {
     terminals: [],
   },
   workspace: {
+    getConfiguration: vi.fn(() => ({
+      get: vi.fn((key: string, fallback: boolean) =>
+        key === 'claude.showChatSessions' ? showChatSessionsMock.current : fallback,
+      ),
+    })),
     workspaceFolders: [],
   },
 }));
 
-const { adoptExternalSessionFromHook } = await import('../../src/fileWatcher.js');
+const { adoptExternalSessionFromHook, isClaudeChatSession } =
+  await import('../../src/fileWatcher.js');
 const { processTranscriptLine } = await import('../../src/transcriptParser.js');
+
+const fixturesDir = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  'fixtures',
+  'claude-modes',
+);
 
 function makeAgent(id: number, jsonlFile: string): AgentState {
   return {
@@ -52,6 +67,7 @@ describe('Claude adoption dedup and titles', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pxl-claude-adoption-'));
+    showChatSessionsMock.current = false;
   });
 
   afterEach(() => {
@@ -153,4 +169,104 @@ describe('Claude adoption dedup and titles', () => {
       }),
     );
   });
+
+  it('detects chat-mode JSONL headers without flagging code or cowork fixtures', () => {
+    expect(isClaudeChatSession(path.join(fixturesDir, 'chat.jsonl'))).toBe(true);
+    expect(isClaudeChatSession(path.join(fixturesDir, 'code.jsonl'))).toBe(false);
+    expect(isClaudeChatSession(path.join(fixturesDir, 'cowork.jsonl'))).toBe(false);
+    expect(
+      isClaudeChatSession(path.join(fixturesDir, 'chat.jsonl'), {
+        sessionId: 'cowork-session',
+        projectName: 'Cowork Project',
+        agentName: 'Cowork Lead',
+      }),
+    ).toBe(false);
+  });
+
+  it('does not adopt a Claude chat-mode JSONL when showChatSessions is false', () => {
+    const jsonlFile = copyFixture('chat.jsonl', tmpDir, 'chat-session.jsonl');
+    const agents = new Map<number, AgentState>();
+    const webview = { postMessage: vi.fn() };
+    const nextAgentId = { current: 1 };
+
+    adoptExternalSessionFromHook(
+      'chat-session',
+      jsonlFile,
+      tmpDir,
+      new Set<string>(),
+      nextAgentId,
+      agents,
+      new Map(),
+      new Map(),
+      new Map(),
+      new Map(),
+      webview as unknown as import('vscode').Webview,
+      vi.fn(),
+    );
+
+    expect(agents.size).toBe(0);
+    expect(nextAgentId.current).toBe(1);
+    expect(webview.postMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'agentCreated' }),
+    );
+  });
+
+  it('adopts a Claude chat-mode JSONL when showChatSessions is true', () => {
+    showChatSessionsMock.current = true;
+    const jsonlFile = copyFixture('chat.jsonl', tmpDir, 'chat-session.jsonl');
+    const agents = new Map<number, AgentState>();
+    const webview = { postMessage: vi.fn() };
+
+    adoptExternalSessionFromHook(
+      'chat-session',
+      jsonlFile,
+      tmpDir,
+      new Set<string>(),
+      { current: 1 },
+      agents,
+      new Map(),
+      new Map(),
+      new Map(),
+      new Map(),
+      webview as unknown as import('vscode').Webview,
+      vi.fn(),
+    );
+
+    const agent = agents.get(1);
+    expect(agent?.sessionId).toBe('chat-session');
+    expect(agent?.jsonlFile).toBe(jsonlFile);
+    expect(webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'agentCreated', providerId: 'claude' }),
+    );
+  });
+
+  it('keeps Claude code and cowork sessions outside the chat filter', () => {
+    const codeFile = copyFixture('code.jsonl', tmpDir, 'code-session.jsonl');
+    const coworkFile = path.join(fixturesDir, 'cowork.jsonl');
+    const agents = new Map<number, AgentState>();
+
+    adoptExternalSessionFromHook(
+      'code-session',
+      codeFile,
+      tmpDir,
+      new Set<string>(),
+      { current: 1 },
+      agents,
+      new Map(),
+      new Map(),
+      new Map(),
+      new Map(),
+      undefined,
+      vi.fn(),
+    );
+
+    expect(agents.get(1)?.sessionId).toBe('code-session');
+    expect(isClaudeChatSession(coworkFile)).toBe(false);
+  });
 });
+
+function copyFixture(name: string, tmpDir: string, targetName: string): string {
+  const target = path.join(tmpDir, targetName);
+  fs.copyFileSync(path.join(fixturesDir, name), target);
+  return target;
+}
