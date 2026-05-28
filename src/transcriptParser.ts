@@ -207,7 +207,7 @@ export function processTranscriptLine(
       cancelWaitingTimer(agentId, waitingTimers);
       agent.isWaiting = false;
       webview?.postMessage({ type: 'agentStatus', id: agentId, status: 'active' });
-      postThinking(webview, agentId);
+      postThinking(webview, agentId, agent);
     } else if (record.type === 'assistant' && Array.isArray(assistantContent)) {
       const blocks = assistantContent as Array<{
         type: string;
@@ -222,7 +222,7 @@ export function processTranscriptLine(
         agent.isWaiting = false;
         agent.hadToolsInTurn = true;
         webview?.postMessage({ type: 'agentStatus', id: agentId, status: 'active' });
-        postThinking(webview, agentId);
+        postThinking(webview, agentId, agent);
         let hasNonExemptTool = false;
         for (const block of blocks) {
           if (block.type === 'tool_use' && block.id) {
@@ -234,7 +234,7 @@ export function processTranscriptLine(
             agent.activeToolIds.add(block.id);
             agent.activeToolStatuses.set(block.id, status);
             agent.activeToolNames.set(block.id, toolName);
-            postToolRunning(webview, agentId, toolName, status);
+            postToolRunning(webview, agentId, toolName, status, agent);
             if (!PERMISSION_EXEMPT_TOOLS.has(toolName)) {
               hasNonExemptTool = true;
             }
@@ -461,7 +461,7 @@ export function processTranscriptLine(
       agent.isWaiting = true;
       agent.permissionSent = false;
       agent.hadToolsInTurn = false;
-      postCompleted(webview, agentId);
+      postCompleted(webview, agentId, agent);
       // Skip status post when hooks already handled it
       if (!agent.hookDelivered) {
         webview?.postMessage({
@@ -575,7 +575,7 @@ function processCodexTranscriptLine(
       agent.activeToolStatuses.set(event.toolId, status);
       agent.activeToolNames.set(event.toolId, event.toolName);
       webview?.postMessage({ type: 'agentStatus', id: agentId, status: 'active' });
-      postToolRunning(webview, agentId, event.toolName, status);
+      postToolRunning(webview, agentId, event.toolName, status, agent);
       webview?.postMessage({
         type: 'agentToolStart',
         id: agentId,
@@ -600,7 +600,7 @@ function processCodexTranscriptLine(
       cancelPermissionTimer(agentId, permissionTimers);
       agent.permissionSent = true;
       webview?.postMessage({ type: 'agentToolPermission', id: agentId });
-      postWaitingPermission(webview, agentId);
+      postWaitingPermission(webview, agentId, agent);
       break;
     case 'permissionClear':
       agent.permissionSent = false;
@@ -620,9 +620,9 @@ function processCodexTranscriptLine(
       webview?.postMessage({ type: 'agentToolsClear', id: agentId });
       webview?.postMessage({ type: 'agentStatus', id: agentId, status: 'waiting' });
       if (codexErrorDetail) {
-        postError(webview, agentId, codexErrorDetail);
+        postError(webview, agentId, codexErrorDetail, agent);
       } else {
-        postCompleted(webview, agentId);
+        postCompleted(webview, agentId, agent);
       }
       break;
     case 'userTurn':
@@ -630,7 +630,7 @@ function processCodexTranscriptLine(
       clearAgentActivity(agent, agentId, permissionTimers, webview);
       agent.hadToolsInTurn = false;
       webview?.postMessage({ type: 'agentStatus', id: agentId, status: 'active' });
-      postThinking(webview, agentId);
+      postThinking(webview, agentId, agent);
       break;
     case 'subagentStart':
     case 'subagentEnd':
@@ -655,7 +655,7 @@ function processCodexTranscriptLine(
       cancelWaitingTimer(agentId, waitingTimers);
       agent.isWaiting = false;
       webview?.postMessage({ type: 'agentStatus', id: agentId, status: 'active' });
-      postThinking(webview, agentId, getCodexProgressDetail(event.data));
+      postThinking(webview, agentId, getCodexProgressDetail(event.data), agent);
       break;
     case 'codexSubagentSpawn':
       codexSubagentSpawnHandler?.({
@@ -753,7 +753,7 @@ function processProgressRecord(
           toolId: block.id,
           status,
         });
-        postToolRunning(webview, agentId, toolName, status);
+        postToolRunning(webview, agentId, toolName, status, agent);
       }
     }
     if (hasNonExemptSubTool && !agent.hookDelivered) {

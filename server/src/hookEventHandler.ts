@@ -449,7 +449,7 @@ export class HookEventHandler {
         toolName,
       });
     }
-    postToolRunning(webview, agentId, toolName, status);
+    postToolRunning(webview, agentId, toolName, status, agent);
     webview?.postMessage({
       type: 'agentStatus',
       id: agentId,
@@ -630,7 +630,7 @@ export class HookEventHandler {
         cancelPermissionTimer(id, this.permissionTimers);
         a.permissionSent = true;
         webview?.postMessage({ type: 'agentToolPermission', id });
-        postWaitingPermission(webview, id);
+        postWaitingPermission(webview, id, a);
       }
       return;
     }
@@ -641,7 +641,7 @@ export class HookEventHandler {
       type: 'agentToolPermission',
       id: agentId,
     });
-    postWaitingPermission(webview, agentId);
+    postWaitingPermission(webview, agentId, agent);
     // Also notify any sub-agents with active tools
     for (const parentToolId of agent.activeSubagentToolNames.keys()) {
       webview?.postMessage({
@@ -786,7 +786,7 @@ export class HookEventHandler {
       id: agentId,
       status: 'waiting',
     });
-    postCompleted(webview, agentId);
+    postCompleted(webview, agentId, agent);
   }
 
   /** Buffer an event for later delivery when the agent registers. */

@@ -15,12 +15,13 @@ import {
   zoneSourceLabel,
 } from '../office/zoneUtils.js';
 import { vscode } from '../vscodeApi.js';
+import { isPausedStatus, pauseActionLabel } from './pauseResume.js';
 import { TokenCostSummary } from './TokenCostSummary.js';
 import { Button } from './ui/Button.js';
 import { Modal } from './ui/Modal.js';
 
 type ProviderFilter = 'all' | 'codex' | 'claude';
-type StatusFilter = 'all' | 'active' | 'waiting' | 'needs_me' | 'error';
+type StatusFilter = 'all' | 'active' | 'paused' | 'waiting' | 'needs_me' | 'error';
 type ProjectFilter = 'all' | string;
 type TeamFilter = 'all' | string;
 
@@ -37,6 +38,8 @@ interface AgentCenterProps {
   agentRuntimeMetadata: Record<number, AgentRuntimeMetadata>;
   officeState: OfficeState;
   onCloseAgent: (id: number) => void;
+  onPauseAgent: (id: number) => void;
+  onResumeAgent: (id: number) => void;
 }
 
 interface AgentSummary {
@@ -61,6 +64,7 @@ interface AgentSummary {
   roleName?: string;
   isTeamLead?: boolean;
   leadAgentId?: number;
+  isPaused: boolean;
 }
 
 interface ProjectSummary {
@@ -99,6 +103,8 @@ export function AgentCenter({
   agentRuntimeMetadata,
   officeState,
   onCloseAgent,
+  onPauseAgent,
+  onResumeAgent,
 }: AgentCenterProps) {
   const [providerFilter, setProviderFilter] = useState<ProviderFilter>('all');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
@@ -188,7 +194,7 @@ export function AgentCenter({
 
         <div className="mb-3 flex shrink-0 flex-wrap items-center gap-2">
           <SegmentedButtons
-            values={['all', 'active', 'waiting', 'needs_me', 'error']}
+            values={['all', 'active', 'paused', 'waiting', 'needs_me', 'error']}
             active={statusFilter}
             label={statusFilterLabel}
             onChange={setStatusFilter}
@@ -229,6 +235,8 @@ export function AgentCenter({
             timeline={selectedTimeline}
             teamMembers={selectedTeamMembers}
             onCloseAgent={onCloseAgent}
+            onPauseAgent={onPauseAgent}
+            onResumeAgent={onResumeAgent}
           />
         </div>
       </div>
@@ -296,6 +304,7 @@ function AgentRow({
         )}
         <div className="mt-3 flex min-w-0 flex-wrap items-center gap-3">
           <StatusBadge status={agent.status} />
+          {agent.isPaused && <PausedMarker />}
           <span className="max-w-full truncate text-sm text-text">{agent.activity}</span>
         </div>
       </div>
@@ -472,12 +481,16 @@ function AgentDetail({
   timeline,
   teamMembers,
   onCloseAgent,
+  onPauseAgent,
+  onResumeAgent,
 }: {
   agent?: AgentSummary;
   lifecycle?: AgentLifecycleState;
   timeline: TimelineItem[];
   teamMembers: AgentSummary[];
   onCloseAgent: (id: number) => void;
+  onPauseAgent: (id: number) => void;
+  onResumeAgent: (id: number) => void;
 }) {
   if (!agent) {
     return <div className="p-8 text-center text-text-muted">Select an agent to inspect</div>;
@@ -519,6 +532,13 @@ function AgentDetail({
           >
             Transcript
           </Button>
+          <Button
+            variant={agent.isPaused ? 'active' : 'default'}
+            size="sm"
+            onClick={() => (agent.isPaused ? onResumeAgent(agent.id) : onPauseAgent(agent.id))}
+          >
+            {pauseActionLabel(agent.isPaused)}
+          </Button>
           <Button variant="default" size="sm" onClick={() => onCloseAgent(agent.id)}>
             Actions
           </Button>
@@ -527,6 +547,7 @@ function AgentDetail({
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
         <DetailField label="Lifecycle status" value={agent.status} badge />
+        <DetailField label="Paused" value={agent.isPaused ? 'Yes' : 'No'} />
         <DetailField label="Provider" value={providerLabel(agent.providerId)} />
         <DetailField label="Project" value={agent.project} />
         <DetailField label="Last event" value={lastEvent?.title ?? 'No recent events'} />
@@ -748,6 +769,7 @@ function getAgentSummary(
     roleName: ch?.agentName,
     isTeamLead: ch?.isTeamLead,
     leadAgentId: ch?.leadAgentId,
+    isPaused: isPausedStatus(lifecycle?.status),
   };
 }
 
@@ -791,6 +813,7 @@ function buildAgentTimeline(
 }
 
 function getStatusGroup(status: string): StatusFilter {
+  if (status === 'paused') return 'paused';
   if (status === 'error') return 'error';
   if (status === 'needs approval' || status === 'waiting_permission' || status === 'waiting_user') {
     return 'needs_me';
@@ -884,6 +907,18 @@ function statusFilterLabel(filter: StatusFilter): string {
   return filter[0].toUpperCase() + filter.slice(1);
 }
 
+function PausedMarker() {
+  return (
+    <span
+      className="inline-flex shrink-0 items-center gap-1 border border-status-permission bg-btn-bg px-2 py-1 text-xs uppercase tracking-wide text-text-muted"
+      title="Paused"
+    >
+      <span className="font-bold">||</span>
+      <span>Paused</span>
+    </span>
+  );
+}
+
 function ProviderBadge({ providerId }: { providerId: string }) {
   return (
     <span className="shrink-0 border border-border bg-btn-bg px-2 py-1 text-xs uppercase tracking-wide text-text-muted">
@@ -904,9 +939,11 @@ function StatusBadge({ status }: { status: string }) {
       ? 'bg-status-permission'
       : status === 'active' || status === 'thinking' || status === 'tool_running'
         ? 'bg-status-active'
-        : status === 'error'
-          ? 'bg-status-error'
-          : 'bg-status-success';
+        : status === 'paused'
+          ? 'bg-status-permission'
+          : status === 'error'
+            ? 'bg-status-error'
+            : 'bg-status-success';
   return (
     <span className="inline-flex min-w-0 items-center gap-2 text-xs uppercase tracking-wide text-text-muted">
       <span className={`h-3 w-3 shrink-0 rounded-full ${color}`} />

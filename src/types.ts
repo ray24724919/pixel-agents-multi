@@ -34,6 +34,8 @@ export interface AgentState {
   hookDelivered: boolean;
   /** True when agent has no transcript file (provider doesn't use JSONL). All state from hooks. */
   hooksOnly?: boolean;
+  /** UI-only pause marker; does not signal or stop the underlying CLI process. */
+  paused?: boolean;
   /** Provider that created this agent (defaults to 'claude') */
   providerId?: string;
   /** Set when SessionEnd(reason=clear) fires; cleared when SessionStart(source=clear) reassigns */
@@ -78,6 +80,7 @@ export interface PersistedAgent {
   jsonlFile: string;
   projectDir: string;
   providerId?: string;
+  paused?: boolean;
   claudeTitleResolved?: boolean;
   codexInputTokenBase?: number;
   codexOutputTokenBase?: number;

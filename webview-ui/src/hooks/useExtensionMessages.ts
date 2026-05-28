@@ -30,6 +30,7 @@ export type AgentLifecycleStatus =
   | 'tool_running'
   | 'waiting_user'
   | 'waiting_permission'
+  | 'paused'
   | 'completed'
   | 'error';
 
@@ -517,6 +518,8 @@ export function useExtensionMessages(
         );
         if (lifecycle.status === 'thinking' || lifecycle.status === 'tool_running') {
           os.setAgentActive(lifecycle.id, true);
+        } else if (lifecycle.status === 'paused') {
+          os.clearPermissionBubble(lifecycle.id);
         } else if (
           lifecycle.status === 'completed' ||
           lifecycle.status === 'idle' ||
