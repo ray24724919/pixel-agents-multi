@@ -62,20 +62,23 @@ function hasAgentForJsonlFile(agents: Map<number, AgentState>, jsonlFile: string
   });
 }
 
-function extractClaudeTitleFromJsonlHeader(jsonlFile: string): string | undefined {
+function readClaudeJsonlHeaderRecords(jsonlFile: string): Array<Record<string, unknown>> {
+  const records: Array<Record<string, unknown>> = [];
   try {
     const fd = fs.openSync(jsonlFile, 'r');
     try {
       const stat = fs.fstatSync(fd);
-      const bytesToRead = Math.min(stat.size, 64 * 1024);
+      const bytesToRead = Math.min(stat.size, 256 * 1024);
       const buffer = Buffer.alloc(bytesToRead);
       const bytesRead = fs.readSync(fd, buffer, 0, bytesToRead, 0);
-      const lines = buffer.toString('utf8', 0, bytesRead).split(/\r?\n/).slice(0, 50);
+      const lines = buffer.toString('utf8', 0, bytesRead).split(/\r?\n/).slice(0, 200);
       for (const line of lines) {
         if (!line.trim()) continue;
         try {
-          const title = extractClaudeUserTitleFromRecord(JSON.parse(line));
-          if (title) return title;
+          const record = JSON.parse(line) as unknown;
+          if (record && typeof record === 'object' && !Array.isArray(record)) {
+            records.push(record as Record<string, unknown>);
+          }
         } catch {
           /* ignore malformed partial/header lines */
         }
@@ -85,6 +88,55 @@ function extractClaudeTitleFromJsonlHeader(jsonlFile: string): string | undefine
     }
   } catch {
     /* ignore unreadable or not-yet-created transcripts */
+  }
+  return records;
+}
+
+function recordHasToolBlock(record: Record<string, unknown>): boolean {
+  const message = asRecord(record.message);
+  const content = message?.content ?? record.content;
+  if (!Array.isArray(content)) return false;
+  return content.some((block) => {
+    const blockRecord = asRecord(block);
+    return blockRecord?.type === 'tool_use' || blockRecord?.type === 'tool_result';
+  });
+}
+
+/**
+ * Claude chat/no-tools transcripts observed in W2-B investigation lack the code-mode
+ * workspace context records (`attachment` / `file-history-snapshot`) and never contain
+ * tool blocks. Code sessions emit those context records even before tool use; cowork
+ * sessions arrive with sidecar metadata or an audit init record listing tools.
+ */
+export function isClaudeChatSession(
+  jsonlFile: string,
+  metadata?: { sessionId?: string; projectName?: string; agentName?: string },
+): boolean {
+  if (metadata) return false;
+
+  let sawCompletedConversation = false;
+  for (const record of readClaudeJsonlHeaderRecords(jsonlFile)) {
+    if (record.type === 'attachment' || record.type === 'file-history-snapshot') return false;
+    if (recordHasToolBlock(record)) return false;
+    if (record.type === 'system' && Array.isArray(record.tools) && record.tools.length > 0) {
+      return false;
+    }
+    if (
+      record.type === 'assistant' ||
+      record.type === 'last-prompt' ||
+      record.type === 'ai-title'
+    ) {
+      sawCompletedConversation = true;
+    }
+  }
+
+  return sawCompletedConversation;
+}
+
+function extractClaudeTitleFromJsonlHeader(jsonlFile: string): string | undefined {
+  for (const record of readClaudeJsonlHeaderRecords(jsonlFile).slice(0, 50)) {
+    const title = extractClaudeUserTitleFromRecord(record);
+    if (title) return title;
   }
   return undefined;
 }
@@ -897,7 +949,7 @@ export function adoptExternalSessionFromHook(
       ? path.basename(projectDir)
       : folderNameFromProjectDir(path.basename(path.dirname(transcriptPath)));
 
-    adoptExternalSession(
+    const adoptedAgent = adoptExternalSession(
       transcriptPath,
       projectDir,
       nextAgentIdRef,
@@ -911,7 +963,6 @@ export function adoptExternalSessionFromHook(
       folderName,
     );
 
-    const adoptedAgent = [...agents.values()].find((a) => a.jsonlFile === transcriptPath);
     if (adoptedAgent && debug) {
       console.log(
         `[Pixel Agents] Hook: Agent ${adoptedAgent.id} - detected external session ${path.basename(transcriptPath)}${adoptedAgent.folderName ? ` (${adoptedAgent.folderName})` : ''}`,
@@ -988,10 +1039,20 @@ function adoptExternalSession(
   persistAgents: () => void,
   folderName?: string,
   metadataOverride?: { sessionId?: string; projectName?: string; agentName?: string },
-): void {
+): AgentState | null {
   // Invariant: one Claude agent per resolved jsonlFile path; this shared adopter is
   // the last line of defense across hook, workspace, cowork, and global scanners.
-  if (hasAgentForJsonlFile(agents, jsonlFile)) return;
+  if (hasAgentForJsonlFile(agents, jsonlFile)) return null;
+
+  const showChatSessions = vscode.workspace
+    .getConfiguration('pixel-agents')
+    .get<boolean>('claude.showChatSessions', false);
+  if (!showChatSessions && isClaudeChatSession(jsonlFile, metadataOverride)) {
+    console.log(
+      `[Pixel Agents] Claude: skipping chat-mode session ${path.basename(jsonlFile)} (enable pixel-agents.claude.showChatSessions to show it)`,
+    );
+    return null;
+  }
 
   const id = nextAgentIdRef.current++;
   const metadata = readClaudeSessionMetadata(jsonlFile, projectDir, folderName);
@@ -1068,6 +1129,7 @@ function adoptExternalSession(
     webview,
   );
   readNewLines(id, agents, waitingTimers, permissionTimers, webview);
+  return agent;
 }
 
 /**

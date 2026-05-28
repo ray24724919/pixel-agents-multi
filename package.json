@@ -26,6 +26,11 @@
           "type": "boolean",
           "default": false,
           "description": "When enabled, Pixel Agents adopts the latest Codex thread for every cwd in the recent-threads scan, not just cwds matching the current VS Code workspace or an existing user-spawned agent."
+        },
+        "pixel-agents.claude.showChatSessions": {
+          "type": "boolean",
+          "default": false,
+          "description": "When enabled, Pixel Agents adopts Claude chat-mode sessions in addition to code and cowork. Off by default to reduce noise from non-working conversations."
         }
       }
     },
