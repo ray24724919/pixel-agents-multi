@@ -1,5 +1,5 @@
 <h1 align="center">
-    <a href="https://github.com/pablodelucca/pixel-agents/discussions">
+    <a href="https://github.com/ray24724919/pixel-agents-multi/discussions">
         <img src="webview-ui/public/banner.png" alt="Pixel Agents">
     </a>
 </h1>
@@ -10,16 +10,14 @@
 
 <div align="center" style="margin-top: 25px;">
 
-[![version](https://img.shields.io/endpoint?url=https%3A%2F%2Fgist.githubusercontent.com%2Fpablodelucca%2F3cd28398fa4a2c0a636e1d51d41aee39%2Fraw%2Fversion.json)](https://github.com/pablodelucca/pixel-agents/releases)
-[![marketplaces](https://img.shields.io/endpoint?url=https%3A%2F%2Fgist.githubusercontent.com%2Fpablodelucca%2F3cd28398fa4a2c0a636e1d51d41aee39%2Fraw%2Finstalls.json)](https://marketplace.visualstudio.com/items?itemName=pablodelucca.pixel-agents)
-[![stars](https://img.shields.io/github/stars/pablodelucca/pixel-agents?logo=github&color=0183ff&style=flat)](https://github.com/pablodelucca/pixel-agents/stargazers)
-[![license](https://img.shields.io/github/license/pablodelucca/pixel-agents?color=0183ff&style=flat)](https://github.com/pablodelucca/pixel-agents/blob/main/LICENSE)
-[![good first issues](https://img.shields.io/github/issues/pablodelucca/pixel-agents/good%20first%20issue?color=7057ff&label=good%20first%20issues)](https://github.com/pablodelucca/pixel-agents/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22)
+[![stars](https://img.shields.io/github/stars/ray24724919/pixel-agents-multi?logo=github&color=0183ff&style=flat)](https://github.com/ray24724919/pixel-agents-multi/stargazers)
+[![license](https://img.shields.io/github/license/ray24724919/pixel-agents-multi?color=0183ff&style=flat)](https://github.com/ray24724919/pixel-agents-multi/blob/main/LICENSE)
+[![good first issues](https://img.shields.io/github/issues/ray24724919/pixel-agents-multi/good%20first%20issue?color=7057ff&label=good%20first%20issues)](https://github.com/ray24724919/pixel-agents-multi/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22)
 
 </div>
 
 <div align="center">
-<a href="https://marketplace.visualstudio.com/items?itemName=pablodelucca.pixel-agents">🛒 VS Code Marketplace</a> • <a href="https://github.com/pablodelucca/pixel-agents/discussions">💬 Discussions</a> • <a href="https://github.com/pablodelucca/pixel-agents/issues">🐛 Issues</a> • <a href="CONTRIBUTING.md">🤝 Contributing</a> • <a href="CHANGELOG.md">📋 Changelog</a>
+<a href="https://github.com/ray24724919/pixel-agents-multi/releases">📦 Releases</a> • <a href="https://github.com/ray24724919/pixel-agents-multi/discussions">💬 Discussions</a> • <a href="https://github.com/ray24724919/pixel-agents-multi/issues">🐛 Issues</a> • <a href="CONTRIBUTING.md">🤝 Contributing</a> • <a href="CHANGELOG.md">📋 Changelog</a>
 </div>
 
 <br/>
@@ -28,7 +26,7 @@ Pixel Agents turns AI coding sessions into something you can actually see and ma
 
 This fork extends the original Claude Code-focused project into a Claude + Codex visual agent dashboard for VS Code. The goal is to make multi-project, multi-thread AI work feel observable: you can see which provider an agent came from, which project/thread it belongs to, whether it is active or waiting, and how much tracked token usage it has accumulated.
 
-This repository is my customized fork of [pablodelucca/pixel-agents](https://github.com/pablodelucca/pixel-agents). It is intended for local source installation while the Codex integration is being developed.
+This repository is derived from [pablodelucca/pixel-agents](https://github.com/pablodelucca/pixel-agents) (the original Claude-Code-focused project) and is intended for local source installation while the Codex integration is being developed.
 
 ![Pixel Agents screenshot](webview-ui/public/Screenshot.jpg)
 
@@ -179,30 +177,19 @@ For this to work, the architecture needs to be modular at every level:
 - **Agent-agnostic**: Claude Code today, but built to support Codex, OpenCode, Gemini, Cursor, Copilot, and others through composable adapters.
 - **Theme-agnostic**: community-created assets, skins, and themes from any contributor.
 
-We're actively working on the core module and adapter architecture that makes this possible. If you're interested to talk about this further, please visit our [Discussions Section](https://github.com/pablodelucca/pixel-agents/discussions).
+We're actively working on the core module and adapter architecture that makes this possible. If you're interested to talk about this further, please visit our [Discussions Section](https://github.com/ray24724919/pixel-agents-multi/discussions).
 
 ## Community & Contributing
 
-Use **[Issues](https://github.com/pablodelucca/pixel-agents/issues)** to report bugs or request features. Join **[Discussions](https://github.com/pablodelucca/pixel-agents/discussions)** for questions and conversations.
+Use **[Issues](https://github.com/ray24724919/pixel-agents-multi/issues)** to report bugs or request features. Join **[Discussions](https://github.com/ray24724919/pixel-agents-multi/discussions)** for questions and conversations.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for instructions on how to contribute.
 
 Please read our [Code of Conduct](CODE_OF_CONDUCT.md) before participating.
 
-## Supporting the Project
-
-If you find Pixel Agents useful, consider supporting its development:
-
-<a href="https://github.com/sponsors/pablodelucca">
-  <img src="https://img.shields.io/badge/Sponsor-GitHub-ea4aaa?logo=github" alt="GitHub Sponsors">
-</a>
-<a href="https://ko-fi.com/pablodelucca">
-  <img src="https://img.shields.io/badge/Support-Ko--fi-ff5e5b?logo=ko-fi" alt="Ko-fi">
-</a>
-
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=pablodelucca/pixel-agents&type=Date)](https://www.star-history.com/?repos=pablodelucca%2Fpixel-agents&type=date&legend=bottom-right)
+[![Star History Chart](https://api.star-history.com/svg?repos=ray24724919/pixel-agents-multi&type=Date)](https://www.star-history.com/?repos=ray24724919%2Fpixel-agents-multi&type=date&legend=bottom-right)
 
 ## License
 

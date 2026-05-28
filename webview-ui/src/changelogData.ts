@@ -21,7 +21,7 @@ export function toMajorMinor(version: string): string {
   return parts.length >= 2 ? `${parts[0]}.${parts[1]}` : version;
 }
 
-export const CHANGELOG_REPO_URL = 'https://github.com/pablodelucca/pixel-agents';
+export const CHANGELOG_REPO_URL = 'https://github.com/ray24724919/pixel-agents-multi';
 
 export const changelogEntries: ChangelogEntry[] = [
   {
