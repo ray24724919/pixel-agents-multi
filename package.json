@@ -19,6 +19,16 @@
   "activationEvents": [],
   "main": "./dist/extension.js",
   "contributes": {
+    "configuration": {
+      "title": "Pixel Agents",
+      "properties": {
+        "pixel-agents.codex.discoverAllCwds": {
+          "type": "boolean",
+          "default": false,
+          "description": "When enabled, Pixel Agents adopts the latest Codex thread for every cwd in the recent-threads scan, not just cwds matching the current VS Code workspace or an existing user-spawned agent."
+        }
+      }
+    },
     "commands": [
       {
         "command": "pixel-agents.showPanel",
