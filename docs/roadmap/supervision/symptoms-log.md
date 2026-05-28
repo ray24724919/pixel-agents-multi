@@ -70,6 +70,16 @@ This log captures runtime symptoms observed during supervisor-led cross-testing 
 
 ## Batch T2 — Single Codex agent
 
+### S-T2-03 — W2-A default scope excludes everything when no workspace folder + no +Agent Codex
+
+- **Batch**: T2 (discovered during W2-A runtime verification 2026-05-27)
+- **Provider**: codex
+- **What user reports**: After installing Wave 1+W2-A `.vsix` and reloading, no Codex agents visible. SQLite has multiple non-archived Codex threads in valid cwds. Enabling `pixel-agents.codex.discoverAllCwds: true` makes them all appear.
+- **Root cause** (confirmed): W2-A's `getAdoptionCandidates` default scope = workspace folder roots ∪ +Agent-spawned Codex agent cwds. When VS Code has no folder open AND user hasn't +Agent'd a Codex, both sets are empty → default `allowedCwds = ∅` → no adoption. The user's actual usage pattern is "open VS Code without a folder, use Pixel Agents as cross-project status board", which W2-A's default didn't anticipate.
+- **Severity**: annoying — primary use case (status-board mode) breaks; workaround exists (toggle setting).
+- **Supervisor learning**: when writing scope filters that include "workspace folder" as a default protection mechanism, consider the empty-workspace case explicitly and provide a fallback.
+- **Proposed work-package**: W2-E (W2-A follow-up, fallback to discoverAll when no scope candidates exist and setting is at default).
+
 ### S-T2-02 — After W1-B install + reload, all persisted Codex agents disappear (W1-B regression)
 
 - **Batch**: T2 (regression discovered during W1-B verification 2026-05-27)
