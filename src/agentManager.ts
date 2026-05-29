@@ -1,3 +1,4 @@
+import * as childProcess from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -25,6 +26,87 @@ import { postAgentLifecycleSnapshot, postAgentPaused } from './lifecycleStatus.j
 import { cancelPermissionTimer, cancelWaitingTimer } from './timerManager.js';
 import { readTokenUsageFromTranscript } from './tokenUsage.js';
 import type { AgentState, PersistedAgent } from './types.js';
+
+export const CLAUDE_CLI_MISSING_MESSAGE =
+  'Claude Code CLI was not found. The Claude VS Code extension alone is not enough for Pixel Agents. Install the Claude CLI or configure the command path.';
+
+function unquoteCommandPath(value: string): string {
+  const trimmed = value.trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
+
+function getClaudeCommandPath(): string {
+  const configured = vscode.workspace
+    .getConfiguration('pixel-agents')
+    .get<string>('claude.commandPath', 'claude');
+  return unquoteCommandPath(configured || 'claude') || 'claude';
+}
+
+function isPathLikeCommand(commandPath: string): boolean {
+  return (
+    path.isAbsolute(commandPath) ||
+    commandPath.includes('/') ||
+    commandPath.includes('\\') ||
+    commandPath.includes(' ')
+  );
+}
+
+function windowsExecutableCandidates(commandPath: string): string[] {
+  if (path.extname(commandPath)) return [commandPath];
+  const pathExt = process.env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD;.PS1';
+  return pathExt
+    .split(';')
+    .map((ext) => ext.trim())
+    .filter(Boolean)
+    .map((ext) => `${commandPath}${ext.toLowerCase()}`);
+}
+
+function resolvePathLikeCommand(commandPath: string): string | null {
+  const candidates =
+    process.platform === 'win32' ? windowsExecutableCandidates(commandPath) : [commandPath];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+function resolveBareCommand(commandPath: string): string | null {
+  try {
+    const result =
+      process.platform === 'win32'
+        ? childProcess.spawnSync('where.exe', [commandPath], { stdio: 'ignore' })
+        : childProcess.spawnSync('sh', ['-c', 'command -v "$1"', 'sh', commandPath], {
+            stdio: 'ignore',
+          });
+    return result.status === 0 ? commandPath : null;
+  } catch {
+    return null;
+  }
+}
+
+export function resolveClaudeCommand(commandPath = getClaudeCommandPath()): string | null {
+  return isPathLikeCommand(commandPath)
+    ? resolvePathLikeCommand(commandPath)
+    : resolveBareCommand(commandPath);
+}
+
+function buildClaudeArgs(sessionId: string, bypassPermissions?: boolean): string[] {
+  const args = ['--session-id', sessionId];
+  if (bypassPermissions) {
+    args.push('--dangerously-skip-permissions');
+  }
+  return args;
+}
+
+function buildClaudeLaunchCommand(commandPath: string, args: string[]): string {
+  return [commandPath, ...args].join(' ');
+}
 
 export function getProjectDirPath(cwd?: string): string {
   // Fall back to home directory when no workspace folder is open.
@@ -91,20 +173,40 @@ export async function launchNewTerminal(
   // threads.cwd entry in ~/.codex/state_5.sqlite.
   const cwd = folderPath || folders?.[0]?.uri.fsPath || os.homedir();
   const isMultiRoot = !!(folders && folders.length > 1);
+
+  const isClaude = providerId === 'claude';
+  const configuredClaudeCommand = isClaude ? getClaudeCommandPath() : undefined;
+  const resolvedClaudeCommand = configuredClaudeCommand
+    ? resolveClaudeCommand(configuredClaudeCommand)
+    : undefined;
+  if (isClaude && !resolvedClaudeCommand) {
+    vscode.window.showWarningMessage(CLAUDE_CLI_MISSING_MESSAGE);
+    return;
+  }
+
   const idx = nextTerminalIndexRef.current++;
-  const terminal = vscode.window.createTerminal({
-    name: `${TERMINAL_NAME_PREFIX} #${idx}`,
-    cwd,
-  });
+  const sessionId = crypto.randomUUID();
+  const claudeArgs = isClaude ? buildClaudeArgs(sessionId, bypassPermissions) : [];
+  const launchClaudeDirectly =
+    isClaude && !!configuredClaudeCommand && isPathLikeCommand(configuredClaudeCommand);
+  const terminalOptions: vscode.TerminalOptions = launchClaudeDirectly
+    ? {
+        name: `${TERMINAL_NAME_PREFIX} #${idx}`,
+        cwd,
+        shellPath: resolvedClaudeCommand ?? undefined,
+        shellArgs: claudeArgs,
+      }
+    : {
+        name: `${TERMINAL_NAME_PREFIX} #${idx}`,
+        cwd,
+      };
+  const terminal = vscode.window.createTerminal(terminalOptions);
   terminal.show();
 
-  const sessionId = crypto.randomUUID();
-
   if (providerId === 'claude') {
-    const claudeCmd = bypassPermissions
-      ? `claude --session-id ${sessionId} --dangerously-skip-permissions`
-      : `claude --session-id ${sessionId}`;
-    terminal.sendText(claudeCmd);
+    if (!launchClaudeDirectly) {
+      terminal.sendText(buildClaudeLaunchCommand(configuredClaudeCommand ?? 'claude', claudeArgs));
+    }
 
     const projectDir = getProjectDirPath(cwd);
     const expectedFile = path.join(projectDir, `${sessionId}.jsonl`);
@@ -665,7 +767,7 @@ export function restoreAgents(
 
     restoredProjectDir = p.projectDir;
 
-    if (agent.providerId === 'codex') {
+    if (agent.providerId === 'codex' && !agent.isExternal) {
       startCodexCwdPoll(
         p.id,
         agent.projectDir,

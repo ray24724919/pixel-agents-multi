@@ -397,28 +397,53 @@ describe('Codex thread follow-on', () => {
     expect(agents.has(3)).toBe(true);
   });
 
-  it('adopts one latest external Codex agent per cwd', () => {
+  it('adopts multiple external Codex top-level threads across cwd values without duplicates', () => {
+    setDiscoverAllCwds(true, true);
     const provider = createProviderHarness();
     const olderPath = path.join(tmpDir, 'foo-older.jsonl');
     const latestPath = path.join(tmpDir, 'foo-latest.jsonl');
+    const barPath = path.join(tmpDir, 'bar.jsonl');
     writeCodexTokenFile(olderPath, 1, 0);
     writeCodexTokenFile(latestPath, 5, 2);
+    writeCodexTokenFile(barPath, 3, 1);
     const older = { ...codexThread('foo-older', olderPath, '/workspace/project'), updatedAtMs: 10 };
     const latest = {
       ...codexThread('foo-latest', latestPath, '/workspace/project'),
       updatedAtMs: 20,
     };
-    findRecentCodexThreadsMock.mockReturnValue([older, latest]);
-    findCodexThreadByIdMock.mockImplementation((id: string) => (id === latest.id ? latest : null));
+    const bar = codexThread('bar-thread', barPath, '/other/project');
+    findRecentCodexThreadsMock.mockReturnValue([latest, older, bar]);
+    findCodexThreadByIdMock.mockImplementation((id: string) => {
+      if (id === latest.id) return latest;
+      if (id === older.id) return older;
+      if (id === bar.id) return bar;
+      return null;
+    });
 
     scanCodex(provider);
 
-    expect(provider.agents.size).toBe(1);
-    const agent = [...provider.agents.values()][0]!;
-    expect(agent.sessionId).toBe('foo-latest');
-    expect(agent.jsonlFile).toBe(latestPath);
-    expect(agent.inputTokens).toBe(5);
-    expect(agent.outputTokens).toBe(2);
+    expect(new Set([...provider.agents.values()].map((agent) => agent.sessionId))).toEqual(
+      new Set(['foo-latest', 'foo-older', 'bar-thread']),
+    );
+    expect(
+      new Map([...provider.agents.values()].map((agent) => [agent.sessionId, agent.projectDir])),
+    ).toEqual(
+      new Map([
+        ['foo-latest', '/workspace/project'],
+        ['foo-older', '/workspace/project'],
+        ['bar-thread', '/other/project'],
+      ]),
+    );
+    expect(provider.agents.size).toBe(3);
+
+    scanCodex(provider);
+
+    expect(provider.agents.size).toBe(3);
+    expect(
+      (provider.webviewView?.webview.postMessage as ReturnType<typeof vi.fn>).mock.calls.filter(
+        ([message]) => message.type === 'agentCreated',
+      ),
+    ).toHaveLength(3);
   });
 
   it('falls back to all cwd adoption with no workspace, no spawned agents, and default discoverAllCwds', () => {
@@ -441,6 +466,7 @@ describe('Codex thread follow-on', () => {
     const bar = codexThread('bar-thread', barPath, '/bar');
     findRecentCodexThreadsMock.mockReturnValue([fooOlder, fooLatest, bar]);
     findCodexThreadByIdMock.mockImplementation((id: string) => {
+      if (id === fooOlder.id) return fooOlder;
       if (id === fooLatest.id) return fooLatest;
       if (id === bar.id) return bar;
       return null;
@@ -452,13 +478,8 @@ describe('Codex thread follow-on', () => {
 
     expect(logSpy).toHaveBeenCalledWith(fallbackLogMessage);
     logSpy.mockRestore();
-    expect(
-      new Map([...provider.agents.values()].map((agent) => [agent.projectDir, agent.sessionId])),
-    ).toEqual(
-      new Map([
-        ['/foo', 'foo-latest'],
-        ['/bar', 'bar-thread'],
-      ]),
+    expect(new Set([...provider.agents.values()].map((agent) => agent.sessionId))).toEqual(
+      new Set(['foo-older', 'foo-latest', 'bar-thread']),
     );
   });
 
@@ -543,15 +564,17 @@ describe('Codex thread follow-on', () => {
   it('does not adopt an external Codex thread for a cwd that already has a spawned agent', () => {
     const provider = createProviderHarness();
     const threadPath = path.join(tmpDir, 'external.jsonl');
+    const spawnedPath = path.join(tmpDir, 'spawned.jsonl');
     writeCodexTokenFile(threadPath, 1, 0);
+    writeCodexTokenFile(spawnedPath, 1, 0);
     const thread = codexThread('external-thread', threadPath, '/workspace/project');
     provider.agents.set(
       1,
       makeAgent(1, {
-        sessionId: thread.id,
+        sessionId: 'spawned-thread',
         isExternal: false,
         projectDir: '/workspace/project',
-        jsonlFile: threadPath,
+        jsonlFile: spawnedPath,
       }),
     );
     findRecentCodexThreadsMock.mockReturnValue([thread]);
@@ -563,31 +586,39 @@ describe('Codex thread follow-on', () => {
     expect(provider.agents.get(1)?.isExternal).toBe(false);
   });
 
-  it('wires adopted external Codex agents through cwd polling for later thread switches', async () => {
+  it('keeps multiple same-cwd external Codex agents bound to their own threads', async () => {
     const firstPath = path.join(tmpDir, 'first.jsonl');
     const secondPath = path.join(tmpDir, 'second.jsonl');
+    const thirdPath = path.join(tmpDir, 'third.jsonl');
     writeCodexTokenFile(firstPath, 1, 0);
     writeCodexTokenFile(secondPath, 2, 0);
+    writeCodexTokenFile(thirdPath, 3, 0);
     const first = codexThread('first-thread', firstPath, '/workspace/project');
     const second = codexThread('second-thread', secondPath, '/workspace/project');
-    findRecentCodexThreadsMock.mockReturnValue([first]);
+    const third = codexThread('third-thread', thirdPath, '/workspace/project');
+    findRecentCodexThreadsMock.mockReturnValue([first, second]);
     findCodexThreadByIdMock.mockImplementation((id: string) => {
       if (id === first.id) return first;
       if (id === second.id) return second;
+      if (id === third.id) return third;
       return null;
     });
-    findLatestCodexThreadMock.mockReturnValue(second);
+    findLatestCodexThreadMock.mockReturnValue(third);
     const provider = createProviderHarness();
 
     scanCodex(provider);
-    expect(provider.agents.size).toBe(1);
-    const agent = [...provider.agents.values()][0]!;
-    expect(agent.sessionId).toBe('first-thread');
+    expect(provider.agents.size).toBe(2);
+    expect([...provider.agents.values()].map((agent) => agent.sessionId)).toEqual([
+      'first-thread',
+      'second-thread',
+    ]);
 
     await vi.advanceTimersByTimeAsync(1000);
-    expect(agent.sessionId).toBe('second-thread');
-    expect(agent.jsonlFile).toBe(secondPath);
-    expect(provider.agents.size).toBe(1);
+    expect([...provider.agents.values()].map((agent) => agent.sessionId)).toEqual([
+      'first-thread',
+      'second-thread',
+    ]);
+    expect(findLatestCodexThreadMock).not.toHaveBeenCalled();
   });
 });
 

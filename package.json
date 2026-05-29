@@ -25,12 +25,17 @@
         "pixel-agents.codex.discoverAllCwds": {
           "type": "boolean",
           "default": false,
-          "description": "When enabled, Pixel Agents adopts the latest Codex thread for every cwd in the recent-threads scan, not just cwds matching the current VS Code workspace or an existing user-spawned agent."
+          "description": "When enabled, Pixel Agents adopts recent external Codex threads across all cwd values, not just cwd values matching the current VS Code workspace or an existing user-spawned agent."
         },
         "pixel-agents.claude.showChatSessions": {
           "type": "boolean",
           "default": false,
           "description": "When enabled, Pixel Agents adopts Claude chat-mode sessions in addition to code and cowork. Off by default to reduce noise from non-working conversations."
+        },
+        "pixel-agents.claude.commandPath": {
+          "type": "string",
+          "default": "claude",
+          "description": "Command or executable path used to launch Claude Code. The Claude VS Code extension alone is not enough; Pixel Agents needs the Claude Code CLI."
         }
       }
     },

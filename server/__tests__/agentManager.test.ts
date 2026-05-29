@@ -1,3 +1,4 @@
+import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -5,6 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentState } from '../../src/types.js';
 
 const createTerminalMock = vi.hoisted(() => vi.fn());
+const showWarningMessageMock = vi.hoisted(() => vi.fn());
+const spawnSyncMock = vi.hoisted(() => vi.fn());
+const claudeCommandPathMock = vi.hoisted(() => ({ current: 'claude' }));
 const buildCodexLaunchCommandMock = vi.hoisted(() => vi.fn());
 const findLatestCodexThreadMock = vi.hoisted(() => vi.fn());
 const ensureProjectScanMock = vi.hoisted(() => vi.fn());
@@ -15,11 +19,21 @@ const startFileWatchingMock = vi.hoisted(() => vi.fn());
 vi.mock('vscode', () => ({
   window: {
     createTerminal: createTerminalMock,
+    showWarningMessage: showWarningMessageMock,
     terminals: [],
   },
   workspace: {
+    getConfiguration: vi.fn(() => ({
+      get: vi.fn((key: string, fallback: string) =>
+        key === 'claude.commandPath' ? claudeCommandPathMock.current : fallback,
+      ),
+    })),
     workspaceFolders: [{ uri: { fsPath: '/workspace/project' } }],
   },
+}));
+
+vi.mock('child_process', () => ({
+  spawnSync: spawnSyncMock,
 }));
 
 vi.mock('../../server/src/providers/file/codex/codex.js', () => ({
@@ -102,10 +116,17 @@ async function launchWith(
 }
 
 describe('launchNewTerminal provider dispatch', () => {
+  let tmpDir: string;
+
   beforeEach(() => {
     vi.useFakeTimers();
     vi.stubGlobal('crypto', { randomUUID: vi.fn(() => 'session-123') });
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pxl-agent-manager-'));
     createTerminalMock.mockReset();
+    showWarningMessageMock.mockReset();
+    spawnSyncMock.mockReset();
+    spawnSyncMock.mockReturnValue({ status: 0 });
+    claudeCommandPathMock.current = 'claude';
     buildCodexLaunchCommandMock.mockReset();
     buildCodexLaunchCommandMock.mockReturnValue('codex --cd /workspace/project --no-alt-screen');
     findLatestCodexThreadMock.mockReset();
@@ -119,6 +140,7 @@ describe('launchNewTerminal provider dispatch', () => {
     vi.clearAllTimers();
     vi.useRealTimers();
     vi.unstubAllGlobals();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
   it('launches Claude with the original session-id command and agent metadata', async () => {
@@ -176,6 +198,40 @@ describe('launchNewTerminal provider dispatch', () => {
     await launchWith(harness, undefined);
 
     expect(harness.terminal.sendText).toHaveBeenCalledWith('claude --session-id session-123');
+    expect(harness.agents.get(1)?.providerId).toBe('claude');
+  });
+
+  it('does not create a Claude terminal or agent when the configured CLI is missing', async () => {
+    spawnSyncMock.mockReturnValue({ status: 1 });
+    const harness = createLaunchHarness();
+
+    await launchWith(harness, 'claude');
+
+    expect(createTerminalMock).not.toHaveBeenCalled();
+    expect(harness.agents.size).toBe(0);
+    expect(harness.persistAgents).not.toHaveBeenCalled();
+    expect(showWarningMessageMock).toHaveBeenCalledWith(
+      'Claude Code CLI was not found. The Claude VS Code extension alone is not enough for Pixel Agents. Install the Claude CLI or configure the command path.',
+    );
+  });
+
+  it('launches configured Claude paths with spaces directly through terminal options', async () => {
+    const commandDir = path.join(tmpDir, 'Claude CLI');
+    const commandPath = path.join(commandDir, 'claude.cmd');
+    fs.mkdirSync(commandDir, { recursive: true });
+    fs.writeFileSync(commandPath, '');
+    claudeCommandPathMock.current = commandPath;
+    const harness = createLaunchHarness();
+
+    await launchWith(harness, 'claude');
+
+    expect(createTerminalMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        shellPath: commandPath,
+        shellArgs: ['--session-id', 'session-123'],
+      }),
+    );
+    expect(harness.terminal.sendText).not.toHaveBeenCalled();
     expect(harness.agents.get(1)?.providerId).toBe('claude');
   });
 });

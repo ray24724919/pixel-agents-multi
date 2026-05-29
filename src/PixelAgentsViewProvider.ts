@@ -29,7 +29,6 @@ import {
   sendExistingAgents,
   sendLayout,
   setAgentPaused,
-  startCodexCwdPoll,
 } from './agentManager.js';
 import type { LoadedAssets, LoadedCharacterSprites } from './assetLoader.js';
 import {
@@ -126,6 +125,18 @@ export function getLiveCodexThreadIdsForAgentCwds(
     }
   }
   return liveThreadIds;
+}
+
+function resolvePathKey(value: string | undefined): string | undefined {
+  return value ? path.resolve(value) : undefined;
+}
+
+function codexAgentMatchesThread(agent: AgentState, thread: CodexThread): boolean {
+  if (agent.providerId !== 'codex') return false;
+  if (agent.sessionId && agent.sessionId === thread.id) return true;
+  const agentTranscript = resolvePathKey(agent.jsonlFile);
+  const threadTranscript = resolvePathKey(thread.rolloutPath);
+  return !!agentTranscript && !!threadTranscript && agentTranscript === threadTranscript;
 }
 
 export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
@@ -443,13 +454,8 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 
   private adoptCodexExternalThread(thread: CodexThread): AgentState | null {
     if (!thread.cwd) return null;
-    const targetCwd = path.resolve(thread.cwd);
     for (const agent of this.agents.values()) {
-      if (
-        agent.providerId === 'codex' &&
-        agent.projectDir &&
-        path.resolve(agent.projectDir) === targetCwd
-      ) {
+      if (codexAgentMatchesThread(agent, thread)) {
         return null;
       }
     }
@@ -530,19 +536,6 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       this.permissionTimers,
       this.webview,
     );
-    startCodexCwdPoll(
-      id,
-      thread.cwd,
-      this.agents,
-      this.knownJsonlFiles,
-      this.fileWatchers,
-      this.pollingTimers,
-      this.waitingTimers,
-      this.permissionTimers,
-      this.jsonlPollTimers,
-      this.webview,
-      this.persistAgents,
-    );
     return agent;
   }
 
@@ -577,25 +570,35 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       effectiveDiscoverAll = true;
     }
 
-    const existingAgentCwds = new Set<string>();
+    const spawnedAgentCwds = new Set<string>();
+    const existingThreadIds = new Set<string>();
+    const existingTranscriptPaths = new Set<string>();
     for (const agent of this.agents.values()) {
-      if (agent.providerId === 'codex' && agent.projectDir) {
-        existingAgentCwds.add(path.resolve(agent.projectDir));
+      if (agent.providerId !== 'codex') continue;
+      if (!agent.isExternal && agent.projectDir) {
+        spawnedAgentCwds.add(path.resolve(agent.projectDir));
+      }
+      if (agent.sessionId) {
+        existingThreadIds.add(agent.sessionId);
+      }
+      const transcriptPath = resolvePathKey(agent.jsonlFile);
+      if (transcriptPath) {
+        existingTranscriptPaths.add(transcriptPath);
       }
     }
 
-    const byCwd = new Map<string, CodexThread>();
+    const candidates: CodexThread[] = [];
     for (const thread of threads) {
       if (!thread.cwd) continue;
       const cwd = path.resolve(thread.cwd);
-      if (existingAgentCwds.has(cwd)) continue;
+      const transcriptPath = resolvePathKey(thread.rolloutPath);
+      if (existingThreadIds.has(thread.id)) continue;
+      if (transcriptPath && existingTranscriptPaths.has(transcriptPath)) continue;
+      if (spawnedAgentCwds.has(cwd)) continue;
       if (!effectiveDiscoverAll && !allowedCwds.has(cwd)) continue;
-      const previous = byCwd.get(cwd);
-      if (!previous || thread.updatedAtMs > previous.updatedAtMs) {
-        byCwd.set(cwd, thread);
-      }
+      candidates.push(thread);
     }
-    return [...byCwd.values()];
+    return candidates;
   }
 
   private scanClaudeWorkspaceThreads(includeInactive = false): void {
