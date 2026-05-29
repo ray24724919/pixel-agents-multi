@@ -11,6 +11,7 @@ import {
   type CodexThread,
   findCodexThreadById,
   findRecentCodexThreads,
+  terminateCodexThreadProcess,
 } from '../server/src/providers/file/codex/codex.js';
 import {
   installHooks,
@@ -772,7 +773,11 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     dismissedJsonlFiles.set(agent.jsonlFile, Number.MAX_SAFE_INTEGER);
   }
 
-  private postActionTimeline(agent: AgentState, action: 'hide' | 'archive' | 'kill'): void {
+  private postActionTimeline(
+    agent: AgentState,
+    action: 'hide' | 'archive' | 'kill',
+    summaryOverride?: string,
+  ): void {
     const titles = {
       hide: 'Agent hidden',
       archive: 'Agent archived',
@@ -781,13 +786,13 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     const summaries = {
       hide: 'Hidden from normal views; underlying process continues.',
       archive: 'Removed from active tracking and preserved in archived agents.',
-      kill: 'Underlying terminal disposed when available; agent removed from active tracking.',
+      kill: 'Owned terminals are disposed; external Codex processes are terminated when safely matched.',
     };
     postAgentTimelineEvent(this.webview, {
       agentId: agent.id,
       kind: `action.${action}`,
       title: titles[action],
-      summary: summaries[action],
+      summary: summaryOverride ?? summaries[action],
       severity: action === 'kill' ? 'warning' : 'info',
       providerId: agent.providerId,
       projectName: agent.projectName ?? agent.folderName,
@@ -831,9 +836,27 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     if (agent.providerId === 'codex') {
       archiveCodexThread(agent.sessionId);
     }
-    agent.terminalRef?.dispose();
+    let killSummary: string | undefined;
+    if (agent.terminalRef) {
+      agent.terminalRef.dispose();
+      killSummary = 'Owned terminal disposed; agent removed from active tracking.';
+    } else if (agent.providerId === 'codex') {
+      const result = terminateCodexThreadProcess({
+        threadId: agent.sessionId,
+        cwd: agent.projectDir,
+        rolloutPath: agent.jsonlFile,
+      });
+      if (result.terminated) {
+        killSummary = `External Codex process ${result.pid} terminated; agent removed from active tracking.`;
+      } else {
+        killSummary = `External Codex process was not terminated (${result.reason}); agent removed from active tracking.`;
+        console.warn(
+          `[Pixel Agents] Codex: external kill could not safely terminate process for thread ${agent.sessionId} (${result.reason}).`,
+        );
+      }
+    }
     this.permanentlyDismissTranscript(agent);
-    this.postActionTimeline(agent, 'kill');
+    this.postActionTimeline(agent, 'kill', killSummary);
     this.unregisterAgentHook(agent);
     removeAgent(
       id,

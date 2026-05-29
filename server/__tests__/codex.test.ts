@@ -25,6 +25,9 @@ const {
   findCodexThreadsForCwd,
   buildCodexLaunchCommand,
   archiveCodexThread,
+  extractCodexCdValues,
+  findMatchingCodexProcesses,
+  terminateCodexThreadProcess,
 } = await import('../src/providers/file/codex/codex.js');
 
 function codexLine(type: string, payload: Record<string, unknown>): string {
@@ -238,6 +241,91 @@ describe('codexProvider', () => {
         ],
         { stdio: ['ignore', 'ignore', 'ignore'] },
       );
+    });
+
+    it('extracts quoted and unquoted Codex --cd values', () => {
+      expect(extractCodexCdValues('"C:\\bin\\codex.exe" --cd "C:\\workspace\\project"')).toEqual([
+        'C:\\workspace\\project',
+      ]);
+      expect(extractCodexCdValues("codex --cd '/workspace/project' --no-alt-screen")).toEqual([
+        '/workspace/project',
+      ]);
+      expect(extractCodexCdValues('codex --cd=/workspace/project')).toEqual(['/workspace/project']);
+    });
+
+    it('matches and terminates a unique Codex process by cwd on Windows', () => {
+      const killProcessTree = vi.fn(() => true);
+
+      expect(
+        terminateCodexThreadProcess(
+          {
+            threadId: 'thread-a',
+            cwd: 'C:\\workspace\\project',
+            rolloutPath: 'C:\\Users\\User\\.codex\\sessions\\thread-a.jsonl',
+          },
+          {
+            platform: 'win32',
+            listProcesses: () => [
+              {
+                pid: 101,
+                name: 'codex.exe',
+                commandLine:
+                  '"C:\\Users\\User\\AppData\\Local\\OpenAI\\Codex\\bin\\codex.exe" --cd "C:\\workspace\\project" --no-alt-screen',
+              },
+              {
+                pid: 202,
+                name: 'codex.exe',
+                commandLine: '"C:\\Program Files\\Codex\\codex.exe" app-server --listen stdio://',
+              },
+            ],
+            killProcessTree,
+          },
+        ),
+      ).toEqual({
+        terminated: true,
+        reason: 'terminated',
+        pid: 101,
+        matchedCount: 1,
+      });
+      expect(killProcessTree).toHaveBeenCalledWith(101, 'win32');
+    });
+
+    it('refuses to terminate ambiguous Codex process matches', () => {
+      const matches = findMatchingCodexProcesses(
+        {
+          threadId: 'thread-a',
+          cwd: '/workspace/project',
+          rolloutPath: '/home/user/.codex/sessions/thread-a.jsonl',
+        },
+        [
+          {
+            pid: 101,
+            name: 'codex',
+            commandLine: 'codex --cd /workspace/project --no-alt-screen',
+          },
+          {
+            pid: 202,
+            name: 'node',
+            commandLine: 'node /usr/local/bin/codex --cd /workspace/project --no-alt-screen',
+          },
+        ],
+        'linux',
+      );
+      const result = terminateCodexThreadProcess(
+        {
+          threadId: 'thread-a',
+          cwd: '/workspace/project',
+          rolloutPath: '/home/user/.codex/sessions/thread-a.jsonl',
+        },
+        {
+          platform: 'linux',
+          listProcesses: () => matches,
+          killProcessTree: vi.fn(() => true),
+        },
+      );
+
+      expect(matches.map((match) => match.pid)).toEqual([101, 202]);
+      expect(result).toEqual({ terminated: false, reason: 'ambiguous-match', matchedCount: 2 });
     });
   });
 

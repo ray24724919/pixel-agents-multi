@@ -211,6 +211,262 @@ export function archiveCodexThread(threadId: string): boolean {
   }
 }
 
+export interface CodexProcessTerminationTarget {
+  threadId: string;
+  cwd?: string;
+  rolloutPath?: string;
+}
+
+export interface CodexProcessCandidate {
+  pid: number;
+  parentPid?: number;
+  name?: string;
+  commandLine?: string;
+  executablePath?: string;
+}
+
+export type CodexProcessTerminationReason =
+  | 'terminated'
+  | 'missing-target'
+  | 'process-list-failed'
+  | 'no-match'
+  | 'ambiguous-match'
+  | 'kill-failed';
+
+export interface CodexProcessTerminationResult {
+  terminated: boolean;
+  reason: CodexProcessTerminationReason;
+  pid?: number;
+  matchedCount?: number;
+}
+
+interface CodexProcessTerminationOptions {
+  platform?: NodeJS.Platform;
+  listProcesses?: () => CodexProcessCandidate[];
+  killProcessTree?: (pid: number, platform: NodeJS.Platform) => boolean;
+}
+
+function unquote(value: string): string {
+  const trimmed = value.trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
+
+function normalizeProcessPath(value: string, platform: NodeJS.Platform): string {
+  const pathApi = platform === 'win32' ? path.win32 : path.posix;
+  const normalized = pathApi
+    .normalize(unquote(value))
+    .replace(/[\\/]+$/, '')
+    .replace(/\\/g, '/');
+  return platform === 'win32' ? normalized.toLowerCase() : normalized;
+}
+
+function normalizedTextIncludesPath(
+  text: string,
+  targetPath: string | undefined,
+  platform: NodeJS.Platform,
+): boolean {
+  if (!targetPath) return false;
+  const normalizedText = text.replace(/\\/g, '/');
+  const normalizedTarget = normalizeProcessPath(targetPath, platform);
+  return platform === 'win32'
+    ? normalizedText.toLowerCase().includes(normalizedTarget)
+    : normalizedText.includes(normalizedTarget);
+}
+
+function basenameFromCommandToken(value: string | undefined): string {
+  if (!value) return '';
+  return unquote(value).replace(/\\/g, '/').split('/').pop()?.toLowerCase() ?? '';
+}
+
+function isCodexExecutableName(value: string | undefined): boolean {
+  return ['codex', 'codex.exe', 'codex.js', 'codex.cjs', 'codex.mjs'].includes(
+    basenameFromCommandToken(value),
+  );
+}
+
+function isNodeExecutableName(value: string | undefined): boolean {
+  return ['node', 'node.exe'].includes(basenameFromCommandToken(value));
+}
+
+function firstCommandToken(commandLine: string): string | undefined {
+  const match = commandLine.trim().match(/^(?:"([^"]+)"|'([^']+)'|(\S+))/);
+  return match?.[1] ?? match?.[2] ?? match?.[3];
+}
+
+function commandLineHasCodexScript(commandLine: string): boolean {
+  return /(?:^|\s|["'])(?:[A-Za-z]:)?[^"'\s]*[\\/](?:codex|codex\.(?:exe|js|cjs|mjs))(?:\s|["']|$)/i.test(
+    commandLine,
+  );
+}
+
+function isCodexCliProcess(candidate: CodexProcessCandidate): boolean {
+  const commandLine = candidate.commandLine ?? '';
+  const firstToken = firstCommandToken(commandLine);
+  if (
+    isCodexExecutableName(candidate.name) ||
+    isCodexExecutableName(candidate.executablePath) ||
+    isCodexExecutableName(firstToken)
+  ) {
+    return true;
+  }
+  return (
+    (isNodeExecutableName(candidate.name) || isNodeExecutableName(firstToken)) &&
+    commandLineHasCodexScript(commandLine)
+  );
+}
+
+export function extractCodexCdValues(commandLine: string): string[] {
+  const values: string[] = [];
+  const cdArg = /(?:^|\s)--cd(?:=|\s+)(?:"([^"]+)"|'([^']+)'|([^\s"']+))/g;
+  let match: RegExpExecArray | null;
+  while ((match = cdArg.exec(commandLine))) {
+    const value = match[1] ?? match[2] ?? match[3];
+    if (value) values.push(value);
+  }
+  return values;
+}
+
+export function findMatchingCodexProcesses(
+  target: CodexProcessTerminationTarget,
+  candidates: CodexProcessCandidate[],
+  platform: NodeJS.Platform = process.platform,
+): CodexProcessCandidate[] {
+  const threadId = target.threadId.trim().toLowerCase();
+  const cwd = target.cwd?.trim();
+  return candidates.filter((candidate) => {
+    if (!candidate.pid || !isCodexCliProcess(candidate)) return false;
+    const commandLine = candidate.commandLine ?? '';
+    if (threadId && commandLine.toLowerCase().includes(threadId)) return true;
+    if (normalizedTextIncludesPath(commandLine, target.rolloutPath, platform)) return true;
+    if (!cwd) return false;
+    return extractCodexCdValues(commandLine).some(
+      (value) => normalizeProcessPath(value, platform) === normalizeProcessPath(cwd, platform),
+    );
+  });
+}
+
+function numberField(value: unknown): number | undefined {
+  const numeric =
+    typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
+  return Number.isFinite(numeric) ? numeric : undefined;
+}
+
+function stringField(value: unknown): string | undefined {
+  return typeof value === 'string' && value ? value : undefined;
+}
+
+function parseWindowsProcessRecord(record: unknown): CodexProcessCandidate | null {
+  if (typeof record !== 'object' || record === null) return null;
+  const data = record as Record<string, unknown>;
+  const pid = numberField(data.ProcessId);
+  if (!pid) return null;
+  return {
+    pid,
+    parentPid: numberField(data.ParentProcessId),
+    name: stringField(data.Name),
+    commandLine: stringField(data.CommandLine),
+    executablePath: stringField(data.ExecutablePath),
+  };
+}
+
+function listWindowsProcessCandidates(): CodexProcessCandidate[] {
+  const script =
+    "$ProgressPreference='SilentlyContinue'; " +
+    'Get-CimInstance Win32_Process | ' +
+    'Select-Object ProcessId,ParentProcessId,Name,CommandLine,ExecutablePath | ' +
+    'ConvertTo-Json -Compress -Depth 2';
+  const output = childProcess.execFileSync(
+    'powershell.exe',
+    ['-NoProfile', '-NonInteractive', '-Command', script],
+    {
+      encoding: 'utf-8',
+      maxBuffer: 5 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    },
+  );
+  const parsed = JSON.parse(output) as unknown;
+  const records = Array.isArray(parsed) ? parsed : [parsed];
+  return records
+    .map(parseWindowsProcessRecord)
+    .filter((candidate): candidate is CodexProcessCandidate => !!candidate);
+}
+
+function listPosixProcessCandidates(): CodexProcessCandidate[] {
+  const output = childProcess.execFileSync('ps', ['-eo', 'pid=,ppid=,comm=,args='], {
+    encoding: 'utf-8',
+    maxBuffer: 5 * 1024 * 1024,
+    stdio: ['ignore', 'pipe', 'ignore'],
+  });
+  return output
+    .split('\n')
+    .map((line) => line.trim().match(/^(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/))
+    .filter((match): match is RegExpMatchArray => !!match)
+    .map((match) => ({
+      pid: Number(match[1]),
+      parentPid: Number(match[2]),
+      name: match[3],
+      commandLine: match[4],
+    }));
+}
+
+function listCodexProcessCandidates(platform: NodeJS.Platform): CodexProcessCandidate[] {
+  return platform === 'win32' ? listWindowsProcessCandidates() : listPosixProcessCandidates();
+}
+
+function killCodexProcessTree(pid: number, platform: NodeJS.Platform): boolean {
+  try {
+    if (platform === 'win32') {
+      childProcess.execFileSync('taskkill.exe', ['/PID', String(pid), '/T', '/F'], {
+        stdio: ['ignore', 'ignore', 'ignore'],
+      });
+    } else {
+      process.kill(pid, 'SIGTERM');
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function terminateCodexThreadProcess(
+  target: CodexProcessTerminationTarget,
+  options: CodexProcessTerminationOptions = {},
+): CodexProcessTerminationResult {
+  const hasTarget =
+    !!target.threadId.trim() || !!target.cwd?.trim() || !!target.rolloutPath?.trim();
+  if (!hasTarget) return { terminated: false, reason: 'missing-target' };
+
+  const platform = options.platform ?? process.platform;
+  let candidates: CodexProcessCandidate[];
+  try {
+    candidates = options.listProcesses?.() ?? listCodexProcessCandidates(platform);
+  } catch {
+    return { terminated: false, reason: 'process-list-failed' };
+  }
+
+  const matches = findMatchingCodexProcesses(target, candidates, platform);
+  if (matches.length === 0) {
+    return { terminated: false, reason: 'no-match', matchedCount: 0 };
+  }
+  if (matches.length > 1) {
+    return { terminated: false, reason: 'ambiguous-match', matchedCount: matches.length };
+  }
+
+  const pid = matches[0].pid;
+  const killed = options.killProcessTree
+    ? options.killProcessTree(pid, platform)
+    : killCodexProcessTree(pid, platform);
+  return killed
+    ? { terminated: true, reason: 'terminated', pid, matchedCount: 1 }
+    : { terminated: false, reason: 'kill-failed', pid, matchedCount: 1 };
+}
+
 function sqlString(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }

@@ -10,6 +10,7 @@ import { extractToolName } from '../office/toolUtils.js';
 import type { OfficeLayout, ToolActivity } from '../office/types.js';
 import { setWallSprites } from '../office/wallTiles.js';
 import { vscode } from '../vscodeApi.js';
+import { shouldRetainTimelineEventAfterAgentRemoval } from './timelineRetention.js';
 
 export interface SubagentCharacter {
   id: number;
@@ -325,7 +326,12 @@ export function useExtensionMessages(
           delete next[id];
           return next;
         });
-        setAgentTimelineEvents((prev) => prev.filter((event) => event.agentId !== id));
+        setAgentTimelineEvents((prev) =>
+          prev.filter(
+            (event) =>
+              event.agentId !== id || shouldRetainTimelineEventAfterAgentRemoval(event.kind),
+          ),
+        );
         setSubagentTools((prev) => {
           if (!(id in prev)) return prev;
           const next = { ...prev };

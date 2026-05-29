@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentState, ArchivedAgentRecord } from '../../src/types.js';
 
 const archiveCodexThreadMock = vi.hoisted(() => vi.fn());
+const terminateCodexThreadProcessMock = vi.hoisted(() => vi.fn());
 
 vi.mock('vscode', () => ({
   commands: { executeCommand: vi.fn(), registerCommand: vi.fn() },
@@ -42,6 +43,7 @@ vi.mock('../../server/src/providers/file/codex/codex.js', () => ({
   findCodexThreadById: vi.fn(),
   findLatestCodexThread: vi.fn(),
   findRecentCodexThreads: vi.fn(() => []),
+  terminateCodexThreadProcess: terminateCodexThreadProcessMock,
 }));
 
 const { WORKSPACE_KEY_ARCHIVED_AGENTS } = await import('../../src/constants.js');
@@ -149,6 +151,7 @@ function timelineKinds(webview: { postMessage: ReturnType<typeof vi.fn> }): stri
 describe('agent Hide / Archive / Kill actions', () => {
   beforeEach(() => {
     archiveCodexThreadMock.mockReset();
+    terminateCodexThreadProcessMock.mockReset();
   });
 
   it('hide sets hidden, persists, and keeps the agent active', () => {
@@ -193,7 +196,7 @@ describe('agent Hide / Archive / Kill actions', () => {
     expect(timelineKinds(webview)).toContain('action.archive');
   });
 
-  it('kill disposes the terminal, removes the agent, and archives Codex threads', () => {
+  it('kill disposes owned Codex terminals, removes the agent, and archives SQLite threads', () => {
     const agent = makeAgent({
       providerId: 'codex',
       sessionId: 'codex-thread-1',
@@ -205,6 +208,38 @@ describe('agent Hide / Archive / Kill actions', () => {
 
     expect(agent.terminalRef?.dispose).toHaveBeenCalledOnce();
     expect(archiveCodexThreadMock).toHaveBeenCalledWith('codex-thread-1');
+    expect(terminateCodexThreadProcessMock).not.toHaveBeenCalled();
+    expect(provider.agents.has(agent.id)).toBe(false);
+    expect(webview.postMessage).toHaveBeenCalledWith({ type: 'agentClosed', id: agent.id });
+    expect(timelineKinds(webview)).toContain('action.kill');
+  });
+
+  it('kill terminates safely matched external-adopted Codex processes', () => {
+    terminateCodexThreadProcessMock.mockReturnValue({
+      terminated: true,
+      reason: 'terminated',
+      pid: 1234,
+      matchedCount: 1,
+    });
+    const agent = makeAgent({
+      providerId: 'codex',
+      sessionId: 'codex-thread-external',
+      terminalRef: undefined,
+      isExternal: true,
+      projectDir: 'C:\\workspace\\project',
+      jsonlFile: 'C:\\Users\\User\\.codex\\sessions\\codex-thread-external.jsonl',
+      agentName: 'Codex External',
+    });
+    const { provider, webview } = createProviderHarness(agent);
+
+    runAction(provider, agent.id, 'kill');
+
+    expect(archiveCodexThreadMock).toHaveBeenCalledWith('codex-thread-external');
+    expect(terminateCodexThreadProcessMock).toHaveBeenCalledWith({
+      threadId: 'codex-thread-external',
+      cwd: 'C:\\workspace\\project',
+      rolloutPath: 'C:\\Users\\User\\.codex\\sessions\\codex-thread-external.jsonl',
+    });
     expect(provider.agents.has(agent.id)).toBe(false);
     expect(webview.postMessage).toHaveBeenCalledWith({ type: 'agentClosed', id: agent.id });
     expect(timelineKinds(webview)).toContain('action.kill');
