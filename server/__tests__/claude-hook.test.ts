@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 const HOOK_SCRIPT = path.join(__dirname, '../../dist/hooks/claude-hook.js');
 
-// Isolated temp HOME
+// Isolated temp home directory
 let tmpBase: string;
 
 function writeServerJson(port: number, token: string): void {
@@ -23,7 +23,7 @@ function writeServerJson(port: number, token: string): void {
 function runHookScript(stdin: string): Promise<{ code: number | null; stdout: string }> {
   return new Promise((resolve) => {
     const child = spawn('node', [HOOK_SCRIPT], {
-      env: { ...process.env, HOME: tmpBase },
+      env: { ...process.env, HOME: tmpBase, USERPROFILE: tmpBase },
       stdio: ['pipe', 'pipe', 'pipe'],
       timeout: 5000,
     });
