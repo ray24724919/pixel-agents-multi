@@ -55,6 +55,7 @@ import {
   GLOBAL_KEY_WATCH_ALL_SESSIONS,
   LAYOUT_REVISION_KEY,
   WORKSPACE_KEY_AGENT_SEATS,
+  WORKSPACE_KEY_ARCHIVED_AGENTS,
 } from './constants.js';
 import {
   adoptExternalSessionFromHook,
@@ -77,13 +78,14 @@ import {
 } from './fileWatcher.js';
 import type { LayoutWatcher } from './layoutPersistence.js';
 import { readLayoutFromFile, watchLayoutFile, writeLayoutToFile } from './layoutPersistence.js';
+import { postAgentTimelineEvent } from './timelineEvents.js';
 import { readTokenUsageFromTranscript } from './tokenUsage.js';
 import {
   type CodexSubagentSpawn,
   setCodexSubagentSpawnHandler,
   setHookProvider,
 } from './transcriptParser.js';
-import type { AgentState } from './types.js';
+import type { AgentState, ArchivedAgentRecord } from './types.js';
 
 export function getLiveCodexThreadIdsForSpawnedAgentCwds(
   agents: Map<number, AgentState>,
@@ -205,6 +207,11 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 
     this.hookEventHandler.setLifecycleCallbacks({
       onExternalSessionDetected: (sessionId, transcriptPath, cwd) => {
+        if (transcriptPath && this.isArchivedTranscriptPath(transcriptPath)) {
+          this.knownJsonlFiles.add(transcriptPath);
+          dismissedJsonlFiles.set(transcriptPath, Number.MAX_SAFE_INTEGER);
+          return;
+        }
         // Workspace filtering: only adopt if in a tracked project dir or Watch All Sessions is ON
         const projectDir = transcriptPath ? path.dirname(transcriptPath) : cwd;
         if (!isTrackedProjectDir(projectDir) && !this.watchAllSessions.current) {
@@ -250,6 +257,11 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         }
       },
       onSessionResume: (transcriptPath) => {
+        if (this.isArchivedTranscriptPath(transcriptPath)) {
+          this.knownJsonlFiles.add(transcriptPath);
+          dismissedJsonlFiles.set(transcriptPath, Number.MAX_SAFE_INTEGER);
+          return;
+        }
         // Clear dismissals so --resume can re-adopt the file
         dismissedJsonlFiles.delete(transcriptPath);
         seededMtimes.delete(transcriptPath);
@@ -690,29 +702,150 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     this.webview?.postMessage({ type: 'agentClosed', id });
   }
 
+  private buildArchivedAgentRecord(agent: AgentState): ArchivedAgentRecord {
+    return {
+      id: agent.id,
+      sessionId: agent.sessionId,
+      terminalName: agent.terminalRef?.name ?? '',
+      isExternal: agent.isExternal || undefined,
+      jsonlFile: agent.jsonlFile,
+      projectDir: agent.projectDir,
+      providerId: agent.providerId,
+      paused: agent.paused,
+      hidden: agent.hidden,
+      claudeTitleResolved: agent.claudeTitleResolved,
+      codexInputTokenBase: agent.codexInputTokenBase,
+      codexOutputTokenBase: agent.codexOutputTokenBase,
+      folderName: agent.folderName,
+      projectName: agent.projectName,
+      teamName: agent.teamName,
+      agentName: agent.agentName,
+      isTeamLead: agent.isTeamLead,
+      leadAgentId: agent.leadAgentId,
+      teamUsesTmux: agent.teamUsesTmux,
+      archived: true,
+      archivedAt: Date.now(),
+      archiveReason: 'archive',
+    };
+  }
+
+  private persistArchivedAgent(agent: AgentState): void {
+    const record = this.buildArchivedAgentRecord(agent);
+    const archivedAgents = this.context.workspaceState.get<ArchivedAgentRecord[]>(
+      WORKSPACE_KEY_ARCHIVED_AGENTS,
+      [],
+    );
+    const deduped = archivedAgents.filter((existing) => {
+      if (record.providerId && existing.providerId !== record.providerId) return true;
+      if (record.sessionId && existing.sessionId === record.sessionId) return false;
+      return path.resolve(existing.jsonlFile) !== path.resolve(record.jsonlFile);
+    });
+    this.context.workspaceState.update(WORKSPACE_KEY_ARCHIVED_AGENTS, [...deduped, record]);
+  }
+
+  private seedArchivedAgentDismissals(): void {
+    const archivedAgents = this.context.workspaceState.get<ArchivedAgentRecord[]>(
+      WORKSPACE_KEY_ARCHIVED_AGENTS,
+      [],
+    );
+    for (const agent of archivedAgents) {
+      if (!agent.jsonlFile) continue;
+      this.knownJsonlFiles.add(agent.jsonlFile);
+      dismissedJsonlFiles.set(agent.jsonlFile, Number.MAX_SAFE_INTEGER);
+    }
+  }
+
+  private isArchivedTranscriptPath(transcriptPath: string): boolean {
+    const archivedAgents = this.context.workspaceState.get<ArchivedAgentRecord[]>(
+      WORKSPACE_KEY_ARCHIVED_AGENTS,
+      [],
+    );
+    const resolvedTranscript = path.resolve(transcriptPath);
+    return archivedAgents.some(
+      (agent) => agent.jsonlFile && path.resolve(agent.jsonlFile) === resolvedTranscript,
+    );
+  }
+
+  private permanentlyDismissTranscript(agent: AgentState): void {
+    if (!agent.jsonlFile) return;
+    this.knownJsonlFiles.add(agent.jsonlFile);
+    dismissedJsonlFiles.set(agent.jsonlFile, Number.MAX_SAFE_INTEGER);
+  }
+
+  private postActionTimeline(agent: AgentState, action: 'hide' | 'archive' | 'kill'): void {
+    const titles = {
+      hide: 'Agent hidden',
+      archive: 'Agent archived',
+      kill: 'Agent killed',
+    };
+    const summaries = {
+      hide: 'Hidden from normal views; underlying process continues.',
+      archive: 'Removed from active tracking and preserved in archived agents.',
+      kill: 'Underlying terminal disposed when available; agent removed from active tracking.',
+    };
+    postAgentTimelineEvent(this.webview, {
+      agentId: agent.id,
+      kind: `action.${action}`,
+      title: titles[action],
+      summary: summaries[action],
+      severity: action === 'kill' ? 'warning' : 'info',
+      providerId: agent.providerId,
+      projectName: agent.projectName ?? agent.folderName,
+    });
+  }
+
   private handleAgentAction(id: number, action: 'hide' | 'archive' | 'kill'): void {
     const agent = this.agents.get(id);
     if (!agent) return;
 
-    if (agent.isTeamLead) {
-      this.removeTeammates(id);
-    }
-
     if (action === 'hide') {
-      this.removeTrackedAgent(id, false);
+      agent.hidden = true;
+      this.persistAgents();
+      this.webview?.postMessage({ type: 'agentLifecycleHidden', id, hidden: true });
+      this.postActionTimeline(agent, 'hide');
       return;
     }
 
-    if (action === 'kill' && agent.terminalRef) {
-      agent.terminalRef.dispose();
+    if (action === 'archive') {
+      if (agent.providerId === 'codex') {
+        archiveCodexThread(agent.sessionId);
+      }
+      this.persistArchivedAgent(agent);
+      this.permanentlyDismissTranscript(agent);
+      this.postActionTimeline(agent, 'archive');
+      this.unregisterAgentHook(agent);
+      removeAgent(
+        id,
+        this.agents,
+        this.fileWatchers,
+        this.pollingTimers,
+        this.waitingTimers,
+        this.permissionTimers,
+        this.jsonlPollTimers,
+        this.persistAgents,
+      );
+      this.webview?.postMessage({ type: 'agentArchived', id });
       return;
     }
 
     if (agent.providerId === 'codex') {
       archiveCodexThread(agent.sessionId);
     }
-
-    this.removeTrackedAgent(id, true);
+    agent.terminalRef?.dispose();
+    this.permanentlyDismissTranscript(agent);
+    this.postActionTimeline(agent, 'kill');
+    this.unregisterAgentHook(agent);
+    removeAgent(
+      id,
+      this.agents,
+      this.fileWatchers,
+      this.pollingTimers,
+      this.waitingTimers,
+      this.permissionTimers,
+      this.jsonlPollTimers,
+      this.persistAgents,
+    );
+    this.webview?.postMessage({ type: 'agentClosed', id });
   }
 
   private async openAgentProject(id: number): Promise<void> {
@@ -1102,6 +1235,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
           type: 'codexProjects',
           projects: this.getRecentCodexProjects(),
         });
+        this.seedArchivedAgentDismissals();
 
         // Ensure project scan runs even with no restored agents (to adopt external terminals)
         const projectDir = getProjectDirPath();

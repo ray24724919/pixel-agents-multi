@@ -24,6 +24,7 @@ const {
   findRecentCodexThreads,
   findCodexThreadsForCwd,
   buildCodexLaunchCommand,
+  archiveCodexThread,
 } = await import('../src/providers/file/codex/codex.js');
 
 function codexLine(type: string, payload: Record<string, unknown>): string {
@@ -218,6 +219,24 @@ describe('codexProvider', () => {
         'sqlite3',
         expect.arrayContaining(['-separator', '\t', dbPath]),
         expect.objectContaining({ encoding: 'utf-8' }),
+      );
+    });
+
+    it('archives a Codex thread in the state database', () => {
+      const codexHome = path.join(tmpBase, '.codex');
+      const dbPath = path.join(codexHome, 'state_5.sqlite');
+      fs.mkdirSync(codexHome, { recursive: true });
+      fs.writeFileSync(dbPath, '');
+
+      expect(archiveCodexThread('thread-to-archive')).toBe(true);
+
+      expect(execFileSyncMock).toHaveBeenCalledWith(
+        'sqlite3',
+        [
+          dbPath,
+          "update threads set archived = 1, archived_at = strftime('%s','now') where id = 'thread-to-archive';",
+        ],
+        { stdio: ['ignore', 'ignore', 'ignore'] },
       );
     });
   });

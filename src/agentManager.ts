@@ -540,6 +540,7 @@ export function persistAgents(
       projectDir: agent.projectDir,
       providerId: agent.providerId,
       paused: agent.paused,
+      hidden: agent.hidden,
       claudeTitleResolved: agent.claudeTitleResolved,
       codexInputTokenBase: agent.codexInputTokenBase,
       codexOutputTokenBase: agent.codexOutputTokenBase,
@@ -629,6 +630,7 @@ export function restoreAgents(
       projectName: p.projectName,
       hookDelivered: false,
       paused: p.paused,
+      hidden: p.hidden,
       inputTokens: 0,
       outputTokens: 0,
       claudeTitleResolved: p.claudeTitleResolved,
@@ -811,6 +813,7 @@ export function sendExistingAgents(
   const projectDirs: Record<number, string> = {};
   const transcriptPaths: Record<number, string> = {};
   const externalAgents: Record<number, boolean> = {};
+  const hiddenAgents: Record<number, boolean> = {};
   for (const [id, agent] of agents) {
     refreshCodexAgentMetadata(agent);
     const projectLabel = agent.projectName ?? agent.folderName;
@@ -830,6 +833,9 @@ export function sendExistingAgents(
     if (agent.isExternal) {
       externalAgents[id] = true;
     }
+    if (agent.hidden) {
+      hiddenAgents[id] = true;
+    }
   }
   console.log(
     `[Pixel Agents] sendExistingAgents: agents=${JSON.stringify(agentIds)}, meta=${JSON.stringify(agentMeta)}`,
@@ -845,6 +851,7 @@ export function sendExistingAgents(
     projectDirs,
     transcriptPaths,
     externalAgents,
+    hiddenAgents,
   });
   // Note: sendCurrentAgentStatuses is called separately AFTER layoutLoaded
   // so that agentStatus/agentToolStart messages arrive after characters are created.

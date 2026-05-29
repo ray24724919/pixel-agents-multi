@@ -11,7 +11,10 @@ export type TimelineEventKind =
   | 'run.started'
   | 'run.completed'
   | 'run.failed'
-  | 'token.usage';
+  | 'token.usage'
+  | 'action.hide'
+  | 'action.archive'
+  | 'action.kill';
 
 export type TimelineEventSeverity = 'info' | 'success' | 'warning' | 'error';
 

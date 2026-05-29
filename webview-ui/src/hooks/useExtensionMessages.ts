@@ -108,6 +108,7 @@ interface ExtensionMessageState {
   agentLifecycleEvents: AgentLifecycleEvent[];
   agentTimelineEvents: AgentTimelineEvent[];
   agentRuntimeMetadata: Record<number, AgentRuntimeMetadata>;
+  hiddenAgents: Record<number, boolean>;
   agentEventTrace: Record<number, AgentEventTrace[]>;
   subagentTools: Record<number, Record<string, ToolActivity[]>>;
   subagentCharacters: SubagentCharacter[];
@@ -153,6 +154,7 @@ export function useExtensionMessages(
   const [agentRuntimeMetadata, setAgentRuntimeMetadata] = useState<
     Record<number, AgentRuntimeMetadata>
   >({});
+  const [hiddenAgents, setHiddenAgents] = useState<Record<number, boolean>>({});
   const [agentEventTrace, setAgentEventTrace] = useState<Record<number, AgentEventTrace[]>>({});
   const [subagentTools, setSubagentTools] = useState<
     Record<number, Record<string, ToolActivity[]>>
@@ -256,6 +258,12 @@ export function useExtensionMessages(
             transcriptPath: transcriptPath ?? prev[id]?.transcriptPath,
           },
         }));
+        setHiddenAgents((prev) => {
+          if (!(id in prev)) return prev;
+          const next = { ...prev };
+          delete next[id];
+          return next;
+        });
         // Don't auto-select teammates (keep focus on lead)
         if (!isTeammate) {
           setSelectedAgent(id);
@@ -283,7 +291,7 @@ export function useExtensionMessages(
           }
         }
         saveAgentSeats(os);
-      } else if (msg.type === 'agentClosed') {
+      } else if (msg.type === 'agentClosed' || msg.type === 'agentArchived') {
         const id = msg.id as number;
         setAgents((prev) => prev.filter((a) => a !== id));
         setSelectedAgent((prev) => (prev === id ? null : prev));
@@ -306,6 +314,12 @@ export function useExtensionMessages(
           return next;
         });
         setAgentRuntimeMetadata((prev) => {
+          if (!(id in prev)) return prev;
+          const next = { ...prev };
+          delete next[id];
+          return next;
+        });
+        setHiddenAgents((prev) => {
           if (!(id in prev)) return prev;
           const next = { ...prev };
           delete next[id];
@@ -348,6 +362,18 @@ export function useExtensionMessages(
         const providerIds = (msg.providerIds || {}) as Record<number, string>;
         const projectDirs = (msg.projectDirs || {}) as Record<number, string>;
         const transcriptPaths = (msg.transcriptPaths || {}) as Record<number, string>;
+        const incomingHiddenAgents = (msg.hiddenAgents || {}) as Record<number, boolean>;
+        setHiddenAgents((prev) => {
+          const next = { ...prev };
+          for (const id of incoming) {
+            if (incomingHiddenAgents[id]) {
+              next[id] = true;
+            } else {
+              delete next[id];
+            }
+          }
+          return next;
+        });
         setAgentRuntimeMetadata((prev) => {
           const next = { ...prev };
           for (const id of incoming) {
@@ -390,6 +416,24 @@ export function useExtensionMessages(
           }
           return merged.sort((a, b) => a - b);
         });
+      } else if (msg.type === 'agentLifecycleHidden') {
+        const id = msg.id as number;
+        const hidden = msg.hidden as boolean;
+        setHiddenAgents((prev) => {
+          if (hidden) {
+            return { ...prev, [id]: true };
+          }
+          if (!(id in prev)) return prev;
+          const next = { ...prev };
+          delete next[id];
+          return next;
+        });
+        if (hidden) {
+          setSelectedAgent((prev) => (prev === id ? null : prev));
+          if (os.selectedAgentId === id) os.selectedAgentId = null;
+          if (os.cameraFollowId === id) os.cameraFollowId = null;
+          if (os.hoveredAgentId === id) os.hoveredAgentId = null;
+        }
       } else if (msg.type === 'agentToolStart') {
         const id = msg.id as number;
         const toolId = msg.toolId as string;
@@ -789,6 +833,7 @@ export function useExtensionMessages(
     agentLifecycleEvents,
     agentTimelineEvents,
     agentRuntimeMetadata,
+    hiddenAgents,
     agentEventTrace,
     subagentTools,
     subagentCharacters,

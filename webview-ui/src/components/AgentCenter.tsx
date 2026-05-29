@@ -15,6 +15,7 @@ import {
   zoneSourceLabel,
 } from '../office/zoneUtils.js';
 import { vscode } from '../vscodeApi.js';
+import { isAgentVisibleWithHiddenToggle } from './agentCenterFilters.js';
 import { isPausedStatus, pauseActionLabel } from './pauseResume.js';
 import { TokenCostSummary } from './TokenCostSummary.js';
 import { Button } from './ui/Button.js';
@@ -36,6 +37,9 @@ interface AgentCenterProps {
   agentLifecycleEvents: AgentLifecycleEvent[];
   agentTimelineEvents: AgentTimelineEvent[];
   agentRuntimeMetadata: Record<number, AgentRuntimeMetadata>;
+  hiddenAgents: Record<number, boolean>;
+  showHiddenAgents: boolean;
+  onShowHiddenAgentsChange: (show: boolean) => void;
   officeState: OfficeState;
   onCloseAgent: (id: number) => void;
   onPauseAgent: (id: number) => void;
@@ -65,6 +69,7 @@ interface AgentSummary {
   isTeamLead?: boolean;
   leadAgentId?: number;
   isPaused: boolean;
+  hidden: boolean;
 }
 
 interface ProjectSummary {
@@ -101,6 +106,9 @@ export function AgentCenter({
   agentLifecycleEvents,
   agentTimelineEvents,
   agentRuntimeMetadata,
+  hiddenAgents,
+  showHiddenAgents,
+  onShowHiddenAgentsChange,
   officeState,
   onCloseAgent,
   onPauseAgent,
@@ -121,25 +129,44 @@ export function AgentCenter({
           agentStatuses[id],
           agentLifecycleStatuses[id],
           agentRuntimeMetadata[id],
+          hiddenAgents[id] === true,
           officeState,
         ),
       ),
-    [agents, agentRuntimeMetadata, agentTools, agentLifecycleStatuses, agentStatuses, officeState],
+    [
+      agents,
+      agentRuntimeMetadata,
+      agentTools,
+      agentLifecycleStatuses,
+      agentStatuses,
+      hiddenAgents,
+      officeState,
+    ],
+  );
+  const visibleSummaries = useMemo(
+    () =>
+      summaries.filter((agent) => isAgentVisibleWithHiddenToggle(agent.hidden, showHiddenAgents)),
+    [showHiddenAgents, summaries],
   );
 
   const filteredAgents = useMemo(
     () =>
-      summaries.filter((agent) => {
+      visibleSummaries.filter((agent) => {
         const providerMatches = providerFilter === 'all' || agent.providerId === providerFilter;
         const statusMatches = statusFilter === 'all' || agent.statusGroup === statusFilter;
         const projectMatches = projectFilter === 'all' || agent.project === projectFilter;
         const teamMatches = teamFilter === 'all' || agent.teamName === teamFilter;
         return providerMatches && statusMatches && projectMatches && teamMatches;
       }),
-    [projectFilter, providerFilter, statusFilter, summaries, teamFilter],
+    [projectFilter, providerFilter, statusFilter, visibleSummaries, teamFilter],
   );
-  const projectSummaries = useMemo(() => getProjectSummaries(summaries), [summaries]);
-  const teamSummaries = useMemo(() => getTeamSummaries(summaries), [summaries]);
+  const projectSummaries = useMemo(() => getProjectSummaries(visibleSummaries), [visibleSummaries]);
+  const teamSummaries = useMemo(() => getTeamSummaries(visibleSummaries), [visibleSummaries]);
+  const visibleAgentIds = useMemo(
+    () => visibleSummaries.map((agent) => agent.id),
+    [visibleSummaries],
+  );
+  const hiddenCount = summaries.filter((agent) => agent.hidden).length;
 
   useEffect(() => {
     officeState.setMeetingTeam(teamFilter === 'all' ? null : teamFilter);
@@ -163,7 +190,7 @@ export function AgentCenter({
     ? buildAgentTimeline(selectedSummary.id, agentTimelineEvents, agentLifecycleEvents)
     : [];
   const selectedTeamMembers = selectedSummary?.teamName
-    ? summaries.filter((agent) => agent.teamName === selectedSummary.teamName)
+    ? visibleSummaries.filter((agent) => agent.teamName === selectedSummary.teamName)
     : [];
   return (
     <Modal
@@ -174,8 +201,17 @@ export function AgentCenter({
     >
       <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6 pr-7">
         <div className="mb-4 grid shrink-0 gap-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
-          <TokenCostSummary agents={agents} officeState={officeState} />
+          <TokenCostSummary agents={visibleAgentIds} officeState={officeState} />
           <div className="flex flex-wrap items-center gap-2">
+            <label className="flex items-center gap-2 border border-border bg-btn-bg px-3 py-2 text-xs text-text-muted">
+              <input
+                type="checkbox"
+                checked={showHiddenAgents}
+                onChange={(event) => onShowHiddenAgentsChange(event.currentTarget.checked)}
+              />
+              <span>Show hidden</span>
+              {hiddenCount > 0 && <span>({hiddenCount})</span>}
+            </label>
             <SegmentedButtons
               values={['all', 'codex', 'claude']}
               active={providerFilter}
@@ -305,6 +341,7 @@ function AgentRow({
         <div className="mt-3 flex min-w-0 flex-wrap items-center gap-3">
           <StatusBadge status={agent.status} />
           {agent.isPaused && <PausedMarker />}
+          {agent.hidden && <HiddenMarker />}
           <span className="max-w-full truncate text-sm text-text">{agent.activity}</span>
         </div>
       </div>
@@ -548,6 +585,7 @@ function AgentDetail({
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
         <DetailField label="Lifecycle status" value={agent.status} badge />
         <DetailField label="Paused" value={agent.isPaused ? 'Yes' : 'No'} />
+        <DetailField label="Hidden" value={agent.hidden ? 'Yes' : 'No'} />
         <DetailField label="Provider" value={providerLabel(agent.providerId)} />
         <DetailField label="Project" value={agent.project} />
         <DetailField label="Last event" value={lastEvent?.title ?? 'No recent events'} />
@@ -726,6 +764,7 @@ function getAgentSummary(
   status: string | undefined,
   lifecycle: AgentLifecycleState | undefined,
   metadata: AgentRuntimeMetadata | undefined,
+  hidden: boolean,
   officeState: OfficeState,
 ): AgentSummary {
   const ch = officeState.characters.get(id);
@@ -770,6 +809,7 @@ function getAgentSummary(
     isTeamLead: ch?.isTeamLead,
     leadAgentId: ch?.leadAgentId,
     isPaused: isPausedStatus(lifecycle?.status),
+    hidden,
   };
 }
 
@@ -915,6 +955,17 @@ function PausedMarker() {
     >
       <span className="font-bold">||</span>
       <span>Paused</span>
+    </span>
+  );
+}
+
+function HiddenMarker() {
+  return (
+    <span
+      className="inline-flex shrink-0 border border-border bg-btn-bg px-2 py-1 text-xs uppercase tracking-wide text-text-muted"
+      title="Hidden"
+    >
+      Hidden
     </span>
   );
 }

@@ -36,6 +36,8 @@ export interface AgentState {
   hooksOnly?: boolean;
   /** UI-only pause marker; does not signal or stop the underlying CLI process. */
   paused?: boolean;
+  /** UI-only hide marker; hidden agents keep polling but are filtered from normal views. */
+  hidden?: boolean;
   /** Provider that created this agent (defaults to 'claude') */
   providerId?: string;
   /** Set when SessionEnd(reason=clear) fires; cleared when SessionStart(source=clear) reassigns */
@@ -81,6 +83,7 @@ export interface PersistedAgent {
   projectDir: string;
   providerId?: string;
   paused?: boolean;
+  hidden?: boolean;
   claudeTitleResolved?: boolean;
   codexInputTokenBase?: number;
   codexOutputTokenBase?: number;
@@ -94,4 +97,10 @@ export interface PersistedAgent {
   isTeamLead?: boolean;
   leadAgentId?: number;
   teamUsesTmux?: boolean;
+}
+
+export interface ArchivedAgentRecord extends PersistedAgent {
+  archived: true;
+  archivedAt: number;
+  archiveReason: 'archive';
 }

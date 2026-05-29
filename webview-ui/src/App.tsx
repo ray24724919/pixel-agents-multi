@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { toMajorMinor } from './changelogData.js';
 import { AgentCenter } from './components/AgentCenter.js';
+import { isAgentVisibleWithHiddenToggle } from './components/agentCenterFilters.js';
 import { BottomToolbar } from './components/BottomToolbar.js';
 import { ChangelogModal } from './components/ChangelogModal.js';
 import { DebugView } from './components/DebugView.js';
@@ -65,6 +66,7 @@ function App() {
     agentLifecycleEvents,
     agentTimelineEvents,
     agentRuntimeMetadata,
+    hiddenAgents,
     agentEventTrace,
     subagentTools,
     subagentCharacters,
@@ -97,6 +99,8 @@ function App() {
   const [alwaysShowOverlay, setAlwaysShowOverlay] = useState(false);
   const [agentProviderFilter, setAgentProviderFilter] = useState<'all' | 'codex' | 'claude'>('all');
   const [pendingCloseAgentId, setPendingCloseAgentId] = useState<number | null>(null);
+  const [pendingKillConfirm, setPendingKillConfirm] = useState(false);
+  const [showHiddenAgents, setShowHiddenAgents] = useState(false);
 
   const currentMajorMinor = toMajorMinor(extensionVersion);
 
@@ -144,6 +148,7 @@ function App() {
 
   const handleCloseAgent = useCallback((id: number) => {
     setPendingCloseAgentId(id);
+    setPendingKillConfirm(false);
   }, []);
 
   const handleClick = useCallback((agentId: number) => {
@@ -163,12 +168,15 @@ function App() {
     const ids = new Set<number>();
     for (const [id, ch] of officeState.characters) {
       const providerId = ch.providerId ?? 'claude';
-      if (agentProviderFilter === 'all' || providerId === agentProviderFilter) {
+      if (
+        (agentProviderFilter === 'all' || providerId === agentProviderFilter) &&
+        isAgentVisibleWithHiddenToggle(hiddenAgents[id] === true, showHiddenAgents)
+      ) {
         ids.add(id);
       }
     }
     return ids;
-  }, [agentProviderFilter, agentProviderKey, officeState]);
+  }, [agentProviderFilter, agentProviderKey, hiddenAgents, officeState, showHiddenAgents]);
   const visibleAgents = useMemo(
     () => agents.filter((id) => visibleAgentIds.has(id)),
     [agents, visibleAgentIds],
@@ -217,6 +225,8 @@ function App() {
     .join('|');
   const pendingCloseCharacter =
     pendingCloseAgentId === null ? undefined : officeState.characters.get(pendingCloseAgentId);
+  const pendingCloseName =
+    pendingCloseCharacter?.agentName ?? `Agent #${pendingCloseAgentId ?? ''}`;
 
   if (!layoutReady) {
     return <div className="w-full h-full flex items-center justify-center ">Loading...</div>;
@@ -448,6 +458,9 @@ function App() {
         agentLifecycleEvents={agentLifecycleEvents}
         agentTimelineEvents={agentTimelineEvents}
         agentRuntimeMetadata={agentRuntimeMetadata}
+        hiddenAgents={hiddenAgents}
+        showHiddenAgents={showHiddenAgents}
+        onShowHiddenAgentsChange={setShowHiddenAgents}
         officeState={officeState}
         onCloseAgent={handleCloseAgent}
         onPauseAgent={(id) => vscode.postMessage(buildPauseResumeMessage(id, false))}
@@ -456,59 +469,99 @@ function App() {
 
       <Modal
         isOpen={pendingCloseAgentId !== null}
-        onClose={() => setPendingCloseAgentId(null)}
-        title="Agent actions"
+        onClose={() => {
+          setPendingCloseAgentId(null);
+          setPendingKillConfirm(false);
+        }}
+        title={pendingKillConfirm ? 'Confirm kill' : 'Agent actions'}
         zIndex={54}
       >
         <div className="px-10 pb-8">
-          <p className="text-base text-text">
-            Choose what to do with{' '}
-            <span className="text-accent-bright">
-              {pendingCloseCharacter?.agentName ?? `Agent #${pendingCloseAgentId ?? ''}`}
-            </span>
-            .
-          </p>
-          {pendingCloseCharacter?.folderName && (
-            <p className="mt-2 text-sm text-text-muted">{pendingCloseCharacter.folderName}</p>
+          {pendingKillConfirm ? (
+            <>
+              <p className="text-base text-text">
+                This will terminate the underlying process for{' '}
+                <span className="text-accent-bright">{pendingCloseName}</span> when Pixel Agents
+                owns its terminal. Continue?
+              </p>
+              {pendingCloseCharacter?.folderName && (
+                <p className="mt-2 text-sm text-text-muted">{pendingCloseCharacter.folderName}</p>
+              )}
+            </>
+          ) : (
+            <>
+              <p className="text-base text-text">
+                Choose what to do with{' '}
+                <span className="text-accent-bright">{pendingCloseName}</span>.
+              </p>
+              {pendingCloseCharacter?.folderName && (
+                <p className="mt-2 text-sm text-text-muted">{pendingCloseCharacter.folderName}</p>
+              )}
+              <div className="mt-5 grid gap-3 text-sm text-text-muted">
+                <p>Hide removes the agent from normal views while its process keeps running.</p>
+                <p>
+                  Archive removes it from active tracking and keeps its record for future history.
+                </p>
+                <p>Kill terminates the linked process when Pixel Agents owns its terminal.</p>
+              </div>
+            </>
           )}
-          <div className="mt-5 grid gap-3 text-sm text-text-muted">
-            <p>
-              Hide removes only the visual agent for now. It can appear again after refresh if the
-              session is still active.
-            </p>
-            <p>
-              Archive removes it from the active roster. Codex threads are archived; Claude
-              transcripts are dismissed from tracking.
-            </p>
-            <p>Kill closes the linked VS Code terminal when available.</p>
-          </div>
           <div className="mt-8 flex flex-wrap justify-end gap-3">
             <button
               className="border-2 border-border bg-btn-bg px-12 py-3 text-text"
-              onClick={() => setPendingCloseAgentId(null)}
+              onClick={() => {
+                if (pendingKillConfirm) {
+                  setPendingKillConfirm(false);
+                } else {
+                  setPendingCloseAgentId(null);
+                }
+              }}
             >
-              Cancel
+              {pendingKillConfirm ? 'Back' : 'Cancel'}
             </button>
-            {(['hide', 'archive', 'kill'] as const).map((action) => (
+            {pendingKillConfirm ? (
               <button
-                key={action}
-                className={`border-2 px-12 py-3 text-white ${
-                  action === 'kill'
-                    ? 'border-danger bg-danger'
-                    : action === 'archive'
-                      ? 'border-accent bg-accent'
-                      : 'border-border bg-btn-bg text-text'
-                }`}
+                className="border-2 border-danger bg-danger px-12 py-3 text-white"
                 onClick={() => {
                   if (pendingCloseAgentId !== null) {
-                    vscode.postMessage({ type: 'agentAction', id: pendingCloseAgentId, action });
+                    vscode.postMessage({
+                      type: 'agentAction',
+                      id: pendingCloseAgentId,
+                      action: 'kill',
+                    });
                   }
                   setPendingCloseAgentId(null);
+                  setPendingKillConfirm(false);
                 }}
               >
-                {action[0].toUpperCase() + action.slice(1)}
+                Kill
               </button>
-            ))}
+            ) : (
+              (['hide', 'archive', 'kill'] as const).map((action) => (
+                <button
+                  key={action}
+                  className={`border-2 px-12 py-3 text-white ${
+                    action === 'kill'
+                      ? 'border-danger bg-danger'
+                      : action === 'archive'
+                        ? 'border-accent bg-accent'
+                        : 'border-border bg-btn-bg text-text'
+                  }`}
+                  onClick={() => {
+                    if (action === 'kill') {
+                      setPendingKillConfirm(true);
+                      return;
+                    }
+                    if (pendingCloseAgentId !== null) {
+                      vscode.postMessage({ type: 'agentAction', id: pendingCloseAgentId, action });
+                    }
+                    setPendingCloseAgentId(null);
+                  }}
+                >
+                  {action[0].toUpperCase() + action.slice(1)}
+                </button>
+              ))
+            )}
           </div>
         </div>
       </Modal>
