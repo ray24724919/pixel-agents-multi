@@ -777,6 +777,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     agent: AgentState,
     action: 'hide' | 'archive' | 'kill',
     summaryOverride?: string,
+    titleOverride?: string,
   ): void {
     const titles = {
       hide: 'Agent hidden',
@@ -791,7 +792,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     postAgentTimelineEvent(this.webview, {
       agentId: agent.id,
       kind: `action.${action}`,
-      title: titles[action],
+      title: titleOverride ?? titles[action],
       summary: summaryOverride ?? summaries[action],
       severity: action === 'kill' ? 'warning' : 'info',
       providerId: agent.providerId,
@@ -833,12 +834,12 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    if (agent.providerId === 'codex') {
-      archiveCodexThread(agent.sessionId);
-    }
     let killSummary: string | undefined;
     if (agent.terminalRef) {
       agent.terminalRef.dispose();
+      if (agent.providerId === 'codex') {
+        archiveCodexThread(agent.sessionId);
+      }
       killSummary = 'Owned terminal disposed; agent removed from active tracking.';
     } else if (agent.providerId === 'codex') {
       const result = terminateCodexThreadProcess({
@@ -847,13 +848,31 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         rolloutPath: agent.jsonlFile,
       });
       if (result.terminated) {
+        archiveCodexThread(agent.sessionId);
         killSummary = `External Codex process ${result.pid} terminated; agent removed from active tracking.`;
       } else {
-        killSummary = `External Codex process was not terminated (${result.reason}); agent removed from active tracking.`;
-        console.warn(
-          `[Pixel Agents] Codex: external kill could not safely terminate process for thread ${agent.sessionId} (${result.reason}).`,
+        const warning = `Pixel Agents: Could not safely kill external Codex agent ${agent.sessionId} (${result.reason}). The agent remains active.`;
+        this.postActionTimeline(
+          agent,
+          'kill',
+          `External Codex process was not terminated (${result.reason}); agent remains active.`,
+          'Kill failed',
         );
+        console.warn(warning);
+        vscode.window.showWarningMessage(warning);
+        return;
       }
+    } else {
+      const warning = `Pixel Agents: Cannot kill external ${agent.providerId} agent without a terminal handle. The agent remains active.`;
+      this.postActionTimeline(
+        agent,
+        'kill',
+        `No safe process termination path is available for this external ${agent.providerId} agent; agent remains active.`,
+        'Kill failed',
+      );
+      console.warn(warning);
+      vscode.window.showWarningMessage(warning);
+      return;
     }
     this.permanentlyDismissTranscript(agent);
     this.postActionTimeline(agent, 'kill', killSummary);

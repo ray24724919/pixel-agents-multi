@@ -48,6 +48,7 @@ vi.mock('../../server/src/providers/file/codex/codex.js', () => ({
 
 const { WORKSPACE_KEY_ARCHIVED_AGENTS } = await import('../../src/constants.js');
 const { PixelAgentsViewProvider } = await import('../../src/PixelAgentsViewProvider.js');
+const vscode = await import('vscode');
 
 type AgentAction = 'hide' | 'archive' | 'kill';
 
@@ -148,10 +149,15 @@ function timelineKinds(webview: { postMessage: ReturnType<typeof vi.fn> }): stri
     .map((message) => message.event.kind as string);
 }
 
+function postedMessageTypes(webview: { postMessage: ReturnType<typeof vi.fn> }): string[] {
+  return webview.postMessage.mock.calls.map(([message]) => message.type as string);
+}
+
 describe('agent Hide / Archive / Kill actions', () => {
   beforeEach(() => {
     archiveCodexThreadMock.mockReset();
     terminateCodexThreadProcessMock.mockReset();
+    vi.mocked(vscode.window.showWarningMessage).mockReset();
   });
 
   it('hide sets hidden, persists, and keeps the agent active', () => {
@@ -243,5 +249,62 @@ describe('agent Hide / Archive / Kill actions', () => {
     expect(provider.agents.has(agent.id)).toBe(false);
     expect(webview.postMessage).toHaveBeenCalledWith({ type: 'agentClosed', id: agent.id });
     expect(timelineKinds(webview)).toContain('action.kill');
+  });
+
+  it('keeps external-adopted Codex agents active when process termination fails', () => {
+    terminateCodexThreadProcessMock.mockReturnValue({
+      terminated: false,
+      reason: 'no-match',
+      matchedCount: 0,
+    });
+    const agent = makeAgent({
+      providerId: 'codex',
+      sessionId: 'codex-thread-unmatched',
+      terminalRef: undefined,
+      isExternal: true,
+      projectDir: 'C:\\workspace\\project',
+      jsonlFile: 'C:\\Users\\User\\.codex\\sessions\\codex-thread-unmatched.jsonl',
+      agentName: 'Codex External',
+    });
+    const { provider, webview } = createProviderHarness(agent);
+
+    runAction(provider, agent.id, 'kill');
+
+    expect(terminateCodexThreadProcessMock).toHaveBeenCalledWith({
+      threadId: 'codex-thread-unmatched',
+      cwd: 'C:\\workspace\\project',
+      rolloutPath: 'C:\\Users\\User\\.codex\\sessions\\codex-thread-unmatched.jsonl',
+    });
+    expect(archiveCodexThreadMock).not.toHaveBeenCalled();
+    expect(provider.knownJsonlFiles.has(agent.jsonlFile)).toBe(false);
+    expect(provider.agents.has(agent.id)).toBe(true);
+    expect(postedMessageTypes(webview)).not.toContain('agentClosed');
+    expect(timelineKinds(webview)).toContain('action.kill');
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+      'Pixel Agents: Could not safely kill external Codex agent codex-thread-unmatched (no-match). The agent remains active.',
+    );
+  });
+
+  it('keeps external non-Codex agents active when no terminal handle is available', () => {
+    const agent = makeAgent({
+      providerId: 'claude',
+      sessionId: 'claude-external',
+      terminalRef: undefined,
+      isExternal: true,
+      agentName: 'Claude External',
+    });
+    const { provider, webview } = createProviderHarness(agent);
+
+    runAction(provider, agent.id, 'kill');
+
+    expect(terminateCodexThreadProcessMock).not.toHaveBeenCalled();
+    expect(archiveCodexThreadMock).not.toHaveBeenCalled();
+    expect(provider.knownJsonlFiles.has(agent.jsonlFile)).toBe(false);
+    expect(provider.agents.has(agent.id)).toBe(true);
+    expect(postedMessageTypes(webview)).not.toContain('agentClosed');
+    expect(timelineKinds(webview)).toContain('action.kill');
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+      'Pixel Agents: Cannot kill external claude agent without a terminal handle. The agent remains active.',
+    );
   });
 });

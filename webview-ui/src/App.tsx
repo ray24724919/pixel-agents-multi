@@ -481,8 +481,8 @@ function App() {
             <>
               <p className="text-base text-text">
                 This will terminate the underlying process for{' '}
-                <span className="text-accent-bright">{pendingCloseName}</span> when Pixel Agents
-                owns its terminal. Continue?
+                <span className="text-accent-bright">{pendingCloseName}</span>. Owned terminals are
+                closed; external Codex processes are terminated only when safely matched. Continue?
               </p>
               {pendingCloseCharacter?.folderName && (
                 <p className="mt-2 text-sm text-text-muted">{pendingCloseCharacter.folderName}</p>
@@ -502,7 +502,10 @@ function App() {
                 <p>
                   Archive removes it from active tracking and keeps its record for future history.
                 </p>
-                <p>Kill terminates the linked process when Pixel Agents owns its terminal.</p>
+                <p>
+                  Kill closes owned terminals and terminates external Codex processes only when
+                  safely matched.
+                </p>
               </div>
             </>
           )}

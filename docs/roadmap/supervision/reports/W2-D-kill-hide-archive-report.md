@@ -14,6 +14,9 @@ Implemented distinct Hide, Archive, and Kill semantics for active Pixel Agents, 
 - Archived transcript paths are also guarded during hook external-session detection and session resume so a later hook event does not undo Archive.
 - Kill is implemented in `src/PixelAgentsViewProvider.ts`: it disposes `terminalRef` for Pixel-Agents-owned terminals, archives Codex threads with `archiveCodexThread`, permanently dismisses the transcript, removes the active agent via `removeAgent`, and posts `agentClosed`.
 - Externally adopted Codex Kill now calls `terminateCodexThreadProcess` from `server/src/providers/file/codex/codex.ts` when there is no `terminalRef`. The helper lists processes, filters to Codex CLI-shaped processes, and terminates only one unique match.
+- External Codex Kill now archives the SQLite thread, dismisses the transcript, removes the agent, and posts `agentClosed` only after `terminateCodexThreadProcess` confirms `terminated: true`.
+- If external Codex termination fails with `no-match`, `ambiguous-match`, `process-list-failed`, or `kill-failed`, the failure path keeps the agent active/visible, does not call `archiveCodexThread`, does not dismiss the transcript, and posts an `action.kill` timeline event plus a warning so the user can retry or choose Archive.
+- External non-Codex agents without a `terminalRef` also stay active on Kill because W2-D has no provider-specific safe process termination path for them.
 - Windows process termination is supported through PowerShell `Get-CimInstance Win32_Process` for process metadata and `taskkill.exe /PID <pid> /T /F` for the matched process tree. A process is considered safe to kill only when the command line uniquely matches the thread id, the rollout/transcript path, or an exact `codex --cd <cwd>` argument. Ambiguous or missing matches are logged and not killed.
 - Unix-like systems use `ps` process metadata and send `SIGTERM` to the uniquely matched Codex process using the same conservative matching rules.
 - Kill timeline summaries now distinguish owned terminal disposal, successful external Codex termination, and safe-match failure.
@@ -26,7 +29,7 @@ Implemented distinct Hide, Archive, and Kill semantics for active Pixel Agents, 
 
 ## Tests
 
-- Added `server/__tests__/agentActions.test.ts` for Hide, Archive, and Kill backend semantics.
+- Added `server/__tests__/agentActions.test.ts` for Hide, Archive, Kill success, external Codex Kill failure, and external non-Codex no-terminal failure backend semantics.
 - Added Codex archive helper and external process matching coverage in `server/__tests__/codex.test.ts`.
 - Added `webview-ui/test/agent-center-hidden.test.ts` for hidden-agent visibility with the Show hidden toggle.
 - Added `webview-ui/test/timeline-retention.test.ts` for retaining action timeline events after agent removal.
@@ -36,9 +39,9 @@ Implemented distinct Hide, Archive, and Kill semantics for active Pixel Agents, 
 - `npm run build`: passed.
 - `npm test`: passed.
 - Webview tests: 8 passed.
-- Server tests: 180 passed.
-- Combined test count: 188 passed, meeting the `>= 168` requirement.
+- Server tests: 182 passed.
+- Combined test count: 190 passed, meeting the `>= 168` requirement.
 
 ## Manual Verification
 
-No VS Code Extension Host runtime verification was performed in this environment. The packaging/install/reload sequence, live external Codex process termination on Windows, and supervisor UI visibility of retained action timeline events remain for user-side manual validation.
+No VS Code Extension Host runtime verification was performed in this environment. The packaging/install/reload sequence, live external Codex process termination and failed-match retry behavior on Windows, and supervisor UI visibility of retained action timeline events remain for user-side manual validation.
