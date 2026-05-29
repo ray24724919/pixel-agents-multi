@@ -534,9 +534,18 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
   }
 
   private getAdoptionCandidates(threads: CodexThread[]): CodexThread[] {
-    const discoverAll = vscode.workspace
-      .getConfiguration('pixel-agents')
-      .get<boolean>('codex.discoverAllCwds', false);
+    const codexConfig = vscode.workspace.getConfiguration('pixel-agents');
+    const discoverAll = codexConfig.get<boolean>('codex.discoverAllCwds', false);
+    const discoverAllInspection = codexConfig.inspect<boolean>('codex.discoverAllCwds');
+    const discoverAllExplicitlyConfigured =
+      discoverAllInspection !== undefined &&
+      (discoverAllInspection.globalValue !== undefined ||
+        discoverAllInspection.workspaceValue !== undefined ||
+        discoverAllInspection.workspaceFolderValue !== undefined ||
+        discoverAllInspection.globalLanguageValue !== undefined ||
+        discoverAllInspection.workspaceLanguageValue !== undefined ||
+        discoverAllInspection.workspaceFolderLanguageValue !== undefined);
+    let effectiveDiscoverAll = discoverAll;
     const allowedCwds = new Set<string>();
     if (!discoverAll) {
       for (const folder of vscode.workspace.workspaceFolders ?? []) {
@@ -547,6 +556,12 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
           allowedCwds.add(path.resolve(agent.projectDir));
         }
       }
+    }
+    if (!effectiveDiscoverAll && !discoverAllExplicitlyConfigured && allowedCwds.size === 0) {
+      console.log(
+        '[Pixel Agents] Codex: no workspace folder and no user-spawned agents — adopting across all cwds (default fallback). Set pixel-agents.codex.discoverAllCwds=false to disable.',
+      );
+      effectiveDiscoverAll = true;
     }
 
     const existingAgentCwds = new Set<string>();
@@ -561,7 +576,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       if (!thread.cwd) continue;
       const cwd = path.resolve(thread.cwd);
       if (existingAgentCwds.has(cwd)) continue;
-      if (!discoverAll && !allowedCwds.has(cwd)) continue;
+      if (!effectiveDiscoverAll && !allowedCwds.has(cwd)) continue;
       const previous = byCwd.get(cwd);
       if (!previous || thread.updatedAtMs > previous.updatedAtMs) {
         byCwd.set(cwd, thread);

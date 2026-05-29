@@ -11,13 +11,25 @@ const terminalListMock = vi.hoisted(() => [] as Array<{ name: string }>);
 const workspaceFoldersMock = vi.hoisted(() => [
   { name: 'project', uri: { fsPath: '/workspace/project' } },
 ]);
-const discoverAllCwdsMock = vi.hoisted(() => ({ current: false }));
+const discoverAllCwdsMock = vi.hoisted(() => ({
+  current: undefined as boolean | undefined,
+  inspectResult: {} as {
+    globalValue?: boolean;
+    workspaceValue?: boolean;
+    workspaceFolderValue?: boolean;
+    globalLanguageValue?: boolean;
+    workspaceLanguageValue?: boolean;
+    workspaceFolderLanguageValue?: boolean;
+  },
+}));
 const buildCodexLaunchCommandMock = vi.hoisted(() => vi.fn());
 const findCodexThreadByIdMock = vi.hoisted(() => vi.fn());
 const findLatestCodexThreadMock = vi.hoisted(() => vi.fn());
 const findRecentCodexThreadsMock = vi.hoisted(() => vi.fn());
 const readNewLinesMock = vi.hoisted(() => vi.fn());
 const startFileWatchingMock = vi.hoisted(() => vi.fn());
+const fallbackLogMessage =
+  '[Pixel Agents] Codex: no workspace folder and no user-spawned agents — adopting across all cwds (default fallback). Set pixel-agents.codex.discoverAllCwds=false to disable.';
 
 vi.mock('vscode', () => ({
   commands: { executeCommand: vi.fn(), registerCommand: vi.fn() },
@@ -44,6 +56,11 @@ vi.mock('vscode', () => ({
     fs: { readFile: vi.fn() },
     getConfiguration: vi.fn(() => ({
       get: vi.fn((_key: string, fallback: boolean) => discoverAllCwdsMock.current ?? fallback),
+      inspect: vi.fn((_key: string) => ({
+        key: 'codex.discoverAllCwds',
+        defaultValue: false,
+        ...discoverAllCwdsMock.inspectResult,
+      })),
     })),
     openTextDocument: vi.fn(),
     workspaceFolders: workspaceFoldersMock,
@@ -120,6 +137,11 @@ function codexThread(id: string, rolloutPath: string, cwd: string): CodexThread 
   };
 }
 
+function setDiscoverAllCwds(value: boolean | undefined, explicit = false): void {
+  discoverAllCwdsMock.current = value;
+  discoverAllCwdsMock.inspectResult = explicit && value !== undefined ? { globalValue: value } : {};
+}
+
 function makeAgent(id: number, overrides: Partial<AgentState>): AgentState {
   return {
     id,
@@ -162,7 +184,7 @@ describe('Codex thread follow-on', () => {
       name: 'project',
       uri: { fsPath: '/workspace/project' },
     });
-    discoverAllCwdsMock.current = false;
+    setDiscoverAllCwds(undefined);
     createTerminalMock.mockReturnValue({
       name: 'Pixel Agent #1',
       show: vi.fn(),
@@ -399,6 +421,95 @@ describe('Codex thread follow-on', () => {
     expect(agent.outputTokens).toBe(2);
   });
 
+  it('falls back to all cwd adoption with no workspace, no spawned agents, and default discoverAllCwds', () => {
+    workspaceFoldersMock.splice(0, workspaceFoldersMock.length);
+    setDiscoverAllCwds(undefined);
+    const fooOlderPath = path.join(tmpDir, 'foo-older.jsonl');
+    const fooLatestPath = path.join(tmpDir, 'foo-latest.jsonl');
+    const barPath = path.join(tmpDir, 'bar.jsonl');
+    writeCodexTokenFile(fooOlderPath, 1, 0);
+    writeCodexTokenFile(fooLatestPath, 2, 0);
+    writeCodexTokenFile(barPath, 3, 0);
+    const fooOlder = {
+      ...codexThread('foo-older', fooOlderPath, '/foo'),
+      updatedAtMs: 10,
+    };
+    const fooLatest = {
+      ...codexThread('foo-latest', fooLatestPath, '/foo'),
+      updatedAtMs: 20,
+    };
+    const bar = codexThread('bar-thread', barPath, '/bar');
+    findRecentCodexThreadsMock.mockReturnValue([fooOlder, fooLatest, bar]);
+    findCodexThreadByIdMock.mockImplementation((id: string) => {
+      if (id === fooLatest.id) return fooLatest;
+      if (id === bar.id) return bar;
+      return null;
+    });
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    const provider = createProviderHarness();
+    scanCodex(provider);
+
+    expect(logSpy).toHaveBeenCalledWith(fallbackLogMessage);
+    logSpy.mockRestore();
+    expect(
+      new Map([...provider.agents.values()].map((agent) => [agent.projectDir, agent.sessionId])),
+    ).toEqual(
+      new Map([
+        ['/foo', 'foo-latest'],
+        ['/bar', 'bar-thread'],
+      ]),
+    );
+  });
+
+  it('does not fall back when discoverAllCwds is explicitly false with no workspace', () => {
+    workspaceFoldersMock.splice(0, workspaceFoldersMock.length);
+    setDiscoverAllCwds(false, true);
+    const fooPath = path.join(tmpDir, 'foo.jsonl');
+    const barPath = path.join(tmpDir, 'bar.jsonl');
+    writeCodexTokenFile(fooPath, 1, 0);
+    writeCodexTokenFile(barPath, 1, 0);
+    const foo = codexThread('foo-thread', fooPath, '/foo');
+    const bar = codexThread('bar-thread', barPath, '/bar');
+    findRecentCodexThreadsMock.mockReturnValue([foo, bar]);
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    const provider = createProviderHarness();
+    scanCodex(provider);
+
+    expect(provider.agents.size).toBe(0);
+    expect(logSpy).not.toHaveBeenCalledWith(fallbackLogMessage);
+    logSpy.mockRestore();
+  });
+
+  it('keeps default workspace scope when workspace folders exist', () => {
+    workspaceFoldersMock.splice(0, workspaceFoldersMock.length, {
+      name: 'foo',
+      uri: { fsPath: '/foo' },
+    });
+    setDiscoverAllCwds(undefined);
+    const fooPath = path.join(tmpDir, 'foo.jsonl');
+    const barPath = path.join(tmpDir, 'bar.jsonl');
+    writeCodexTokenFile(fooPath, 1, 0);
+    writeCodexTokenFile(barPath, 1, 0);
+    const foo = codexThread('foo-thread', fooPath, '/foo');
+    const bar = codexThread('bar-thread', barPath, '/bar');
+    findRecentCodexThreadsMock.mockReturnValue([foo, bar]);
+    findCodexThreadByIdMock.mockImplementation((id: string) => {
+      if (id === foo.id) return foo;
+      if (id === bar.id) return bar;
+      return null;
+    });
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    const provider = createProviderHarness();
+    scanCodex(provider);
+
+    expect([...provider.agents.values()].map((agent) => agent.projectDir)).toEqual(['/foo']);
+    expect(logSpy).not.toHaveBeenCalledWith(fallbackLogMessage);
+    logSpy.mockRestore();
+  });
+
   it('uses workspace scope by default and discoverAllCwds when enabled', () => {
     workspaceFoldersMock.splice(0, workspaceFoldersMock.length, {
       name: 'foo',
@@ -421,7 +532,7 @@ describe('Codex thread follow-on', () => {
     scanCodex(defaultProvider);
     expect([...defaultProvider.agents.values()].map((agent) => agent.projectDir)).toEqual(['/foo']);
 
-    discoverAllCwdsMock.current = true;
+    setDiscoverAllCwds(true, true);
     const discoverAllProvider = createProviderHarness();
     scanCodex(discoverAllProvider);
     expect(
