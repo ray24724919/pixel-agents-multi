@@ -13,7 +13,7 @@ Pixel Agents Multi has now landed the Windows stabilization and packaging wave t
 The repository is expected to be on current `main` after:
 
 ```text
-Merge W3-F: live smoke QA package
+Merge W3-F: live QA preflight note
 ```
 
 The installed extension should be:
@@ -93,7 +93,7 @@ code --list-extensions --show-versions | rg "raychen\.pixel-agents-multi|pablode
 
 Expected:
 
-- `git log -1` shows `Merge W3-F: live smoke QA package` or later.
+- `git log -1` shows `Merge W3-F: live QA preflight note` or later.
 - Worktree is clean before branching.
 - Installed extension list includes `raychen.pixel-agents-multi@1.3.0`.
 - No upstream public Pixel Agents extension is installed. If one is installed, document it and stop
