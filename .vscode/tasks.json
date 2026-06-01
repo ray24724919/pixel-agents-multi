@@ -1,9 +1,24 @@
 // See https://go.microsoft.com/fwlink/?LinkId=733558
 // for the documentation about the tasks.json format
 {
-	"version": "2.0.0",
-	"tasks": [
-		{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "type": "npm",
+            "script": "build",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": "$tsc",
+            "label": "npm: build",
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated",
+                "clear": true
+            }
+        },
+        {
             "label": "watch",
             "dependsOn": [
                 "npm: watch:tsc",
@@ -12,10 +27,7 @@
             "presentation": {
                 "reveal": "never"
             },
-            "group": {
-                "kind": "build",
-                "isDefault": true
-            }
+            "group": "build"
         },
         {
             "type": "npm",
@@ -24,13 +36,18 @@
             "problemMatcher": {
                 "owner": "esbuild",
                 "fileLocation": "absolute",
-                "pattern": {
-                    "regexp": "✘ \\[ERROR\\] (.+?)\\n\\s+(.+?):(\\d+):(\\d+):",
-                    "message": 1,
-                    "file": 2,
-                    "line": 3,
-                    "column": 4
-                },
+                "pattern": [
+                    {
+                        "regexp": ".*\\[ERROR\\] (.+)",
+                        "message": 1
+                    },
+                    {
+                        "regexp": "\\s+(.+?):(\\d+):(\\d+):",
+                        "file": 1,
+                        "line": 2,
+                        "column": 3
+                    }
+                ],
                 "background": {
                     "activeOnStart": true,
                     "beginsPattern": "\\[watch\\] build started",
@@ -44,7 +61,7 @@
                 "reveal": "never"
             }
         },
-		{
+        {
             "type": "npm",
             "script": "watch:tsc",
             "group": "build",
@@ -80,5 +97,5 @@
             },
             "problemMatcher": []
         }
-	]
+    ]
 }

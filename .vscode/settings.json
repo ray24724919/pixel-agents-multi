@@ -18,5 +18,8 @@
     "[markdown]": {
         "editor.formatOnSave": false
     },
+    "terminal.integrated.env.windows": {
+        "PATH": "${env:USERPROFILE}\\.local\\node-v22;C:\\Program Files\\Git\\cmd;${env:PATH}"
+    },
     "liveServer.settings.port": 5501
 }
