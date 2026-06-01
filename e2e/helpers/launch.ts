@@ -71,6 +71,10 @@ export async function launchVSCode(testTitle: string): Promise<VSCodeSession> {
   }
 
   const codexHome = path.join(tmpHome, '.codex');
+  const appDataDir = path.join(tmpHome, 'AppData', 'Roaming');
+  const localAppDataDir = path.join(tmpHome, 'AppData', 'Local');
+  fs.mkdirSync(appDataDir, { recursive: true });
+  fs.mkdirSync(localAppDataDir, { recursive: true });
 
   // Copy mock-codex into an isolated bin dir
   if (IS_WINDOWS) {
@@ -126,6 +130,8 @@ export async function launchVSCode(testTitle: string): Promise<VSCodeSession> {
     ...(process.env as Record<string, string>),
     HOME: tmpHome,
     USERPROFILE: tmpHome,
+    APPDATA: appDataDir,
+    LOCALAPPDATA: localAppDataDir,
     CODEX_HOME: codexHome,
     // Prepend mock bin so 'codex' resolves to our mock
     PATH: `${mockBinDir}${PATH_SEP}${process.env['PATH'] ?? '/usr/local/bin:/usr/bin:/bin'}`,
