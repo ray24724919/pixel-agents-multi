@@ -1743,7 +1743,8 @@ function getWebviewContent(webview: vscode.Webview, extensionUri: vscode.Uri): s
 
   html = html.replace(/(href|src)="\.\/([^"]+)"/g, (_match, attr, filePath) => {
     const fileUri = vscode.Uri.joinPath(distPath, filePath);
-    const webviewUri = webview.asWebviewUri(fileUri);
+    const cacheKey = fs.statSync(fileUri.fsPath).mtimeMs.toString(36);
+    const webviewUri = webview.asWebviewUri(fileUri).with({ query: `v=${cacheKey}` });
     return `${attr}="${webviewUri}"`;
   });
 
