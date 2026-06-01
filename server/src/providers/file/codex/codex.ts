@@ -45,6 +45,72 @@ function sessionIndexPath(): string {
   return path.join(codexHome(), 'session_index.jsonl');
 }
 
+function trimTrailingPathSeparators(value: string): string {
+  if (/^[A-Za-z]:[\\/]$/.test(value)) return value;
+  if (/^\\\\[^\\]+\\[^\\]+[\\/]?$/.test(value)) {
+    return value.replace(/[\\/]+$/, '\\');
+  }
+  return value.replace(/[\\/]+$/, '');
+}
+
+function isWindowsPathLike(value: string): boolean {
+  const normalized = value.replace(/\//g, '\\');
+  return (
+    /^\\\\\?\\/i.test(normalized) ||
+    /^[A-Za-z]:\\/.test(normalized) ||
+    /^\\\\[^\\]/.test(normalized)
+  );
+}
+
+function stripWindowsLongPathPrefix(value: string): string {
+  const normalized = value.replace(/\//g, '\\');
+  if (/^\\\\\?\\UNC\\/i.test(normalized)) {
+    return `\\\\${normalized.slice('\\\\?\\UNC\\'.length)}`;
+  }
+  if (/^\\\\\?\\/i.test(normalized)) {
+    return normalized.slice('\\\\?\\'.length);
+  }
+  return normalized;
+}
+
+function toWindowsLongPath(value: string): string {
+  const normalized = stripWindowsLongPathPrefix(value);
+  if (/^\\\\[^\\]/.test(normalized)) {
+    return `\\\\?\\UNC\\${normalized.slice(2)}`;
+  }
+  if (/^[A-Za-z]:\\/.test(normalized)) {
+    return `\\\\?\\${normalized}`;
+  }
+  return normalized;
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values)];
+}
+
+export function codexPathKey(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  if (isWindowsPathLike(trimmed)) {
+    return trimTrailingPathSeparators(
+      path.win32.resolve(stripWindowsLongPathPrefix(trimmed)),
+    ).toLowerCase();
+  }
+  return path.resolve(trimmed);
+}
+
+function codexCwdSqlPredicate(cwd: string): string {
+  if (!isWindowsPathLike(cwd)) {
+    return `cwd = ${sqlString(cwd)}`;
+  }
+
+  const plain = trimTrailingPathSeparators(path.win32.resolve(stripWindowsLongPathPrefix(cwd)));
+  const variants = uniqueStrings(
+    [plain, toWindowsLongPath(plain)].map((value) => value.toLowerCase()),
+  );
+  return `lower(cwd) in (${variants.map(sqlString).join(', ')})`;
+}
+
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
@@ -148,7 +214,7 @@ export function findLatestCodexThread(cwd: string, sinceMs = 0): CodexThread | n
 select id, rollout_path, cwd, coalesce(title, ''), updated_at_ms, coalesce(tokens_used, 0), coalesce(agent_nickname, ''), coalesce(agent_role, '')
 from threads
 where archived = 0
-  and cwd = ${sqlString(cwd)}
+  and ${codexCwdSqlPredicate(cwd)}
   and coalesce(created_at_ms, 0) >= ${Math.floor(sinceMs)}
 order by coalesce(created_at_ms, 0) desc, coalesce(updated_at_ms, 0) desc, id desc
 limit 1;`;
@@ -184,7 +250,7 @@ export function findCodexThreadsForCwd(cwd: string, limit = 10): CodexThread[] {
 select id, rollout_path, cwd, coalesce(title, ''), updated_at_ms, coalesce(tokens_used, 0), coalesce(agent_nickname, ''), coalesce(agent_role, '')
 from threads
 where archived = 0
-  and cwd = ${sqlString(cwd)}
+  and ${codexCwdSqlPredicate(cwd)}
   and source not like ${sqlString('{"subagent"%')}
 order by coalesce(updated_at_ms, 0) desc, coalesce(created_at_ms, 0) desc, id desc
 limit ${Math.max(1, Math.floor(limit))};`;
@@ -258,12 +324,14 @@ function unquote(value: string): string {
 }
 
 function normalizeProcessPath(value: string, platform: NodeJS.Platform): string {
-  const pathApi = platform === 'win32' ? path.win32 : path.posix;
-  const normalized = pathApi
+  if (platform === 'win32') {
+    return (codexPathKey(unquote(value)) ?? '').replace(/\\/g, '/');
+  }
+  const normalized = path.posix
     .normalize(unquote(value))
     .replace(/[\\/]+$/, '')
     .replace(/\\/g, '/');
-  return platform === 'win32' ? normalized.toLowerCase() : normalized;
+  return normalized;
 }
 
 function normalizedTextIncludesPath(

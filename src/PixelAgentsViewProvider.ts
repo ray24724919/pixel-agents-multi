@@ -8,6 +8,7 @@ import type { HookEvent } from '../server/src/hookEventHandler.js';
 import { HookEventHandler } from '../server/src/hookEventHandler.js';
 import {
   archiveCodexThread,
+  codexPathKey,
   type CodexThread,
   findCodexThreadById,
   findRecentCodexThreads,
@@ -94,13 +95,15 @@ export function getLiveCodexThreadIdsForSpawnedAgentCwds(
   const spawnedCwds = new Set<string>();
   for (const agent of agents.values()) {
     if (agent.providerId === 'codex' && !agent.isExternal && agent.projectDir) {
-      spawnedCwds.add(path.resolve(agent.projectDir));
+      const cwd = codexPathKey(agent.projectDir);
+      if (cwd) spawnedCwds.add(cwd);
     }
   }
 
   const liveThreadIds = new Set<string>();
   for (const thread of threads) {
-    if (thread.cwd && spawnedCwds.has(path.resolve(thread.cwd))) {
+    const cwd = codexPathKey(thread.cwd);
+    if (cwd && spawnedCwds.has(cwd)) {
       liveThreadIds.add(thread.id);
     }
   }
@@ -114,28 +117,26 @@ export function getLiveCodexThreadIdsForAgentCwds(
   const agentCwds = new Set<string>();
   for (const agent of agents.values()) {
     if (agent.providerId === 'codex' && agent.leadAgentId === undefined && agent.projectDir) {
-      agentCwds.add(path.resolve(agent.projectDir));
+      const cwd = codexPathKey(agent.projectDir);
+      if (cwd) agentCwds.add(cwd);
     }
   }
 
   const liveThreadIds = new Set<string>();
   for (const thread of threads) {
-    if (thread.cwd && agentCwds.has(path.resolve(thread.cwd))) {
+    const cwd = codexPathKey(thread.cwd);
+    if (cwd && agentCwds.has(cwd)) {
       liveThreadIds.add(thread.id);
     }
   }
   return liveThreadIds;
 }
 
-function resolvePathKey(value: string | undefined): string | undefined {
-  return value ? path.resolve(value) : undefined;
-}
-
 function codexAgentMatchesThread(agent: AgentState, thread: CodexThread): boolean {
   if (agent.providerId !== 'codex') return false;
   if (agent.sessionId && agent.sessionId === thread.id) return true;
-  const agentTranscript = resolvePathKey(agent.jsonlFile);
-  const threadTranscript = resolvePathKey(thread.rolloutPath);
+  const agentTranscript = codexPathKey(agent.jsonlFile);
+  const threadTranscript = codexPathKey(thread.rolloutPath);
   return !!agentTranscript && !!threadTranscript && agentTranscript === threadTranscript;
 }
 
@@ -555,11 +556,13 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     const allowedCwds = new Set<string>();
     if (!discoverAll) {
       for (const folder of vscode.workspace.workspaceFolders ?? []) {
-        allowedCwds.add(path.resolve(folder.uri.fsPath));
+        const cwd = codexPathKey(folder.uri.fsPath);
+        if (cwd) allowedCwds.add(cwd);
       }
       for (const agent of this.agents.values()) {
         if (agent.providerId === 'codex' && !agent.isExternal && agent.projectDir) {
-          allowedCwds.add(path.resolve(agent.projectDir));
+          const cwd = codexPathKey(agent.projectDir);
+          if (cwd) allowedCwds.add(cwd);
         }
       }
     }
@@ -576,12 +579,13 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     for (const agent of this.agents.values()) {
       if (agent.providerId !== 'codex') continue;
       if (!agent.isExternal && agent.projectDir) {
-        spawnedAgentCwds.add(path.resolve(agent.projectDir));
+        const cwd = codexPathKey(agent.projectDir);
+        if (cwd) spawnedAgentCwds.add(cwd);
       }
       if (agent.sessionId) {
         existingThreadIds.add(agent.sessionId);
       }
-      const transcriptPath = resolvePathKey(agent.jsonlFile);
+      const transcriptPath = codexPathKey(agent.jsonlFile);
       if (transcriptPath) {
         existingTranscriptPaths.add(transcriptPath);
       }
@@ -590,8 +594,9 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     const candidates: CodexThread[] = [];
     for (const thread of threads) {
       if (!thread.cwd) continue;
-      const cwd = path.resolve(thread.cwd);
-      const transcriptPath = resolvePathKey(thread.rolloutPath);
+      const cwd = codexPathKey(thread.cwd);
+      const transcriptPath = codexPathKey(thread.rolloutPath);
+      if (!cwd) continue;
       if (existingThreadIds.has(thread.id)) continue;
       if (transcriptPath && existingTranscriptPaths.has(transcriptPath)) continue;
       if (spawnedAgentCwds.has(cwd)) continue;
@@ -742,7 +747,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     const deduped = archivedAgents.filter((existing) => {
       if (record.providerId && existing.providerId !== record.providerId) return true;
       if (record.sessionId && existing.sessionId === record.sessionId) return false;
-      return path.resolve(existing.jsonlFile) !== path.resolve(record.jsonlFile);
+      return codexPathKey(existing.jsonlFile) !== codexPathKey(record.jsonlFile);
     });
     this.context.workspaceState.update(WORKSPACE_KEY_ARCHIVED_AGENTS, [...deduped, record]);
   }
@@ -764,9 +769,9 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       WORKSPACE_KEY_ARCHIVED_AGENTS,
       [],
     );
-    const resolvedTranscript = path.resolve(transcriptPath);
+    const resolvedTranscript = codexPathKey(transcriptPath);
     return archivedAgents.some(
-      (agent) => agent.jsonlFile && path.resolve(agent.jsonlFile) === resolvedTranscript,
+      (agent) => agent.jsonlFile && codexPathKey(agent.jsonlFile) === resolvedTranscript,
     );
   }
 
@@ -957,10 +962,16 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 
   private isCwdInWorkspace(cwd: string | undefined, workspaceRoots: string[]): boolean {
     if (!cwd) return false;
-    const resolvedCwd = path.resolve(cwd);
+    const resolvedCwd = codexPathKey(cwd);
+    if (!resolvedCwd) return false;
     return workspaceRoots.some((root) => {
-      const resolvedRoot = path.resolve(root);
-      return resolvedCwd === resolvedRoot || resolvedCwd.startsWith(`${resolvedRoot}${path.sep}`);
+      const resolvedRoot = codexPathKey(root);
+      if (!resolvedRoot) return false;
+      const separator = resolvedRoot.includes('\\') ? '\\' : path.sep;
+      const rootPrefix = resolvedRoot.endsWith(separator)
+        ? resolvedRoot
+        : `${resolvedRoot}${separator}`;
+      return resolvedCwd === resolvedRoot || resolvedCwd.startsWith(rootPrefix);
     });
   }
 
@@ -970,11 +981,13 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
   }> {
     const projects = new Map<string, { name: string; path: string }>();
     for (const folder of vscode.workspace.workspaceFolders ?? []) {
-      projects.set(folder.uri.fsPath, { name: folder.name, path: folder.uri.fsPath });
+      const cwd = codexPathKey(folder.uri.fsPath);
+      if (cwd) projects.set(cwd, { name: folder.name, path: folder.uri.fsPath });
     }
     for (const thread of threads) {
-      if (!thread.cwd || projects.has(thread.cwd)) continue;
-      projects.set(thread.cwd, { name: path.basename(thread.cwd), path: thread.cwd });
+      const cwd = codexPathKey(thread.cwd);
+      if (!thread.cwd || !cwd || projects.has(cwd)) continue;
+      projects.set(cwd, { name: path.basename(thread.cwd), path: thread.cwd });
     }
     return [...projects.values()];
   }

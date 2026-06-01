@@ -67,28 +67,34 @@ vi.mock('vscode', () => ({
   },
 }));
 
-vi.mock('../../server/src/providers/file/codex/codex.js', () => ({
-  archiveCodexThread: vi.fn(),
-  buildCodexLaunchCommand: buildCodexLaunchCommandMock,
-  findCodexThreadById: findCodexThreadByIdMock,
-  findLatestCodexThread: findLatestCodexThreadMock,
-  findRecentCodexThreads: findRecentCodexThreadsMock,
-  parseCodexTranscriptLine: (line: string) => {
-    const record = JSON.parse(line) as {
-      type?: string;
-      payload?: { type?: string; info?: { total_token_usage?: Record<string, number> } };
-    };
-    const total = record.payload?.info?.total_token_usage;
-    if (record.type === 'event_msg' && record.payload?.type === 'token_count' && total) {
-      return {
-        kind: 'tokenUsage',
-        inputTokens: total.input_tokens ?? 0,
-        outputTokens: (total.output_tokens ?? 0) + (total.reasoning_output_tokens ?? 0),
+vi.mock('../../server/src/providers/file/codex/codex.js', async () => {
+  const actual = await vi.importActual<typeof import('../src/providers/file/codex/codex.js')>(
+    '../src/providers/file/codex/codex.js',
+  );
+  return {
+    ...actual,
+    archiveCodexThread: vi.fn(),
+    buildCodexLaunchCommand: buildCodexLaunchCommandMock,
+    findCodexThreadById: findCodexThreadByIdMock,
+    findLatestCodexThread: findLatestCodexThreadMock,
+    findRecentCodexThreads: findRecentCodexThreadsMock,
+    parseCodexTranscriptLine: (line: string) => {
+      const record = JSON.parse(line) as {
+        type?: string;
+        payload?: { type?: string; info?: { total_token_usage?: Record<string, number> } };
       };
-    }
-    return { kind: 'unknown' };
-  },
-}));
+      const total = record.payload?.info?.total_token_usage;
+      if (record.type === 'event_msg' && record.payload?.type === 'token_count' && total) {
+        return {
+          kind: 'tokenUsage',
+          inputTokens: total.input_tokens ?? 0,
+          outputTokens: (total.output_tokens ?? 0) + (total.reasoning_output_tokens ?? 0),
+        };
+      }
+      return { kind: 'unknown' };
+    },
+  };
+});
 
 vi.mock('../../src/fileWatcher.js', async () => {
   const actual = await vi.importActual<typeof import('../../src/fileWatcher.js')>(
@@ -135,6 +141,14 @@ function codexThread(id: string, rolloutPath: string, cwd: string): CodexThread 
     updatedAtMs: Date.now(),
     tokensUsed: 0,
   };
+}
+
+function windowsLongPath(filePath: string): string {
+  const normalized = filePath.replace(/\//g, '\\');
+  if (normalized.startsWith('\\\\')) {
+    return `\\\\?\\UNC\\${normalized.slice(2)}`;
+  }
+  return `\\\\?\\${normalized}`;
 }
 
 function setDiscoverAllCwds(value: boolean | undefined, explicit = false): void {
@@ -561,6 +575,65 @@ describe('Codex thread follow-on', () => {
     ).toEqual(new Set(['/foo', '/bar']));
   });
 
+  it('matches Windows namespaced Codex cwd values to plain workspace folders', () => {
+    const plainCwd = 'C:\\Users\\User\\Documents\\raychen\\pixel-agents-multi';
+    const namespacedCwd = `\\\\?\\${plainCwd}`;
+    workspaceFoldersMock.splice(0, workspaceFoldersMock.length, {
+      name: 'pixel-agents-multi',
+      uri: { fsPath: plainCwd },
+    });
+    const threadPath = path.join(tmpDir, 'windows-cwd.jsonl');
+    writeCodexTokenFile(threadPath, 1, 0);
+    const thread = codexThread('windows-thread', threadPath, namespacedCwd);
+    findRecentCodexThreadsMock.mockReturnValue([thread]);
+    findCodexThreadByIdMock.mockReturnValue(thread);
+
+    const provider = createProviderHarness();
+    scanCodex(provider);
+
+    expect([...provider.agents.values()].map((agent) => agent.sessionId)).toEqual([
+      'windows-thread',
+    ]);
+  });
+
+  it('does not duplicate an existing agent when the Codex rollout path uses a Windows namespace', () => {
+    setDiscoverAllCwds(true, true);
+    const provider = createProviderHarness();
+    const existingPath = path.join(tmpDir, 'existing.jsonl');
+    writeCodexTokenFile(existingPath, 1, 0);
+    const existingThread = codexThread('existing-thread', existingPath, '/workspace/project');
+    const duplicateThread = codexThread(
+      'duplicate-thread',
+      windowsLongPath(existingPath),
+      '/workspace/project',
+    );
+    provider.agents.set(
+      1,
+      makeAgent(1, {
+        sessionId: existingThread.id,
+        isExternal: true,
+        projectDir: '/workspace/project',
+        jsonlFile: existingPath,
+      }),
+    );
+    findRecentCodexThreadsMock.mockReturnValue([duplicateThread, existingThread]);
+    findCodexThreadByIdMock.mockImplementation((id: string) => {
+      if (id === existingThread.id) return existingThread;
+      if (id === duplicateThread.id) return duplicateThread;
+      return null;
+    });
+
+    scanCodex(provider);
+
+    expect(provider.agents.size).toBe(1);
+    expect(provider.agents.get(1)?.sessionId).toBe(existingThread.id);
+    expect(
+      (provider.webviewView?.webview.postMessage as ReturnType<typeof vi.fn>).mock.calls.some(
+        ([message]) => message.type === 'agentCreated',
+      ),
+    ).toBe(false);
+  });
+
   it('does not adopt an external Codex thread for a cwd that already has a spawned agent', () => {
     const provider = createProviderHarness();
     const threadPath = path.join(tmpDir, 'external.jsonl');
@@ -584,6 +657,38 @@ describe('Codex thread follow-on', () => {
 
     expect(provider.agents.size).toBe(1);
     expect(provider.agents.get(1)?.isExternal).toBe(false);
+  });
+
+  it('blocks namespaced external Codex cwd values when a spawned agent owns the plain cwd', () => {
+    const provider = createProviderHarness();
+    const plainCwd = 'C:\\Users\\User\\Documents\\raychen\\pixel-agents-multi';
+    const namespacedCwd = `\\\\?\\${plainCwd}`;
+    const threadPath = path.join(tmpDir, 'external-windows.jsonl');
+    const spawnedPath = path.join(tmpDir, 'spawned-windows.jsonl');
+    writeCodexTokenFile(threadPath, 1, 0);
+    writeCodexTokenFile(spawnedPath, 1, 0);
+    const thread = codexThread('external-windows-thread', threadPath, namespacedCwd);
+    const spawnedThread = codexThread('spawned-windows-thread', spawnedPath, plainCwd);
+    provider.agents.set(
+      1,
+      makeAgent(1, {
+        sessionId: spawnedThread.id,
+        isExternal: false,
+        projectDir: plainCwd,
+        jsonlFile: spawnedPath,
+      }),
+    );
+    findRecentCodexThreadsMock.mockReturnValue([thread, spawnedThread]);
+    findCodexThreadByIdMock.mockImplementation((id: string) => {
+      if (id === thread.id) return thread;
+      if (id === spawnedThread.id) return spawnedThread;
+      return null;
+    });
+
+    scanCodex(provider);
+
+    expect(provider.agents.size).toBe(1);
+    expect(provider.agents.get(1)?.sessionId).toBe(spawnedThread.id);
   });
 
   it('keeps multiple same-cwd external Codex agents bound to their own threads', async () => {

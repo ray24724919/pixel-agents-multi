@@ -49,3 +49,11 @@ The previous scanner grouped recent Codex threads by cwd and retained only the l
 ## Manual Follow-Up
 
 Claude Code may still require user login before `%USERPROFILE%\.claude\projects` is created and Claude transcript discovery works. No credentials or login flow were performed during W2-F.
+
+## Follow-Up: Windows Codex Path Normalization
+
+- Root cause: Codex can persist cwd and rollout paths with the Windows long-path prefix (`\\?\C:\...`), while VS Code workspace folders and Pixel Agents state commonly use plain paths (`C:\...`). The W2-F comparison code used resolved paths but did not collapse those two forms to the same key.
+- Files changed: `server/src/providers/file/codex/codex.ts`, `src/PixelAgentsViewProvider.ts`, `server/__tests__/codexFollowon.test.ts`, `server/__tests__/codex.test.ts`, and this report.
+- The shared Codex path key now strips Windows long-path prefixes, normalizes UNC long paths, and lowercases Windows-like paths for cwd/transcript comparisons. Codex DB cwd lookups now query both plain and long-path Windows variants.
+- Tests added for workspace-scoped adoption with namespaced Codex cwd values, rollout-path duplicate suppression, spawned-agent cwd blocking, and SQLite lookup SQL for plain/namespaced cwd variants.
+- Validation: `npm run build` passed. `npm test` passed with 8 webview tests and 189 server tests, 197 total.

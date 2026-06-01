@@ -28,6 +28,7 @@ const {
   extractCodexCdValues,
   findMatchingCodexProcesses,
   terminateCodexThreadProcess,
+  codexPathKey,
 } = await import('../src/providers/file/codex/codex.js');
 
 function codexLine(type: string, payload: Record<string, unknown>): string {
@@ -177,6 +178,42 @@ describe('codexProvider', () => {
         expect.arrayContaining(['-separator', '\t', dbPath]),
         expect.objectContaining({ encoding: 'utf-8' }),
       );
+    });
+
+    it('matches Windows plain and namespaced cwd variants when finding the latest thread', () => {
+      const codexHome = path.join(tmpBase, '.codex');
+      const dbPath = path.join(codexHome, 'state_5.sqlite');
+      const latestThread = path.join(codexHome, 'sessions', 'thread-windows.jsonl');
+      const plainCwd = 'C:\\Users\\User\\Documents\\raychen\\pixel-agents-multi';
+      const namespacedCwd = `\\\\?\\${plainCwd}`;
+      fs.mkdirSync(path.dirname(latestThread), { recursive: true });
+      fs.writeFileSync(dbPath, '');
+      fs.writeFileSync(latestThread, JSON.stringify({ id: 'thread-windows' }) + '\n');
+      execFileSyncMock.mockReturnValue(
+        `thread-windows\t${latestThread}\t${namespacedCwd}\tWindows paths\t1778544000000\t99\t\t\n`,
+      );
+
+      expect(findLatestCodexThread(plainCwd, 0)).toEqual({
+        id: 'thread-windows',
+        rolloutPath: latestThread,
+        cwd: namespacedCwd,
+        title: 'Windows paths',
+        updatedAtMs: 1778544000000,
+        tokensUsed: 99,
+        agentNickname: undefined,
+        agentRole: undefined,
+      });
+
+      const sql = execFileSyncMock.mock.calls[0][1][3] as string;
+      expect(sql).toContain('lower(cwd) in');
+      expect(sql).toContain(plainCwd.toLowerCase());
+      expect(sql).toContain(namespacedCwd.toLowerCase());
+    });
+
+    it('normalizes Windows plain, namespaced, and UNC path keys', () => {
+      expect(codexPathKey('C:\\Users\\User\\repo')).toBe('c:\\users\\user\\repo');
+      expect(codexPathKey('\\\\?\\C:\\Users\\User\\repo')).toBe('c:\\users\\user\\repo');
+      expect(codexPathKey('\\\\?\\UNC\\Server\\Share\\repo')).toBe('\\\\server\\share\\repo');
     });
 
     it('finds recent active Codex threads across cwd values', () => {
