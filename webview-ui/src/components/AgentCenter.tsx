@@ -500,7 +500,7 @@ function UsageDashboard({
                     </div>
                   </div>
                   <div className="text-right text-xs uppercase tracking-wide text-text-muted">
-                    {provider.estimatedCount > 0 ? 'Mixed estimate' : 'Exact'}
+                    {provider.estimatedCount > 0 ? 'Mixed exact/est.' : 'Exact reported'}
                   </div>
                 </div>
                 <UsageBar
@@ -1088,8 +1088,8 @@ function AgentDetail({
       </div>
       <div className="mt-2 text-xs text-text-muted">
         {agent.tokenUsageEstimated
-          ? 'Estimated from transcript text; API proxy cost is approximate.'
-          : 'Exact provider usage when available; API proxy cost is approximate.'}
+          ? 'Includes estimated transcript tokens; API proxy cost is not actual billing.'
+          : 'Provider-reported usage when available; API proxy cost is not actual billing.'}
         {agent.artifactOutputTokens > 0
           ? ' Artifact is generated code/patch estimate and is not included in billing proxy total.'
           : ''}
@@ -1267,7 +1267,8 @@ function getAgentSummary(
     inputTokens,
     outputTokens,
     artifactOutputTokens,
-    tokenUsageEstimated: ch?.tokenUsageEstimated ?? false,
+    tokenUsageEstimated:
+      ch?.tokenUsageEstimated === true || ch?.tokenUsageDetails?.estimated === true,
     tokenUsageDetails: ch?.tokenUsageDetails,
     codexRateLimit: ch?.codexRateLimit,
     zone: zone.zone,
@@ -1448,7 +1449,7 @@ function addAgentUsage(target: UsageTotals, agent: AgentSummary): void {
   target.cacheTokens +=
     (agent.tokenUsageDetails?.cacheRead ?? 0) + (agent.tokenUsageDetails?.cacheWrite ?? 0);
   target.reasoningTokens += agent.tokenUsageDetails?.reasoningOutput ?? 0;
-  if (agent.tokenUsageEstimated) {
+  if (agent.tokenUsageEstimated || agent.tokenUsageDetails?.estimated === true) {
     target.estimatedCount += 1;
   } else {
     target.exactCount += 1;
