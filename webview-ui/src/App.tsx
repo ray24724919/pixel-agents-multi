@@ -223,6 +223,16 @@ function App() {
     .map((id) => officeState.characters.get(id)?.agentName)
     .filter((name): name is string => !!name)
     .join('|');
+  const agentProviders = agents
+    .map((id) => `${id}:${officeState.characters.get(id)?.providerId ?? 'claude'}`)
+    .join('|');
+  const visibleAgentNames = visibleAgents
+    .map((id) => officeState.characters.get(id)?.agentName)
+    .filter((name): name is string => !!name)
+    .join('|');
+  const visibleAgentProviders = visibleAgents
+    .map((id) => `${id}:${officeState.characters.get(id)?.providerId ?? 'claude'}`)
+    .join('|');
   const pendingCloseCharacter =
     pendingCloseAgentId === null ? undefined : officeState.characters.get(pendingCloseAgentId);
   const pendingCloseName =
@@ -239,6 +249,10 @@ function App() {
       data-testid="pixel-agents-root"
       data-agent-count={agents.length}
       data-agent-names={agentNames}
+      data-agent-providers={agentProviders}
+      data-visible-agent-count={visibleAgents.length}
+      data-visible-agent-names={visibleAgentNames}
+      data-visible-agent-providers={visibleAgentProviders}
     >
       <OfficeCanvas
         officeState={officeState}

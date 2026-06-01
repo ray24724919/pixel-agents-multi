@@ -17,6 +17,10 @@ export interface VSCodeSession {
   window: Page;
   /** Isolated HOME directory for this test session. */
   tmpHome: string;
+  /** Isolated APPDATA directory for this test session. */
+  appDataDir: string;
+  /** Isolated LOCALAPPDATA directory for this test session. */
+  localAppDataDir: string;
   /** Workspace directory opened in VS Code. */
   workspaceDir: string;
   /** Path to the mock invocations log. */
@@ -225,7 +229,16 @@ export async function launchVSCode(testTitle: string): Promise<VSCodeSession> {
       await window.waitForTimeout(500);
     }
 
-    return { app, window, tmpHome, workspaceDir: resolvedWorkspaceDir, mockLogFile, cleanup };
+    return {
+      app,
+      window,
+      tmpHome,
+      appDataDir,
+      localAppDataDir,
+      workspaceDir: resolvedWorkspaceDir,
+      mockLogFile,
+      cleanup,
+    };
   } catch (error) {
     await cleanup();
     throw error;
