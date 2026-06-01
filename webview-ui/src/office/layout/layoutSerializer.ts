@@ -1,4 +1,5 @@
 import type { ColorValue } from '../../components/ui/types.js';
+import { AUTO_ON_FACING_DEPTH, AUTO_ON_SIDE_DEPTH } from '../../constants.js';
 import { getColorizedSprite } from '../colorize.js';
 import type {
   FurnitureInstance,
@@ -11,6 +12,19 @@ import type {
 import { DEFAULT_COLS, DEFAULT_ROWS, Direction, TILE_SIZE, TileType } from '../types.js';
 import { inferTileZone } from '../zoneUtils.js';
 import { getCatalogEntry, getOrientationInGroup } from './furnitureCatalog.js';
+
+interface WorkstationMatch {
+  valid: boolean;
+  deskUid?: string;
+  electronicsUid?: string;
+  reason: 'facing-computer-desk' | 'none';
+}
+
+interface WorkstationTile {
+  uid: string;
+  col: number;
+  row: number;
+}
 
 /** Convert flat tile array from layout into 2D grid */
 export function layoutToTileMap(layout: OfficeLayout): TileTypeVal[][] {
@@ -168,17 +182,23 @@ export function layoutToSeats(layout: OfficeLayout): Map<string, Seat> {
   const seats = new Map<string, Seat>();
   const { furniture } = layout;
 
-  // Build set of all desk and electronics tiles. Seats near electronics are work seats.
+  // Build sets of desk and electronics tiles. Work seats require both in the faced cone.
   const deskTiles = new Set<string>();
-  const electronicsTiles = new Set<string>();
+  const deskTileRecords: WorkstationTile[] = [];
+  const electronicsTileRecords: WorkstationTile[] = [];
   for (const item of furniture) {
     const entry = getCatalogEntry(item.type);
     if (!entry) continue;
     for (let dr = 0; dr < entry.footprintH; dr++) {
       for (let dc = 0; dc < entry.footprintW; dc++) {
         const key = `${item.col + dc},${item.row + dr}`;
-        if (entry.isDesk) deskTiles.add(key);
-        if (entry.category === 'electronics') electronicsTiles.add(key);
+        if (entry.isDesk) {
+          deskTiles.add(key);
+          deskTileRecords.push({ uid: item.uid, col: item.col + dc, row: item.row + dr });
+        }
+        if (entry.category === 'electronics') {
+          electronicsTileRecords.push({ uid: item.uid, col: item.col + dc, row: item.row + dr });
+        }
       }
     }
   }
@@ -221,12 +241,17 @@ export function layoutToSeats(layout: OfficeLayout): Map<string, Seat> {
 
         // First seat uses chair uid (backward compat), subsequent use uid:N
         const seatUid = seatCount === 0 ? item.uid : `${item.uid}:${seatCount}`;
-        const isWorkFurnitureSeat = isNearElectronics(tileCol, tileRow, electronicsTiles);
+        const workstation = findWorkstationMatch(
+          tileCol,
+          tileRow,
+          facingDir,
+          deskTileRecords,
+          electronicsTileRecords,
+        );
         const inferredZone = inferTileZone(layout, tileCol, tileRow);
-        const zone: Seat['seatKind'] =
-          isWorkFurnitureSeat || inferredZone.zone === 'work' ? 'work' : 'rest';
-        const zoneSource = isWorkFurnitureSeat
-          ? 'computer-adjacent'
+        const zone: Seat['seatKind'] = workstation.valid ? 'work' : 'rest';
+        const zoneSource = workstation.valid
+          ? 'workstation'
           : inferredZone.source === 'zone-paint'
             ? 'zone-paint'
             : 'default-split';
@@ -247,17 +272,63 @@ export function layoutToSeats(layout: OfficeLayout): Map<string, Seat> {
   return seats;
 }
 
-function isNearElectronics(
+function findWorkstationMatch(
   seatCol: number,
   seatRow: number,
-  electronicsTiles: Set<string>,
-): boolean {
-  for (let dr = -1; dr <= 1; dr++) {
-    for (let dc = -1; dc <= 1; dc++) {
-      if (electronicsTiles.has(`${seatCol + dc},${seatRow + dr}`)) return true;
+  facingDir: Direction,
+  deskTiles: WorkstationTile[],
+  electronicsTiles: WorkstationTile[],
+): WorkstationMatch {
+  const facedTiles = getFacedTileScores(seatCol, seatRow, facingDir);
+  const facedDeskTiles = deskTiles.filter((tile) => facedTiles.has(`${tile.col},${tile.row}`));
+  if (facedDeskTiles.length === 0) return { valid: false, reason: 'none' };
+
+  const facedElectronicsTiles = electronicsTiles.filter((tile) =>
+    facedTiles.has(`${tile.col},${tile.row}`),
+  );
+  for (const deskTile of facedDeskTiles) {
+    for (const electronicsTile of facedElectronicsTiles) {
+      if (!areAdjacentOrSame(deskTile, electronicsTile)) continue;
+      return {
+        valid: true,
+        deskUid: deskTile.uid,
+        electronicsUid: electronicsTile.uid,
+        reason: 'facing-computer-desk',
+      };
     }
   }
-  return false;
+  return { valid: false, reason: 'none' };
+}
+
+function areAdjacentOrSame(a: WorkstationTile, b: WorkstationTile): boolean {
+  return Math.abs(a.col - b.col) <= 1 && Math.abs(a.row - b.row) <= 1;
+}
+
+function getFacedTileScores(
+  seatCol: number,
+  seatRow: number,
+  facingDir: Direction,
+): Map<string, number> {
+  const scores = new Map<string, number>();
+  const dCol = facingDir === Direction.RIGHT ? 1 : facingDir === Direction.LEFT ? -1 : 0;
+  const dRow = facingDir === Direction.DOWN ? 1 : facingDir === Direction.UP ? -1 : 0;
+  const lateralCol = dRow !== 0 ? 1 : 0;
+  const lateralRow = dCol !== 0 ? 1 : 0;
+
+  for (let forward = 1; forward <= AUTO_ON_FACING_DEPTH; forward++) {
+    for (let lateral = -AUTO_ON_SIDE_DEPTH; lateral <= AUTO_ON_SIDE_DEPTH; lateral++) {
+      const col = seatCol + dCol * forward + lateralCol * lateral;
+      const row = seatRow + dRow * forward + lateralRow * lateral;
+      const score = forward * 10 + Math.abs(lateral);
+      const key = `${col},${row}`;
+      const previous = scores.get(key);
+      if (previous === undefined || score < previous) {
+        scores.set(key, score);
+      }
+    }
+  }
+
+  return scores;
 }
 
 /** Get the set of tiles occupied by seats (so they can be excluded from blocked tiles)

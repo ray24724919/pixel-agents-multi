@@ -109,6 +109,15 @@ export function updateCharacter(
 
   switch (ch.state) {
     case CharacterState.TYPE: {
+      if (ch.isActive && !ch.isSubagent) {
+        const seat = ch.seatId ? seats.get(ch.seatId) : undefined;
+        if (!seat || seat.seatKind !== 'work') {
+          ch.state = CharacterState.IDLE;
+          ch.frame = 0;
+          ch.frameTimer = 0;
+          break;
+        }
+      }
       if (ch.frameTimer >= TYPE_FRAME_DURATION_SEC) {
         ch.frameTimer -= TYPE_FRAME_DURATION_SEC;
         ch.frame = (ch.frame + 1) % 2;
@@ -137,14 +146,15 @@ export function updateCharacter(
       // If became active, pathfind to seat
       if (ch.isActive) {
         if (!ch.seatId) {
-          // No seat assigned — type in place
-          ch.state = CharacterState.TYPE;
-          ch.frame = 0;
-          ch.frameTimer = 0;
+          if (ch.isSubagent) {
+            ch.state = CharacterState.TYPE;
+            ch.frame = 0;
+            ch.frameTimer = 0;
+          }
           break;
         }
         const seat = seats.get(ch.seatId);
-        if (seat) {
+        if (seat && (ch.isSubagent || seat.seatKind === 'work')) {
           const path = findPath(
             ch.tileCol,
             ch.tileRow,
@@ -248,11 +258,15 @@ export function updateCharacter(
 
         if (ch.isActive) {
           if (!ch.seatId) {
-            // No seat — type in place
-            ch.state = CharacterState.TYPE;
+            ch.state = ch.isSubagent ? CharacterState.TYPE : CharacterState.IDLE;
           } else {
             const seat = seats.get(ch.seatId);
-            if (seat && ch.tileCol === seat.seatCol && ch.tileRow === seat.seatRow) {
+            if (
+              seat &&
+              (ch.isSubagent || seat.seatKind === 'work') &&
+              ch.tileCol === seat.seatCol &&
+              ch.tileRow === seat.seatRow
+            ) {
               ch.state = CharacterState.TYPE;
               ch.dir = seat.facingDir;
             } else {
@@ -316,7 +330,7 @@ export function updateCharacter(
       // If became active while wandering, repath to seat
       if (ch.isActive && ch.seatId) {
         const seat = seats.get(ch.seatId);
-        if (seat) {
+        if (seat && (ch.isSubagent || seat.seatKind === 'work')) {
           const lastStep = ch.path[ch.path.length - 1];
           if (!lastStep || lastStep.col !== seat.seatCol || lastStep.row !== seat.seatRow) {
             const newPath = findPath(

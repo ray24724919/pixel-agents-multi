@@ -57,7 +57,7 @@ export interface Seat {
   /** Work/rest classification derived from nearby computers or room zone. */
   seatKind: 'work' | 'rest';
   /** Why this seat was classified as work/rest. */
-  zoneSource?: 'computer-adjacent' | 'zone-paint' | 'default-split';
+  zoneSource?: 'workstation' | 'computer-adjacent' | 'zone-paint' | 'default-split';
   assigned: boolean;
 }
 
