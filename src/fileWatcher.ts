@@ -1186,6 +1186,18 @@ export function startExternalSessionScanning(
       webview,
       persistAgents,
     );
+    scanClaudeCoworkSessions(
+      [],
+      knownJsonlFiles,
+      nextAgentIdRef,
+      agents,
+      fileWatchers,
+      pollingTimers,
+      waitingTimers,
+      permissionTimers,
+      webview,
+      persistAgents,
+    );
     void watchAllSessionsRef;
   }, EXTERNAL_SCAN_INTERVAL_MS);
 }
@@ -1227,14 +1239,8 @@ export function scanClaudeCoworkSessions(
   permissionTimers: Map<number, ReturnType<typeof setTimeout>>,
   webview: vscode.Webview | undefined,
   persistAgents: () => void,
+  root = getClaudeCoworkSessionsRoot(),
 ): void {
-  const root = path.join(
-    os.homedir(),
-    'Library',
-    'Application Support',
-    'Claude',
-    'local-agent-mode-sessions',
-  );
   for (const metadataFile of findCoworkSessionMetadataFiles(root)) {
     const metadata = readCoworkSessionMetadata(metadataFile);
     if (!metadata) continue;
@@ -1272,6 +1278,23 @@ export function scanClaudeCoworkSessions(
       },
     );
   }
+}
+
+export function getClaudeCoworkSessionsRoot(
+  env: Record<string, string | undefined> = process.env,
+  platform: NodeJS.Platform = process.platform,
+  homeDir = os.homedir(),
+): string {
+  const sessionsDir = 'local-agent-mode-sessions';
+  if (platform === 'darwin') {
+    return path.join(homeDir, 'Library', 'Application Support', 'Claude', sessionsDir);
+  }
+  if (platform === 'win32') {
+    const appData = env.APPDATA ?? path.join(homeDir, 'AppData', 'Roaming');
+    return path.join(appData, 'Claude', sessionsDir);
+  }
+  const configHome = env.XDG_CONFIG_HOME ?? path.join(homeDir, '.config');
+  return path.join(configHome, 'Claude', sessionsDir);
 }
 
 export function syncClaudeAgentMetadata(

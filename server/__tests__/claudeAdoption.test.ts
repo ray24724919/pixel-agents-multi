@@ -22,8 +22,12 @@ vi.mock('vscode', () => ({
   },
 }));
 
-const { adoptExternalSessionFromHook, isClaudeChatSession } =
-  await import('../../src/fileWatcher.js');
+const {
+  adoptExternalSessionFromHook,
+  getClaudeCoworkSessionsRoot,
+  isClaudeChatSession,
+  scanClaudeCoworkSessions,
+} = await import('../../src/fileWatcher.js');
 const { processTranscriptLine } = await import('../../src/transcriptParser.js');
 
 const fixturesDir = path.join(
@@ -262,6 +266,86 @@ describe('Claude adoption dedup and titles', () => {
 
     expect(agents.get(1)?.sessionId).toBe('code-session');
     expect(isClaudeChatSession(coworkFile)).toBe(false);
+  });
+
+  it('resolves Claude Cowork roots for each desktop platform', () => {
+    expect(
+      getClaudeCoworkSessionsRoot(
+        { APPDATA: 'C:\\Users\\User\\AppData\\Roaming' },
+        'win32',
+        'C:\\Users\\User',
+      ),
+    ).toBe(path.join('C:\\Users\\User\\AppData\\Roaming', 'Claude', 'local-agent-mode-sessions'));
+    expect(getClaudeCoworkSessionsRoot({}, 'darwin', '/Users/user')).toBe(
+      path.join(
+        '/Users/user',
+        'Library',
+        'Application Support',
+        'Claude',
+        'local-agent-mode-sessions',
+      ),
+    );
+    expect(
+      getClaudeCoworkSessionsRoot({ XDG_CONFIG_HOME: '/tmp/config' }, 'linux', '/home/user'),
+    ).toBe(path.join('/tmp/config', 'Claude', 'local-agent-mode-sessions'));
+  });
+
+  it('adopts non-archived Claude Cowork sessions during global scans', () => {
+    const root = path.join(tmpDir, 'Claude', 'local-agent-mode-sessions');
+    const metadataDir = path.join(root, 'space-1', 'process-1');
+    const sessionId = 'local_cowork_123';
+    const sessionDir = path.join(metadataDir, sessionId);
+    const projectDir = path.join(tmpDir, 'workspace-project');
+    const auditPath = path.join(sessionDir, 'audit.jsonl');
+    fs.mkdirSync(sessionDir, { recursive: true });
+    fs.mkdirSync(projectDir, { recursive: true });
+    fs.writeFileSync(auditPath, '');
+    fs.writeFileSync(
+      path.join(metadataDir, `${sessionId}.json`),
+      JSON.stringify({
+        sessionId,
+        title: 'Cowork Lead',
+        userSelectedFolders: [projectDir],
+        isArchived: false,
+        isAgentCompleted: false,
+      }),
+    );
+
+    const agents = new Map<number, AgentState>();
+    const knownJsonlFiles = new Set<string>();
+    const webview = { postMessage: vi.fn() };
+    const persistAgents = vi.fn();
+
+    scanClaudeCoworkSessions(
+      [],
+      knownJsonlFiles,
+      { current: 1 },
+      agents,
+      new Map(),
+      new Map(),
+      new Map(),
+      new Map(),
+      webview as unknown as import('vscode').Webview,
+      persistAgents,
+      root,
+    );
+
+    const agent = agents.get(1);
+    expect(agent?.sessionId).toBe(sessionId);
+    expect(agent?.jsonlFile).toBe(auditPath);
+    expect(agent?.projectDir).toBe(projectDir);
+    expect(agent?.agentName).toBe('Cowork Lead');
+    expect(knownJsonlFiles.has(auditPath)).toBe(true);
+    expect(persistAgents).toHaveBeenCalledOnce();
+    expect(webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'agentCreated',
+        agentName: 'Cowork Lead',
+        providerId: 'claude',
+        projectDir,
+        transcriptPath: auditPath,
+      }),
+    );
   });
 });
 
