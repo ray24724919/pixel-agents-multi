@@ -629,8 +629,11 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       this.removeClaudeAgentsOutsideWorkspace(workspaceRoots);
       this.removeInactiveClaudeExternalAgents();
     }
+    // Cowork/local-agent-mode sessions are desktop-app workers, not VS Code workspace
+    // transcripts. Show active Cowork agents globally so Refresh matches the room's
+    // Codex external-thread behavior and the Windows "Codex 3 + Claude 1" baseline.
     scanClaudeCoworkSessions(
-      workspaceRoots,
+      [],
       this.knownJsonlFiles,
       this.nextAgentId,
       this.agents,
