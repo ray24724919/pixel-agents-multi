@@ -28,7 +28,9 @@ const {
   isClaudeChatSession,
   scanClaudeCoworkSessions,
 } = await import('../../src/fileWatcher.js');
+const { PixelAgentsViewProvider } = await import('../../src/PixelAgentsViewProvider.js');
 const { processTranscriptLine } = await import('../../src/transcriptParser.js');
+const vscode = await import('vscode');
 
 const fixturesDir = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -77,6 +79,7 @@ describe('Claude adoption dedup and titles', () => {
   afterEach(() => {
     vi.clearAllTimers();
     vi.useRealTimers();
+    vi.unstubAllEnvs();
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -476,6 +479,73 @@ describe('Claude adoption dedup and titles', () => {
         type: 'agentMetadata',
         id: 1,
         agentName: 'Cowork Lead',
+        projectDir,
+        transcriptPath: auditPath,
+      }),
+    );
+  });
+
+  it('workspace refresh discovers Claude Cowork sessions outside the current VS Code root', () => {
+    vi.stubEnv('APPDATA', tmpDir);
+    const workspaceRoot = path.join(tmpDir, 'pixel-agents-multi');
+    const projectDir = path.join(tmpDir, 'animfy_gs1');
+    const metadataDir = path.join(
+      tmpDir,
+      'Claude',
+      'local-agent-mode-sessions',
+      'space-1',
+      'process-1',
+    );
+    const sessionId = 'local_cowork_global';
+    const sessionDir = path.join(metadataDir, sessionId);
+    const auditPath = path.join(sessionDir, 'audit.jsonl');
+    fs.mkdirSync(workspaceRoot, { recursive: true });
+    fs.mkdirSync(projectDir, { recursive: true });
+    fs.mkdirSync(sessionDir, { recursive: true });
+    fs.writeFileSync(auditPath, JSON.stringify({ cwd: path.join(sessionDir, 'outputs') }) + '\n');
+    fs.writeFileSync(
+      path.join(metadataDir, `${sessionId}.json`),
+      JSON.stringify({
+        sessionId,
+        title: 'Global Cowork Lead',
+        userSelectedFolders: [projectDir],
+        isArchived: false,
+        isAgentCompleted: false,
+      }),
+    );
+
+    const webview = { postMessage: vi.fn() };
+    const provider = Object.create(PixelAgentsViewProvider.prototype) as InstanceType<
+      typeof PixelAgentsViewProvider
+    >;
+    Object.assign(provider, {
+      agents: new Map<number, AgentState>(),
+      knownJsonlFiles: new Set<string>(),
+      nextAgentId: { current: 1 },
+      fileWatchers: new Map(),
+      pollingTimers: new Map(),
+      waitingTimers: new Map(),
+      permissionTimers: new Map(),
+      webviewView: { webview },
+      persistAgents: vi.fn(),
+    });
+    Object.assign(vscode.workspace, {
+      workspaceFolders: [{ uri: { fsPath: workspaceRoot } }],
+    });
+
+    (
+      provider as unknown as { scanClaudeWorkspaceThreads: (includeInactive?: boolean) => void }
+    ).scanClaudeWorkspaceThreads();
+
+    const agent = provider.agents.get(1);
+    expect(agent?.sessionId).toBe(sessionId);
+    expect(agent?.providerId).toBe('claude');
+    expect(agent?.projectDir).toBe(projectDir);
+    expect(agent?.agentName).toBe('Global Cowork Lead');
+    expect(webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'agentCreated',
+        providerId: 'claude',
         projectDir,
         transcriptPath: auditPath,
       }),
