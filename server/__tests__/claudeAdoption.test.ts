@@ -418,6 +418,69 @@ describe('Claude adoption dedup and titles', () => {
       }),
     );
   });
+
+  it('refreshes existing Claude Cowork agents back to the selected project root', () => {
+    const root = path.join(tmpDir, 'Claude', 'local-agent-mode-sessions');
+    const metadataDir = path.join(root, 'space-1', 'process-1');
+    const sessionId = 'local_cowork_123';
+    const sessionDir = path.join(metadataDir, sessionId);
+    const projectDir = path.join(tmpDir, 'workspace-project');
+    const outputDir = path.join(sessionDir, 'outputs');
+    const auditPath = path.join(sessionDir, 'audit.jsonl');
+    fs.mkdirSync(outputDir, { recursive: true });
+    fs.mkdirSync(projectDir, { recursive: true });
+    fs.writeFileSync(auditPath, JSON.stringify({ cwd: outputDir }) + '\n');
+    fs.writeFileSync(
+      path.join(metadataDir, `${sessionId}.json`),
+      JSON.stringify({
+        sessionId,
+        title: 'Cowork Lead',
+        userSelectedFolders: [projectDir],
+        isArchived: false,
+        isAgentCompleted: false,
+      }),
+    );
+
+    const agent = makeAgent(1, auditPath);
+    agent.isExternal = true;
+    agent.projectDir = outputDir;
+    agent.projectName = 'outputs';
+    agent.folderName = 'outputs';
+    agent.agentName = 'Old Cowork';
+    const agents = new Map<number, AgentState>([[1, agent]]);
+    const knownJsonlFiles = new Set<string>([auditPath]);
+    const webview = { postMessage: vi.fn() };
+    const persistAgents = vi.fn();
+
+    scanClaudeCoworkSessions(
+      [],
+      knownJsonlFiles,
+      { current: 2 },
+      agents,
+      new Map(),
+      new Map(),
+      new Map(),
+      new Map(),
+      webview as unknown as import('vscode').Webview,
+      persistAgents,
+      root,
+    );
+
+    expect(agent.projectDir).toBe(projectDir);
+    expect(agent.projectName).toBe('workspace-project');
+    expect(agent.folderName).toBe('workspace-project');
+    expect(agent.agentName).toBe('Cowork Lead');
+    expect(persistAgents).toHaveBeenCalledOnce();
+    expect(webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'agentMetadata',
+        id: 1,
+        agentName: 'Cowork Lead',
+        projectDir,
+        transcriptPath: auditPath,
+      }),
+    );
+  });
 });
 
 function copyFixture(name: string, tmpDir: string, targetName: string): string {

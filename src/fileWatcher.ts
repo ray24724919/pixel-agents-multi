@@ -56,11 +56,18 @@ export const seededMtimes = new Map<string, number>();
 /** /clear files waiting for second tick (gives per-agent check time to claim first). */
 const pendingClearFiles = new Map<string, number>();
 
-function hasAgentForJsonlFile(agents: Map<number, AgentState>, jsonlFile: string): boolean {
+function findAgentForJsonlFile(
+  agents: Map<number, AgentState>,
+  jsonlFile: string,
+): AgentState | undefined {
   const normalized = path.resolve(jsonlFile);
-  return [...agents.values()].some((agent) => {
-    return agent.jsonlFile && path.resolve(agent.jsonlFile) === normalized;
-  });
+  return [...agents.values()].find(
+    (agent) => agent.jsonlFile && path.resolve(agent.jsonlFile) === normalized,
+  );
+}
+
+function hasAgentForJsonlFile(agents: Map<number, AgentState>, jsonlFile: string): boolean {
+  return findAgentForJsonlFile(agents, jsonlFile) !== undefined;
 }
 
 function readClaudeJsonlHeaderRecords(jsonlFile: string): Array<Record<string, unknown>> {
@@ -1256,8 +1263,34 @@ export function scanClaudeCoworkSessions(
     ) {
       continue;
     }
+    const existingAgent = findAgentForJsonlFile(agents, metadata.auditPath);
+    if (existingAgent) {
+      const changed =
+        existingAgent.projectDir !== metadata.projectDir ||
+        existingAgent.projectName !== metadata.projectName ||
+        existingAgent.folderName !== metadata.projectName ||
+        existingAgent.agentName !== metadata.title;
+      if (changed) {
+        existingAgent.projectDir = metadata.projectDir;
+        existingAgent.projectName = metadata.projectName;
+        existingAgent.folderName = metadata.projectName;
+        existingAgent.agentName = metadata.title;
+        existingAgent.claudeTitleResolved = metadata.title !== 'Claude Cowork';
+        persistAgents();
+        webview?.postMessage({
+          type: 'agentMetadata',
+          id: existingAgent.id,
+          folderName: existingAgent.folderName,
+          agentName: existingAgent.agentName,
+          providerId: 'claude',
+          projectDir: existingAgent.projectDir,
+          transcriptPath: existingAgent.jsonlFile,
+        });
+      }
+      knownJsonlFiles.add(metadata.auditPath);
+      continue;
+    }
     if (knownJsonlFiles.has(metadata.auditPath)) continue;
-    if (hasAgentForJsonlFile(agents, metadata.auditPath)) continue;
 
     knownJsonlFiles.add(metadata.auditPath);
     console.log(
