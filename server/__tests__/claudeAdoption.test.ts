@@ -365,10 +365,12 @@ describe('Claude adoption dedup and titles', () => {
     const sessionId = 'local_cowork_123';
     const sessionDir = path.join(metadataDir, sessionId);
     const projectDir = path.join(tmpDir, 'workspace-project');
+    const outputDir = path.join(sessionDir, 'outputs');
     const auditPath = path.join(sessionDir, 'audit.jsonl');
     fs.mkdirSync(sessionDir, { recursive: true });
     fs.mkdirSync(projectDir, { recursive: true });
-    fs.writeFileSync(auditPath, '');
+    fs.mkdirSync(outputDir, { recursive: true });
+    fs.writeFileSync(auditPath, JSON.stringify({ cwd: outputDir }) + '\n');
     fs.writeFileSync(
       path.join(metadataDir, `${sessionId}.json`),
       JSON.stringify({

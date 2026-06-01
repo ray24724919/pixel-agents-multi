@@ -1039,7 +1039,12 @@ function adoptExternalSession(
   webview: vscode.Webview | undefined,
   persistAgents: () => void,
   folderName?: string,
-  metadataOverride?: { sessionId?: string; projectName?: string; agentName?: string },
+  metadataOverride?: {
+    sessionId?: string;
+    projectDir?: string;
+    projectName?: string;
+    agentName?: string;
+  },
 ): AgentState | null {
   // Invariant: one Claude agent per resolved jsonlFile path; this shared adopter is
   // the last line of defense across hook, workspace, cowork, and global scanners.
@@ -1055,7 +1060,7 @@ function adoptExternalSession(
 
   const id = nextAgentIdRef.current++;
   const metadata = readClaudeSessionMetadata(jsonlFile, projectDir, folderName);
-  const effectiveProjectDir = metadata.cwd ?? projectDir;
+  const effectiveProjectDir = metadataOverride?.projectDir ?? metadata.cwd ?? projectDir;
   const metadataTitle =
     metadata.threadName && metadata.threadName !== 'Claude' ? metadata.threadName : undefined;
   const extractedTitle =
@@ -1272,6 +1277,7 @@ export function scanClaudeCoworkSessions(
       metadata.projectName,
       {
         sessionId: metadata.sessionId,
+        projectDir: metadata.projectDir,
         projectName: metadata.projectName,
         agentName: metadata.title,
       },
