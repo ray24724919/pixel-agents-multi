@@ -133,3 +133,20 @@ export async function startCodexAgent(frame: Frame): Promise<void> {
     .click();
   await frame.locator('button', { hasText: 'Start Agent' }).click();
 }
+
+/**
+ * Open Agent Center, switch to Usage, and wait for the usage dashboard body.
+ */
+export async function openAgentCenterUsage(frame: Frame): Promise<void> {
+  await frame.locator('button', { hasText: /^Agents$/ }).click();
+  await expect(frame.getByText('Agent Center')).toBeVisible({ timeout: WEBVIEW_TIMEOUT_MS });
+
+  await frame.locator('button', { hasText: /^Usage/ }).click();
+  await expect
+    .poll(async () => frame.locator('body').innerText(), {
+      message: 'Expected Agent Center > Usage to render a visible non-blank state',
+      timeout: WEBVIEW_TIMEOUT_MS,
+      intervals: [500, 1000],
+    })
+    .toMatch(/Codex usage proxy|Claude usage proxy|No usage to show yet|Usage data unavailable/i);
+}
