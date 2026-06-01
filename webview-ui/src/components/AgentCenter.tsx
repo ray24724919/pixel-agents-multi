@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Component, type ErrorInfo, type ReactNode, useEffect, useMemo, useState } from 'react';
 
 import type {
   AgentLifecycleEvent,
@@ -330,11 +330,13 @@ export function AgentCenter({
         )}
 
         {activeTab === 'usage' && (
-          <UsageDashboard
-            agents={visibleSummaries}
-            visibleAgentIds={visibleAgentIds}
-            officeState={officeState}
-          />
+          <UsageErrorBoundary>
+            <UsageDashboard
+              agents={visibleSummaries}
+              visibleAgentIds={visibleAgentIds}
+              officeState={officeState}
+            />
+          </UsageErrorBoundary>
         )}
 
         {activeTab === 'timeline' && (
@@ -343,6 +345,40 @@ export function AgentCenter({
       </div>
     </Modal>
   );
+}
+
+class UsageErrorBoundary extends Component<
+  { children: ReactNode },
+  { hasError: boolean; message?: string }
+> {
+  state: { hasError: boolean; message?: string } = { hasError: false };
+
+  static getDerivedStateFromError(error: unknown) {
+    return {
+      hasError: true,
+      message: error instanceof Error ? error.message : 'Unknown usage render error',
+    };
+  }
+
+  componentDidCatch(error: unknown, errorInfo: ErrorInfo) {
+    console.error('[AgentCenter] Usage tab failed to render', error, errorInfo);
+  }
+
+  render() {
+    if (!this.state.hasError) return this.props.children;
+
+    return (
+      <section className="border border-border bg-bg p-8 text-center">
+        <div className="text-lg text-accent-bright">Usage data unavailable</div>
+        <div className="mt-2 text-sm text-text-muted">
+          Refresh agents and reopen this tab. The rest of Agent Center is still available.
+        </div>
+        {this.state.message && (
+          <div className="mt-4 break-words text-xs text-text-muted">{this.state.message}</div>
+        )}
+      </section>
+    );
+  }
 }
 
 function AgentCenterTabs({
@@ -400,9 +436,28 @@ function UsageDashboard({
     .filter((agent) => agent.tokens > 0 || agent.artifactOutputTokens > 0)
     .slice()
     .sort((a, b) => b.tokens + b.artifactOutputTokens - (a.tokens + a.artifactOutputTokens));
+  const hasAgents = agents.length > 0;
 
   return (
     <div className="grid gap-4">
+      <section className="border border-border bg-bg p-4">
+        <div className="text-sm uppercase tracking-wide text-accent-bright">Usage</div>
+        <div className="mt-1 text-xs text-text-muted">
+          {hasAgents
+            ? `${agents.length} visible agents tracked in this view`
+            : 'No visible agents are currently available for usage tracking'}
+        </div>
+      </section>
+
+      {!hasAgents && (
+        <section className="border border-border bg-btn-bg p-8 text-center">
+          <div className="text-lg text-accent-bright">No usage to show yet</div>
+          <div className="mt-2 text-sm text-text-muted">
+            Start or restore an agent, enable Show hidden if needed, then press Refresh.
+          </div>
+        </section>
+      )}
+
       <TokenCostSummary agents={visibleAgentIds} officeState={officeState} />
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
