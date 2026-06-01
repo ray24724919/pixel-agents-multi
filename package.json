@@ -16,7 +16,11 @@
   "categories": [
     "Other"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onCommand:pixel-agents-multi.showPanel",
+    "onCommand:pixel-agents-multi.exportDefaultLayout",
+    "onView:pixel-agents-multi.panelView"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
     "configuration": {
