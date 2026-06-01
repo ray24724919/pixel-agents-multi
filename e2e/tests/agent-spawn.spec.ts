@@ -6,6 +6,7 @@
  *   2. The expected Codex state DB and rollout JSONL files were created in the isolated HOME.
  *   3. A VS Code terminal named "Codex #1" appears in the workbench.
  *   4. A mock Codex child thread is adopted as a Pixel Agents teammate.
+ *   5. Agent Center > Usage renders a visible dashboard body.
  *
  * NOTE FOR NEW TESTS: As more specs are added, refactor session setup into a
  * Playwright fixture using test.extend<{ session: VSCodeSession }>() so that
@@ -17,7 +18,12 @@ import fs from 'fs';
 import path from 'path';
 
 import { launchVSCode, waitForWorkbench } from '../helpers/launch';
-import { getPixelAgentsFrame, openPixelAgentsPanel, startCodexAgent } from '../helpers/webview';
+import {
+  getPixelAgentsFrame,
+  openAgentCenterUsage,
+  openPixelAgentsPanel,
+  startCodexAgent,
+} from '../helpers/webview';
 
 test('starting a Codex agent spawns mock codex and adopts a child thread teammate', async ({}, testInfo) => {
   const session = await launchVSCode(testInfo.title);
@@ -133,6 +139,9 @@ test('starting a Codex agent spawns mock codex and adopts a child thread teammat
         intervals: [500, 1000],
       })
       .toContain('Curie');
+
+    // 8. Assert: Agent Center > Usage renders a visible state instead of a blank panel.
+    await openAgentCenterUsage(activeFrame);
   } finally {
     // Save a screenshot of the final state regardless of outcome
     const screenshotPath = path.join(
