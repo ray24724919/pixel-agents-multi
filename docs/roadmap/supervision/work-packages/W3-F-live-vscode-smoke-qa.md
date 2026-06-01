@@ -2,17 +2,18 @@
 
 ## Context
 
-Pixel Agents Multi has now landed the Windows stabilization and packaging wave through W3-E:
+Pixel Agents Multi has now landed the Windows stabilization and packaging wave through W3-F:
 
 - W3-B provider adoption hardening.
 - W3-C usage token polish and blank-panel guard.
 - W3-D Claude Cowork/local-agent-mode refresh visibility.
 - W3-E release identity and packaging cleanup.
+- W3-F live smoke QA package.
 
 The repository is expected to be on current `main` after:
 
 ```text
-Merge W3-E: release identity packaging
+Merge W3-F: live smoke QA package
 ```
 
 The installed extension should be:
@@ -92,7 +93,7 @@ code --list-extensions --show-versions | rg "raychen\.pixel-agents-multi|pablode
 
 Expected:
 
-- `git log -1` shows `Merge W3-E: release identity packaging` or later.
+- `git log -1` shows `Merge W3-F: live smoke QA package` or later.
 - Worktree is clean before branching.
 - Installed extension list includes `raychen.pixel-agents-multi@1.3.0`.
 - No upstream public Pixel Agents extension is installed. If one is installed, document it and stop
@@ -148,7 +149,7 @@ Steps:
 
 1. Open VS Code at `C:\Users\User\Documents\raychen\pixel-agents-multi`.
 2. Run **Developer: Reload Window**.
-3. Open the **Pixel Agents Multi** panel.
+3. Open the **Pixel Agents Multi** panel. If the panel is hidden, run **Pixel Agents Multi: Show Panel** from the Command Palette and then continue.
 4. Wait 5 seconds for initial scanners.
 5. Click **Refresh**.
 6. Wait another 5 seconds.
