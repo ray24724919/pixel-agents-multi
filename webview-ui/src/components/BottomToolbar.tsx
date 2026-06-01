@@ -24,6 +24,7 @@ const TASK_TEMPLATES = [
   '做一次 code review，優先找 bug、風險與缺少測試的地方',
   '幫我規劃下一步實作，列出可以分派給子 agent 的工作',
 ];
+const TASK_PLACEHOLDER = '描述這個 agent 要完成的工作，或點下方範例帶入。';
 
 export function BottomToolbar({
   isEditMode,
@@ -134,13 +135,13 @@ export function BottomToolbar({
         isOpen={isAgentModalOpen}
         onClose={closeAgentModal}
         title="New Agent"
-        className="w-[min(92vw,720px)]"
+        className="modern-surface w-[min(94vw,820px)]"
       >
-        <div className="px-10 pb-8 flex flex-col gap-5">
-          <label className="flex flex-col gap-2 text-sm text-text-muted">
+        <div className="flex flex-col gap-6 px-10 pb-8">
+          <label className="flex flex-col gap-2 text-[13px] font-semibold text-text-muted">
             Project
             <select
-              className="bg-bg border-2 border-border px-3 py-2 text-text outline-none"
+              className="h-34 rounded-[6px] border border-border bg-bg px-3 text-[13px] text-text outline-none focus:border-accent"
               value={projectPath}
               onChange={(e) => setProjectPath(e.target.value)}
             >
@@ -155,10 +156,10 @@ export function BottomToolbar({
           </label>
 
           {projectPath === '__custom__' && (
-            <label className="flex flex-col gap-2 text-sm text-text-muted">
+            <label className="flex flex-col gap-2 text-[13px] font-semibold text-text-muted">
               Project path
               <input
-                className="bg-bg border-2 border-border px-3 py-2 text-text outline-none"
+                className="h-34 rounded-[6px] border border-border bg-bg px-3 text-[13px] text-text outline-none focus:border-accent"
                 value={customProjectPath}
                 onChange={(e) => setCustomProjectPath(e.target.value)}
                 placeholder="/Users/raychen/Documents/my-project"
@@ -166,14 +167,14 @@ export function BottomToolbar({
             </label>
           )}
 
-          <fieldset className="flex flex-col gap-2 text-sm text-text-muted">
-            <legend>Provider</legend>
-            <div className="grid grid-cols-2 border-2 border-border bg-bg p-1">
+          <fieldset className="flex flex-col gap-2 text-[13px] font-semibold text-text-muted">
+            <legend className="mb-2">Provider</legend>
+            <div className="grid grid-cols-2 rounded-[6px] border border-border bg-bg p-1">
               {(['claude', 'codex'] as const).map((option) => (
                 <button
                   key={option}
                   type="button"
-                  className={`px-3 py-2 text-text ${
+                  className={`rounded-[4px] px-3 py-2 text-[13px] text-text transition-colors ${
                     provider === option ? 'bg-active-bg' : 'bg-bg hover:bg-btn-hover'
                   }`}
                   onClick={() => setProvider(option)}
@@ -184,23 +185,23 @@ export function BottomToolbar({
             </div>
           </fieldset>
 
-          <label className="flex flex-col gap-2 text-sm text-text-muted">
+          <label className="flex flex-col gap-2 text-[13px] font-semibold text-text-muted">
             Task
             <textarea
               ref={promptRef}
-              className="min-h-36 resize-y bg-bg border-2 border-border px-3 py-2 text-text outline-none leading-6"
+              className="min-h-[132px] resize-y rounded-[6px] border border-border bg-bg px-3 py-3 text-[14px] leading-[1.45] text-text outline-none placeholder:text-text-muted focus:border-accent"
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
-              placeholder="例如：分析這個專案的測試架構，並列出下一步可以改善的地方"
+              placeholder={TASK_PLACEHOLDER}
             />
           </label>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {TASK_TEMPLATES.map((template) => (
               <button
                 key={template}
                 type="button"
-                className="text-left border border-border bg-btn-bg hover:bg-btn-hover px-3 py-2 text-sm"
+                className="min-h-[62px] rounded-[6px] border border-border bg-btn-bg px-3 py-3 text-left text-[14px] leading-[1.45] text-text transition-colors hover:border-accent hover:bg-btn-hover"
                 onClick={() => setPrompt(template)}
               >
                 {template}
@@ -208,7 +209,7 @@ export function BottomToolbar({
             ))}
           </div>
 
-          <label className="flex items-center gap-3 text-sm text-text-muted">
+          <label className="flex items-center gap-3 text-[13px] text-text-muted">
             <input
               type="checkbox"
               checked={bypassPermissions}
@@ -217,7 +218,7 @@ export function BottomToolbar({
             Skip permission prompts for this agent
           </label>
 
-          <div className="flex justify-end gap-3 pt-2">
+          <div className="flex justify-end gap-3 pt-1">
             <Button variant="ghost" onClick={closeAgentModal}>
               Cancel
             </Button>

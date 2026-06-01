@@ -229,7 +229,7 @@ export function AgentCenter({
       isOpen={isOpen}
       onClose={onClose}
       title="Agent Center"
-      className="flex h-[min(86vh,760px)] w-[min(96vw,1120px)] flex-col overflow-hidden"
+      className="modern-surface flex h-[min(92vh,900px)] w-[min(98vw,1360px)] flex-col overflow-hidden"
     >
       <div className="mb-4 flex shrink-0 flex-wrap items-center justify-between gap-3 px-6 pr-7">
         <AgentCenterTabs
@@ -365,20 +365,23 @@ function AgentCenterTabs({
   ];
 
   return (
-    <div className="flex min-w-0 flex-wrap gap-1 border border-border bg-bg p-1">
+    <div className="flex min-w-0 flex-wrap items-end gap-1 border-b border-border bg-bg px-1">
       {tabs.map((tab) => (
-        <Button
+        <button
           key={tab.id}
-          variant={active === tab.id ? 'active' : 'default'}
-          size="sm"
-          className="min-w-[116px] px-4 text-left"
+          type="button"
+          className={`-mb-px min-w-[128px] rounded-t-[6px] border px-4 py-3 text-left text-sm transition-colors ${
+            active === tab.id
+              ? 'border-border border-b-bg bg-bg text-text'
+              : 'border-transparent bg-transparent text-text-muted hover:bg-btn-bg hover:text-text'
+          }`}
           onClick={() => onChange(tab.id)}
         >
           <span className="block truncate text-sm">{tab.label}</span>
           <span className="block truncate text-[10px] uppercase tracking-wide text-text-muted">
             {tab.meta}
           </span>
-        </Button>
+        </button>
       ))}
     </div>
   );

@@ -106,6 +106,12 @@
     @apply bg-bg border-2 border-border rounded-none shadow-pixel;
   }
 
+  .modern-surface,
+  .modern-surface * {
+    font-family: var(--vscode-font-family), 'Segoe UI', sans-serif !important;
+    letter-spacing: 0 !important;
+  }
+
   /* Horizontal carousel for editor items */
   .carousel {
     @apply flex gap-8 overflow-x-auto flex-nowrap pb-2;
