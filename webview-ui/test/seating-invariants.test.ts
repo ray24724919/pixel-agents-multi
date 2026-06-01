@@ -209,6 +209,21 @@ test('duplicate seat ownership is repaired deterministically', () => {
   assert.equal(owners.length, 1);
 });
 
+test('restore can randomize seating instead of reusing a persisted preference', () => {
+  const state = new OfficeState(makeLayout(loungeFurniture()));
+  const originalRandom = Math.random;
+  Math.random = () => 0.99;
+  try {
+    state.addAgent(1, 0, 0, 'sofa', true, undefined, false, true);
+  } finally {
+    Math.random = originalRandom;
+  }
+
+  const ch = state.characters.get(1)!;
+  assert.notEqual(ch.seatId, 'sofa');
+  assert.equal(ch.seatId, 'sofa:1');
+});
+
 test('sofa and coffee table seats remain rest even in the default work split', () => {
   const zones = Array.from({ length: 10 * 8 }, () => 'work' as const);
   const seats = layoutToSeats(makeLayout(loungeFurniture(), 10, 8, zones));

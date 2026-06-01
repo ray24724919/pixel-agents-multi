@@ -180,8 +180,7 @@ export function useExtensionMessages(
   const layoutReadyRef = useRef(false);
 
   useEffect(() => {
-    // Buffer agents from existingAgents until layout is loaded
-    let pendingAgents: Array<{
+    type PendingAgent = {
       id: number;
       palette?: number;
       hueShift?: number;
@@ -192,7 +191,48 @@ export function useExtensionMessages(
       projectDir?: string;
       transcriptPath?: string;
       initialActive?: boolean;
-    }> = [];
+    };
+
+    // Buffer agents from existingAgents until layout is loaded.
+    let pendingAgents: PendingAgent[] = [];
+
+    const addRestoredAgent = (os: OfficeState, p: PendingAgent) => {
+      // Ignore persisted seatId during restore. Refresh should reshuffle agents
+      // instead of reproducing stale stacked seating from a previous layout/run.
+      os.addAgent(
+        p.id,
+        p.palette,
+        p.hueShift,
+        undefined,
+        true,
+        p.folderName,
+        p.initialActive,
+        true,
+      );
+      const ch = os.characters.get(p.id);
+      if (ch) {
+        ch.folderName = p.folderName;
+        ch.agentName = p.agentName;
+        ch.providerId = p.providerId;
+      }
+    };
+
+    const queuePendingAgent = (p: PendingAgent) => {
+      const index = pendingAgents.findIndex((existing) => existing.id === p.id);
+      if (index >= 0) {
+        pendingAgents[index] = p;
+      } else {
+        pendingAgents.push(p);
+      }
+    };
+
+    const flushPendingAgents = (os: OfficeState) => {
+      const agentsToAdd = pendingAgents;
+      pendingAgents = [];
+      for (const p of agentsToAdd) {
+        addRestoredAgent(os, p);
+      }
+    };
 
     const handler = (e: MessageEvent) => {
       const msg = e.data;
@@ -222,16 +262,8 @@ export function useExtensionMessages(
           // Default layout — snapshot whatever OfficeState built
           onLayoutLoaded?.(os.getLayout());
         }
-        // Add buffered agents now that layout (and seats) are correct
-        for (const p of pendingAgents) {
-          os.addAgent(p.id, p.palette, p.hueShift, p.seatId, true, p.folderName, p.initialActive);
-          const ch = os.characters.get(p.id);
-          if (ch) {
-            ch.agentName = p.agentName;
-            ch.providerId = p.providerId;
-          }
-        }
-        pendingAgents = [];
+        // Add buffered agents now that layout (and seats) are correct.
+        flushPendingAgents(os);
         layoutReadyRef.current = true;
         setLayoutReady(true);
         if (msg.wasReset) {
@@ -391,6 +423,7 @@ export function useExtensionMessages(
           return next;
         });
         // Buffer agents — they'll be added in layoutLoaded after seats are built
+        let restoredImmediately = false;
         for (const id of incoming) {
           const m = meta[id];
           const ch = os.characters.get(id);
@@ -399,7 +432,7 @@ export function useExtensionMessages(
             ch.agentName = agentNames[id];
             ch.providerId = providerIds[id];
           }
-          pendingAgents.push({
+          const restoredAgent: PendingAgent = {
             id,
             palette: m?.palette,
             hueShift: m?.hueShift,
@@ -410,7 +443,16 @@ export function useExtensionMessages(
             projectDir: projectDirs[id],
             transcriptPath: transcriptPaths[id],
             initialActive: false,
-          });
+          };
+          if (layoutReadyRef.current) {
+            addRestoredAgent(os, restoredAgent);
+            restoredImmediately = true;
+          } else {
+            queuePendingAgent(restoredAgent);
+          }
+        }
+        if (restoredImmediately) {
+          saveAgentSeats(os);
         }
         setAgents((prev) => {
           const ids = new Set(prev);

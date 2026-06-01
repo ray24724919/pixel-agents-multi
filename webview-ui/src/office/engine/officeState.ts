@@ -233,6 +233,18 @@ export class OfficeState {
     return candidates[0]?.[0] ?? null;
   }
 
+  private findRandomUnassignedSeatByMode(mode: 'work' | 'rest'): string | null {
+    const candidates = [...this.seats.entries()].filter(([, seat]) => {
+      if (seat.assigned) return false;
+      if (mode === 'work') {
+        return seat.seatKind === 'work' && seat.zoneSource === 'workstation';
+      }
+      return seat.seatKind === 'rest';
+    });
+    if (candidates.length === 0) return null;
+    return candidates[Math.floor(Math.random() * candidates.length)]?.[0] ?? null;
+  }
+
   private snapCharacterToSeat(ch: Character, seat: Seat): void {
     ch.tileCol = seat.seatCol;
     ch.tileRow = seat.seatRow;
@@ -488,6 +500,7 @@ export class OfficeState {
     skipSpawnEffect?: boolean,
     folderName?: string,
     initialActive = true,
+    randomizeInitialSeat = false,
   ): void {
     if (this.characters.has(id)) return;
 
@@ -505,7 +518,7 @@ export class OfficeState {
     // Persisted seats are preferences. Only valid workstation seats can seed active agents.
     let seatId: string | null = null;
     const initialMode = initialActive ? 'work' : 'rest';
-    if (preferredSeatId && this.seats.has(preferredSeatId)) {
+    if (!randomizeInitialSeat && preferredSeatId && this.seats.has(preferredSeatId)) {
       const seat = this.seats.get(preferredSeatId)!;
       if (
         !seat.assigned &&
@@ -518,7 +531,9 @@ export class OfficeState {
       }
     }
     if (!seatId) {
-      seatId = this.findUnassignedSeatByMode(initialMode);
+      seatId = randomizeInitialSeat
+        ? this.findRandomUnassignedSeatByMode(initialMode)
+        : this.findUnassignedSeatByMode(initialMode);
     }
 
     let ch: Character;
