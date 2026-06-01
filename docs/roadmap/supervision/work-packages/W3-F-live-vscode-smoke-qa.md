@@ -13,7 +13,7 @@ Pixel Agents Multi has now landed the Windows stabilization and packaging wave t
 The repository is expected to be on current `main` after:
 
 ```text
-Merge W3-F: live QA preflight note
+Merge W3-F: preflight artifact snapshot
 ```
 
 The installed extension should be:
@@ -93,7 +93,7 @@ code --list-extensions --show-versions | rg "raychen\.pixel-agents-multi|pablode
 
 Expected:
 
-- `git log -1` shows `Merge W3-F: live QA preflight note` or later.
+- `git log -1` shows `Merge W3-F: preflight artifact snapshot` or later.
 - Worktree is clean before branching.
 - Installed extension list includes `raychen.pixel-agents-multi@1.3.0`.
 - No upstream public Pixel Agents extension is installed. If one is installed, document it and stop
@@ -123,6 +123,15 @@ Expected test count must be at least:
 Record the package file count/size from `npx vsce package`.
 
 ## Read-only provider artifact audit
+
+Before opening the UI, read the supervisor snapshot:
+
+```text
+docs/roadmap/supervision/reports/W3-F-preflight-artifact-snapshot.md
+```
+
+Use it only as the prior baseline. Re-check the live local artifacts below instead of assuming the
+snapshot is still current.
 
 Before opening the UI, derive the expected live matrix from local artifacts:
 
