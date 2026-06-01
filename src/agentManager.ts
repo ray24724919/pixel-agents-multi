@@ -7,6 +7,8 @@ import * as vscode from 'vscode';
 import { JSONL_POLL_INTERVAL_MS } from '../server/src/constants.js';
 import {
   buildCodexLaunchCommand,
+  codexPathKey,
+  type CodexThread,
   findCodexThreadById,
   findLatestCodexThread,
 } from '../server/src/providers/file/codex/codex.js';
@@ -449,6 +451,21 @@ function clearCodexTransientState(agent: AgentState): void {
   agent.lineBuffer = '';
 }
 
+function isCodexThreadTrackedByAnotherAgent(
+  thread: CodexThread,
+  agents: Map<number, AgentState>,
+  currentAgentId: number,
+): boolean {
+  const threadTranscript = codexPathKey(thread.rolloutPath);
+  for (const [id, agent] of agents) {
+    if (id === currentAgentId || agent.providerId !== 'codex') continue;
+    if (agent.sessionId && agent.sessionId === thread.id) return true;
+    const agentTranscript = codexPathKey(agent.jsonlFile);
+    if (agentTranscript && threadTranscript && agentTranscript === threadTranscript) return true;
+  }
+  return false;
+}
+
 export function startCodexCwdPoll(
   agentId: number,
   cwd: string,
@@ -479,7 +496,11 @@ export function startCodexCwdPoll(
 
     try {
       const thread = findLatestCodexThread(cwd, 0);
-      if (thread && thread.id !== agent.sessionId) {
+      if (
+        thread &&
+        thread.id !== agent.sessionId &&
+        !isCodexThreadTrackedByAnotherAgent(thread, agents, agentId)
+      ) {
         const previousSessionId = agent.sessionId;
         const previousJsonlFile = agent.jsonlFile;
         const isInitialBind = !agent.jsonlFile;

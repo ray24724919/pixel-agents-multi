@@ -275,7 +275,7 @@ export class OfficeState {
     }
     if (snap) {
       this.snapCharacterToSeat(ch, seat);
-      ch.state = mode === 'work' && !ch.isActive ? CharacterState.IDLE : CharacterState.TYPE;
+      ch.state = mode === 'work' && ch.isActive ? CharacterState.TYPE : CharacterState.IDLE;
       return;
     }
     this.sendToSeat(ch.id);
@@ -327,7 +327,7 @@ export class OfficeState {
         if (mode === 'rest') ch.restSeatId = ch.seatId;
         if (snap) {
           this.snapCharacterToSeat(ch, seat);
-          ch.state = mode === 'work' && !ch.isActive ? CharacterState.IDLE : CharacterState.TYPE;
+          ch.state = mode === 'work' && ch.isActive ? CharacterState.TYPE : CharacterState.IDLE;
         }
         continue;
       }
@@ -358,6 +358,50 @@ export class OfficeState {
         } else if (!this.isCharacterOnWalkableTile(ch)) {
           this.relocateCharacterToWalkable(ch);
         }
+      }
+    }
+
+    for (const ch of this.characters.values()) {
+      if (!ch.isSubagent) continue;
+      if (!this.isCharacterOnWalkableTile(ch)) {
+        this.relocateCharacterToWalkable(ch);
+      }
+    }
+
+    this.rebuildFurnitureInstances();
+  }
+
+  randomizeTopLevelSeats(): void {
+    const topLevelCharacters = [...this.characters.values()]
+      .filter((ch) => this.isTopLevelCharacter(ch))
+      .sort(() => Math.random() - 0.5);
+
+    for (const seat of this.seats.values()) {
+      seat.assigned = false;
+    }
+    for (const ch of topLevelCharacters) {
+      ch.seatId = null;
+      if (ch.isActive) {
+        ch.workSeatId = null;
+      } else {
+        ch.restSeatId = null;
+      }
+      ch.path = [];
+      ch.moveProgress = 0;
+      if (ch.state === CharacterState.TYPE) {
+        ch.state = CharacterState.IDLE;
+      }
+    }
+
+    for (const ch of topLevelCharacters) {
+      const mode = ch.isActive ? 'work' : 'rest';
+      const seatId = this.findRandomUnassignedSeatByMode(mode);
+      if (seatId) {
+        this.assignSeatToCharacter(ch, seatId, mode, true);
+      } else if (ch.isActive) {
+        this.keepActiveAgentNonTyping(ch);
+      } else if (!this.isCharacterOnWalkableTile(ch)) {
+        this.relocateCharacterToWalkable(ch);
       }
     }
 

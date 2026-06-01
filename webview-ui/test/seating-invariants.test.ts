@@ -224,6 +224,36 @@ test('restore can randomize seating instead of reusing a persisted preference', 
   assert.equal(ch.seatId, 'sofa:1');
 });
 
+test('refresh randomizes top-level seats without stacking active or idle agents', () => {
+  const state = new OfficeState(
+    makeLayout(
+      [
+        ...workstationFurniture('work-chair-a'),
+        ...workstationFurniture('work-chair-b', 4),
+        { uid: 'refresh-sofa', type: 'SOFA_FRONT', col: 10, row: 2 },
+        { uid: 'refresh-coffee-table', type: 'COFFEE_TABLE', col: 10, row: 3 },
+      ],
+      14,
+      8,
+    ),
+  );
+
+  addAgent(state, 1, true);
+  addAgent(state, 2, true);
+  addAgent(state, 3, false);
+  state.randomizeTopLevelSeats();
+
+  const activeSeatIds = [1, 2].map((id) => state.characters.get(id)?.seatId);
+  const idleSeat = state.characters.get(3)?.seatId;
+  assert.equal(new Set(activeSeatIds).size, 2);
+  for (const seatId of activeSeatIds) {
+    assert.equal(state.seats.get(seatId!)?.seatKind, 'work');
+    assert.equal(state.seats.get(seatId!)?.zoneSource, 'workstation');
+  }
+  assert.equal(state.seats.get(idleSeat!)?.seatKind, 'rest');
+  assert.equal(state.characters.get(3)?.state, CharacterState.IDLE);
+});
+
 test('sofa and coffee table seats remain rest even in the default work split', () => {
   const zones = Array.from({ length: 10 * 8 }, () => 'work' as const);
   const seats = layoutToSeats(makeLayout(loungeFurniture(), 10, 8, zones));

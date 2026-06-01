@@ -300,6 +300,55 @@ describe('Codex thread follow-on', () => {
     expect(agent?.outputTokens).toBe(21);
   });
 
+  it('does not rebind a spawned Codex agent to a same-cwd thread already tracked elsewhere', async () => {
+    const threadAPath = path.join(tmpDir, 'thread-a.jsonl');
+    const threadBPath = path.join(tmpDir, 'thread-b.jsonl');
+    writeCodexTokenFile(threadAPath, 10, 2);
+    writeCodexTokenFile(threadBPath, 5, 1);
+    const threadA = codexThread('thread-a', threadAPath, '/workspace/project');
+    const threadB = codexThread('thread-b', threadBPath, '/workspace/project');
+    findLatestCodexThreadMock.mockReturnValueOnce(threadA).mockReturnValueOnce(threadB);
+
+    const agents = new Map<number, AgentState>();
+    const webview = { postMessage: vi.fn() };
+    await launchNewTerminal(
+      { current: 1 },
+      { current: 1 },
+      agents,
+      { current: null },
+      new Set<string>(),
+      new Map(),
+      new Map(),
+      new Map(),
+      new Map(),
+      new Map(),
+      { current: null },
+      webview as unknown as import('vscode').Webview,
+      vi.fn(),
+      'codex',
+      '/workspace/project',
+      false,
+      undefined,
+    );
+
+    await vi.advanceTimersByTimeAsync(1000);
+    agents.set(
+      2,
+      makeAgent(2, {
+        sessionId: threadB.id,
+        isExternal: true,
+        projectDir: threadB.cwd,
+        jsonlFile: threadB.rolloutPath,
+      }),
+    );
+
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(agents.get(1)?.sessionId).toBe(threadA.id);
+    expect(agents.get(1)?.jsonlFile).toBe(threadA.rolloutPath);
+    expect(agents.get(2)?.sessionId).toBe(threadB.id);
+  });
+
   it('does not treat external Codex threads as live unless their cwd has a spawned agent', () => {
     const agents = new Map<number, AgentState>();
     const threadX = codexThread('thread-x', '/tmp/x.jsonl', '/workspace/project');
@@ -644,32 +693,41 @@ describe('Codex thread follow-on', () => {
     ).toBe(false);
   });
 
-  it('does not adopt an external Codex thread for a cwd that already has a spawned agent', () => {
+  it('adopts same-cwd external Codex threads once the spawned agent is bound', () => {
     const provider = createProviderHarness();
     const threadPath = path.join(tmpDir, 'external.jsonl');
     const spawnedPath = path.join(tmpDir, 'spawned.jsonl');
     writeCodexTokenFile(threadPath, 1, 0);
     writeCodexTokenFile(spawnedPath, 1, 0);
     const thread = codexThread('external-thread', threadPath, '/workspace/project');
+    const spawnedThread = codexThread('spawned-thread', spawnedPath, '/workspace/project');
     provider.agents.set(
       1,
       makeAgent(1, {
-        sessionId: 'spawned-thread',
+        sessionId: spawnedThread.id,
         isExternal: false,
         projectDir: '/workspace/project',
         jsonlFile: spawnedPath,
       }),
     );
-    findRecentCodexThreadsMock.mockReturnValue([thread]);
-    findCodexThreadByIdMock.mockReturnValue(thread);
+    provider.nextAgentId.current = 2;
+    findRecentCodexThreadsMock.mockReturnValue([thread, spawnedThread]);
+    findCodexThreadByIdMock.mockImplementation((id: string) => {
+      if (id === thread.id) return thread;
+      if (id === spawnedThread.id) return spawnedThread;
+      return null;
+    });
 
     scanCodex(provider);
 
-    expect(provider.agents.size).toBe(1);
+    expect(provider.agents.size).toBe(2);
     expect(provider.agents.get(1)?.isExternal).toBe(false);
+    expect(new Set([...provider.agents.values()].map((agent) => agent.sessionId))).toEqual(
+      new Set(['spawned-thread', 'external-thread']),
+    );
   });
 
-  it('blocks namespaced external Codex cwd values when a spawned agent owns the plain cwd', () => {
+  it('adopts namespaced same-cwd Codex threads when the spawned plain-cwd agent is bound', () => {
     const provider = createProviderHarness();
     const plainCwd = 'C:\\Users\\User\\Documents\\raychen\\pixel-agents-multi';
     const namespacedCwd = `\\\\?\\${plainCwd}`;
@@ -688,6 +746,7 @@ describe('Codex thread follow-on', () => {
         jsonlFile: spawnedPath,
       }),
     );
+    provider.nextAgentId.current = 2;
     findRecentCodexThreadsMock.mockReturnValue([thread, spawnedThread]);
     findCodexThreadByIdMock.mockImplementation((id: string) => {
       if (id === thread.id) return thread;
@@ -697,8 +756,50 @@ describe('Codex thread follow-on', () => {
 
     scanCodex(provider);
 
-    expect(provider.agents.size).toBe(1);
+    expect(provider.agents.size).toBe(2);
     expect(provider.agents.get(1)?.sessionId).toBe(spawnedThread.id);
+    expect(new Set([...provider.agents.values()].map((agent) => agent.sessionId))).toEqual(
+      new Set([spawnedThread.id, thread.id]),
+    );
+  });
+
+  it('reserves only the newest same-cwd Codex thread for an unbound spawned agent', () => {
+    const provider = createProviderHarness();
+    const olderPath = path.join(tmpDir, 'older-external.jsonl');
+    const latestPath = path.join(tmpDir, 'latest-spawned.jsonl');
+    writeCodexTokenFile(olderPath, 1, 0);
+    writeCodexTokenFile(latestPath, 1, 0);
+    const older = {
+      ...codexThread('older-external-thread', olderPath, '/workspace/project'),
+      updatedAtMs: 10,
+    };
+    const latest = {
+      ...codexThread('latest-spawned-thread', latestPath, '/workspace/project'),
+      updatedAtMs: 20,
+    };
+    provider.agents.set(
+      1,
+      makeAgent(1, {
+        sessionId: 'launch-session',
+        isExternal: false,
+        projectDir: '/workspace/project',
+        jsonlFile: '',
+      }),
+    );
+    provider.nextAgentId.current = 2;
+    findRecentCodexThreadsMock.mockReturnValue([latest, older]);
+    findCodexThreadByIdMock.mockImplementation((id: string) => {
+      if (id === older.id) return older;
+      if (id === latest.id) return latest;
+      return null;
+    });
+
+    scanCodex(provider);
+
+    expect(provider.agents.size).toBe(2);
+    expect(new Set([...provider.agents.values()].map((agent) => agent.sessionId))).toEqual(
+      new Set(['launch-session', 'older-external-thread']),
+    );
   });
 
   it('keeps multiple same-cwd external Codex agents bound to their own threads', async () => {

@@ -573,14 +573,15 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       effectiveDiscoverAll = true;
     }
 
-    const spawnedAgentCwds = new Set<string>();
+    const unboundSpawnedAgentCwdCounts = new Map<string, number>();
     const existingThreadIds = new Set<string>();
     const existingTranscriptPaths = new Set<string>();
     for (const agent of this.agents.values()) {
       if (agent.providerId !== 'codex') continue;
-      if (!agent.isExternal && agent.projectDir) {
+      if (!agent.isExternal && agent.projectDir && !agent.jsonlFile) {
         const cwd = codexPathKey(agent.projectDir);
-        if (cwd) spawnedAgentCwds.add(cwd);
+        if (cwd)
+          unboundSpawnedAgentCwdCounts.set(cwd, (unboundSpawnedAgentCwdCounts.get(cwd) ?? 0) + 1);
       }
       if (agent.sessionId) {
         existingThreadIds.add(agent.sessionId);
@@ -591,6 +592,21 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       }
     }
 
+    const reservedThreadIds = new Set<string>();
+    for (const thread of threads) {
+      if (!thread.cwd) continue;
+      const cwd = codexPathKey(thread.cwd);
+      const transcriptPath = codexPathKey(thread.rolloutPath);
+      if (!cwd) continue;
+      const reserveCount = unboundSpawnedAgentCwdCounts.get(cwd) ?? 0;
+      if (reserveCount <= 0) continue;
+      if (existingThreadIds.has(thread.id)) continue;
+      if (transcriptPath && existingTranscriptPaths.has(transcriptPath)) continue;
+      if (!effectiveDiscoverAll && !allowedCwds.has(cwd)) continue;
+      reservedThreadIds.add(thread.id);
+      unboundSpawnedAgentCwdCounts.set(cwd, reserveCount - 1);
+    }
+
     const candidates: CodexThread[] = [];
     for (const thread of threads) {
       if (!thread.cwd) continue;
@@ -599,7 +615,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       if (!cwd) continue;
       if (existingThreadIds.has(thread.id)) continue;
       if (transcriptPath && existingTranscriptPaths.has(transcriptPath)) continue;
-      if (spawnedAgentCwds.has(cwd)) continue;
+      if (reservedThreadIds.has(thread.id)) continue;
       if (!effectiveDiscoverAll && !allowedCwds.has(cwd)) continue;
       candidates.push(thread);
     }
@@ -1158,6 +1174,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         this.scanCodexWorkspaceThreads();
         sendExistingAgents(this.agents, this.context, this.webview);
         sendCurrentAgentStatuses(this.agents, this.webview);
+        this.webview?.postMessage({ type: 'agentSeatsRefresh' });
       } else if (message.type === 'saveLayout') {
         this.layoutWatcher?.markOwnWrite();
         writeLayoutToFile(message.layout as Record<string, unknown>);
