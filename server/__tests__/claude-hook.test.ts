@@ -11,7 +11,7 @@ const HOOK_SCRIPT = path.join(__dirname, '../../dist/hooks/claude-hook.js');
 let tmpBase: string;
 
 function writeServerJson(port: number, token: string): void {
-  const dir = path.join(tmpBase, '.pixel-agents');
+  const dir = path.join(tmpBase, '.pixel-agents-multi');
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(
     path.join(dir, 'server.json'),

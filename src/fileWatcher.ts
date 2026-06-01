@@ -39,6 +39,7 @@ import {
 import type { TeamProvider } from '../server/src/teamProvider.js';
 import { removeAgent } from './agentManager.js';
 import { TERMINAL_NAME_PREFIX } from './constants.js';
+import { getExtensionConfigValue } from './settings.js';
 import { cancelPermissionTimer, cancelWaitingTimer, clearAgentActivity } from './timerManager.js';
 import { extractClaudeUserTitleFromRecord, processTranscriptLine } from './transcriptParser.js';
 import type { AgentState } from './types.js';
@@ -1044,12 +1045,10 @@ function adoptExternalSession(
   // the last line of defense across hook, workspace, cowork, and global scanners.
   if (hasAgentForJsonlFile(agents, jsonlFile)) return null;
 
-  const showChatSessions = vscode.workspace
-    .getConfiguration('pixel-agents')
-    .get<boolean>('claude.showChatSessions', false);
+  const showChatSessions = getExtensionConfigValue<boolean>('claude.showChatSessions', false);
   if (!showChatSessions && isClaudeChatSession(jsonlFile, metadataOverride)) {
     console.log(
-      `[Pixel Agents] Claude: skipping chat-mode session ${path.basename(jsonlFile)} (enable pixel-agents.claude.showChatSessions to show it)`,
+      `[Pixel Agents] Claude: skipping chat-mode session ${path.basename(jsonlFile)} (enable pixel-agents-multi.claude.showChatSessions to show it)`,
     );
     return null;
   }

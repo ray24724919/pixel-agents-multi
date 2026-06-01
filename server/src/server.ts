@@ -11,7 +11,7 @@ import {
   SERVER_JSON_NAME,
 } from './constants.js';
 
-/** Discovery file written to ~/.pixel-agents/server.json so hook scripts can find the server. */
+/** Discovery file written to ~/.pixel-agents-multi/server.json so hook scripts can find the server. */
 export interface ServerConfig {
   /** Port the HTTP server is listening on */
   port: number;
@@ -33,7 +33,7 @@ type HookEventCallback = (providerId: string, event: Record<string, unknown>) =>
  * - `POST /api/hooks/:providerId` -- hook event (auth required, 64KB body limit)
  * - `GET /api/health` -- health check (no auth)
  *
- * Discovery: writes `~/.pixel-agents/server.json` with port, PID, and auth token.
+ * Discovery: writes `~/.pixel-agents-multi/server.json` with port, PID, and auth token.
  * Multi-window: second VS Code window detects running server via server.json and
  * reuses it (does not start a second server).
  *
@@ -212,7 +212,7 @@ export class PixelAgentsServer {
     });
   }
 
-  /** Returns the absolute path to ~/.pixel-agents/server.json. */
+  /** Returns the absolute path to ~/.pixel-agents-multi/server.json. */
   private getServerJsonPath(): string {
     return path.join(os.homedir(), SERVER_JSON_DIR, SERVER_JSON_NAME);
   }

@@ -23,6 +23,7 @@ import {
 } from './fileWatcher.js';
 import { migrateAndLoadLayout } from './layoutPersistence.js';
 import { postAgentLifecycleSnapshot, postAgentPaused } from './lifecycleStatus.js';
+import { getExtensionConfigValue } from './settings.js';
 import { cancelPermissionTimer, cancelWaitingTimer } from './timerManager.js';
 import { readTokenUsageFromTranscript } from './tokenUsage.js';
 import type { AgentState, PersistedAgent } from './types.js';
@@ -42,9 +43,7 @@ function unquoteCommandPath(value: string): string {
 }
 
 function getClaudeCommandPath(): string {
-  const configured = vscode.workspace
-    .getConfiguration('pixel-agents')
-    .get<string>('claude.commandPath', 'claude');
+  const configured = getExtensionConfigValue<string>('claude.commandPath', 'claude');
   return unquoteCommandPath(configured || 'claude') || 'claude';
 }
 

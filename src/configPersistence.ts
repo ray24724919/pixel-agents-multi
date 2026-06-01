@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-import { CONFIG_FILE_NAME, LAYOUT_FILE_DIR } from './constants.js';
+import { CONFIG_FILE_NAME, LAYOUT_FILE_DIR, LEGACY_LAYOUT_FILE_DIR } from './constants.js';
 
 interface PixelAgentsConfig {
   externalAssetDirectories: string[];
@@ -16,10 +16,29 @@ function getConfigFilePath(): string {
   return path.join(os.homedir(), LAYOUT_FILE_DIR, CONFIG_FILE_NAME);
 }
 
+function getLegacyConfigFilePath(): string {
+  return path.join(os.homedir(), LEGACY_LAYOUT_FILE_DIR, CONFIG_FILE_NAME);
+}
+
 export function readConfig(): PixelAgentsConfig {
-  const filePath = getConfigFilePath();
+  return readConfigFile(getConfigFilePath(), true);
+}
+
+function readConfigFile(filePath: string, allowLegacyMigration: boolean): PixelAgentsConfig {
   try {
-    if (!fs.existsSync(filePath)) return { ...DEFAULT_CONFIG };
+    if (!fs.existsSync(filePath)) {
+      if (allowLegacyMigration) {
+        const legacy = readConfigFile(getLegacyConfigFilePath(), false);
+        if (legacy.externalAssetDirectories.length > 0) {
+          console.log(
+            '[Pixel Agents] Migrating config from ~/.pixel-agents to ~/.pixel-agents-multi',
+          );
+          writeConfig(legacy);
+        }
+        return legacy;
+      }
+      return { ...DEFAULT_CONFIG };
+    }
     const raw = fs.readFileSync(filePath, 'utf-8');
     const parsed = JSON.parse(raw) as Partial<PixelAgentsConfig>;
     return {
@@ -28,7 +47,7 @@ export function readConfig(): PixelAgentsConfig {
         : [],
     };
   } catch (err) {
-    console.error('[Pixel Agents] Failed to read config file:', err);
+    console.error(`[Pixel Agents] Failed to read config file ${filePath}:`, err);
     return { ...DEFAULT_CONFIG };
   }
 }

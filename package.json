@@ -1,9 +1,9 @@
 {
-  "name": "pixel-agents",
-  "displayName": "Pixel Agents",
-  "description": "Pixel art office where your Claude Code agents come to life as animated characters",
+  "name": "pixel-agents-multi",
+  "displayName": "Pixel Agents Multi",
+  "description": "Pixel art control room for Claude Code and Codex agents",
   "version": "1.3.0",
-  "publisher": "pablodelucca",
+  "publisher": "raychen",
   "repository": {
     "type": "git",
     "url": "https://github.com/ray24724919/pixel-agents-multi"
@@ -20,50 +20,50 @@
   "main": "./dist/extension.js",
   "contributes": {
     "configuration": {
-      "title": "Pixel Agents",
+      "title": "Pixel Agents Multi",
       "properties": {
-        "pixel-agents.codex.discoverAllCwds": {
+        "pixel-agents-multi.codex.discoverAllCwds": {
           "type": "boolean",
           "default": false,
-          "description": "When enabled, Pixel Agents adopts recent external Codex threads across all cwd values, not just cwd values matching the current VS Code workspace or an existing user-spawned agent."
+          "description": "When enabled, Pixel Agents Multi adopts recent external Codex threads across all cwd values, not just cwd values matching the current VS Code workspace or an existing user-spawned agent."
         },
-        "pixel-agents.claude.showChatSessions": {
+        "pixel-agents-multi.claude.showChatSessions": {
           "type": "boolean",
           "default": false,
-          "description": "When enabled, Pixel Agents adopts Claude chat-mode sessions in addition to code and cowork. Off by default to reduce noise from non-working conversations."
+          "description": "When enabled, Pixel Agents Multi adopts Claude chat-mode sessions in addition to code and cowork. Off by default to reduce noise from non-working conversations."
         },
-        "pixel-agents.claude.commandPath": {
+        "pixel-agents-multi.claude.commandPath": {
           "type": "string",
           "default": "claude",
-          "description": "Command or executable path used to launch Claude Code. The Claude VS Code extension alone is not enough; Pixel Agents needs the Claude Code CLI."
+          "description": "Command or executable path used to launch Claude Code. The Claude VS Code extension alone is not enough; Pixel Agents Multi needs the Claude Code CLI."
         }
       }
     },
     "commands": [
       {
-        "command": "pixel-agents.showPanel",
-        "title": "Pixel Agents: Show Panel"
+        "command": "pixel-agents-multi.showPanel",
+        "title": "Pixel Agents Multi: Show Panel"
       },
       {
-        "command": "pixel-agents.exportDefaultLayout",
-        "title": "Pixel Agents: Export Layout as Default"
+        "command": "pixel-agents-multi.exportDefaultLayout",
+        "title": "Pixel Agents Multi: Export Layout as Default"
       }
     ],
     "viewsContainers": {
       "panel": [
         {
-          "id": "pixel-agents-panel",
-          "title": "Pixel Agents",
+          "id": "pixel-agents-multi-panel",
+          "title": "Pixel Agents Multi",
           "icon": "$(window)"
         }
       ]
     },
     "views": {
-      "pixel-agents-panel": [
+      "pixel-agents-multi-panel": [
         {
           "type": "webview",
-          "id": "pixel-agents.panelView",
-          "name": "Pixel Agents"
+          "id": "pixel-agents-multi.panelView",
+          "name": "Pixel Agents Multi"
         }
       ]
     }

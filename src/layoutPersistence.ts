@@ -8,6 +8,7 @@ import {
   LAYOUT_FILE_NAME,
   LAYOUT_FILE_POLL_INTERVAL_MS,
   LAYOUT_REVISION_KEY,
+  LEGACY_LAYOUT_FILE_DIR,
   WORKSPACE_KEY_LAYOUT,
 } from './constants.js';
 
@@ -20,14 +21,25 @@ function getLayoutFilePath(): string {
   return path.join(os.homedir(), LAYOUT_FILE_DIR, LAYOUT_FILE_NAME);
 }
 
+function getLegacyLayoutFilePath(): string {
+  return path.join(os.homedir(), LEGACY_LAYOUT_FILE_DIR, LAYOUT_FILE_NAME);
+}
+
 export function readLayoutFromFile(): Record<string, unknown> | null {
-  const filePath = getLayoutFilePath();
+  return readLayoutFile(getLayoutFilePath());
+}
+
+function readLegacyLayoutFromFile(): Record<string, unknown> | null {
+  return readLayoutFile(getLegacyLayoutFilePath());
+}
+
+function readLayoutFile(filePath: string): Record<string, unknown> | null {
   try {
     if (!fs.existsSync(filePath)) return null;
     const raw = fs.readFileSync(filePath, 'utf-8');
     return JSON.parse(raw) as Record<string, unknown>;
   } catch (err) {
-    console.error('[Pixel Agents] Failed to read layout file:', err);
+    console.error(`[Pixel Agents] Failed to read layout file ${filePath}:`, err);
     return null;
   }
 }
@@ -81,6 +93,22 @@ export function migrateAndLoadLayout(
     return { layout: fromFile, wasReset: false };
   }
 
+  const fromLegacyFile = readLegacyLayoutFromFile();
+  if (fromLegacyFile) {
+    const fileRevision = (fromLegacyFile[LAYOUT_REVISION_KEY] as number) ?? 0;
+    const defaultRevision = (defaultLayout?.[LAYOUT_REVISION_KEY] as number) ?? 0;
+    if (defaultRevision > fileRevision) {
+      console.log(
+        `[Pixel Agents] Legacy layout revision outdated (${fileRevision} < ${defaultRevision}), resetting to bundled default`,
+      );
+      writeLayoutToFile(defaultLayout!);
+      return { layout: defaultLayout!, wasReset: true };
+    }
+    console.log('[Pixel Agents] Migrating layout from ~/.pixel-agents to ~/.pixel-agents-multi');
+    writeLayoutToFile(fromLegacyFile);
+    return { layout: fromLegacyFile, wasReset: false };
+  }
+
   // 2. Migrate from workspace state
   const fromState = context.workspaceState.get<Record<string, unknown>>(WORKSPACE_KEY_LAYOUT);
   if (fromState) {
@@ -102,7 +130,7 @@ export function migrateAndLoadLayout(
 }
 
 /**
- * Watch ~/.pixel-agents/layout.json for external changes (other VS Code windows).
+ * Watch ~/.pixel-agents-multi/layout.json for external changes (other VS Code windows).
  * Uses hybrid fs.watch + polling (same pattern as JSONL watching).
  */
 export function watchLayoutFile(

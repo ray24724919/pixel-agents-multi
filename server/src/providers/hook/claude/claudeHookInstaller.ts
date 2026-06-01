@@ -5,8 +5,8 @@ import * as path from 'path';
 import { HOOK_SCRIPTS_DIR } from '../../../constants.js';
 import { CLAUDE_HOOK_EVENTS, CLAUDE_HOOK_SCRIPT_NAME } from './constants.js';
 
-/** Marker string used to identify Pixel Agents hook entries in Claude's settings. */
-const HOOK_SCRIPT_MARKER = CLAUDE_HOOK_SCRIPT_NAME;
+/** Marker string used to identify this private fork's hook entries in Claude's settings. */
+const HOOK_SCRIPT_MARKER = '.pixel-agents-multi';
 
 /** A single hook entry in Claude Code's ~/.claude/settings.json hooks config. */
 interface ClaudeHookEntry {
@@ -29,7 +29,7 @@ function getClaudeSettingsPath(): string {
   return path.join(os.homedir(), '.claude', 'settings.json');
 }
 
-/** Returns the destination path for the hook script (~/.pixel-agents/hooks/claude-hook.js). */
+/** Returns the destination path for the hook script (~/.pixel-agents-multi/hooks/claude-hook.js). */
 function getHookScriptPath(): string {
   return path.join(os.homedir(), HOOK_SCRIPTS_DIR, CLAUDE_HOOK_SCRIPT_NAME);
 }
@@ -64,14 +64,9 @@ function writeClaudeSettings(settings: ClaudeSettings): void {
   }
 }
 
-/** Legacy script name (before rename to claude-hook.js). */
-const LEGACY_HOOK_MARKER = 'pixel-agents-hook.js';
-
-/** Check if a hook entry belongs to Pixel Agents (current or legacy script name). */
+/** Check if a hook entry belongs to this Pixel Agents Multi build. */
 function isOurHookEntry(entry: ClaudeHookEntry): boolean {
-  return entry.hooks.some(
-    (h) => h.command.includes(HOOK_SCRIPT_MARKER) || h.command.includes(LEGACY_HOOK_MARKER),
-  );
+  return entry.hooks.some((h) => h.command.includes(HOOK_SCRIPT_MARKER));
 }
 
 /** Build the shell command that Claude Code will execute for each hook event. */
@@ -167,7 +162,7 @@ export function uninstallHooks(): void {
   }
 }
 
-/** Copy the shipped hook script from the extension to ~/.pixel-agents/hooks/ */
+/** Copy the shipped hook script from the extension to ~/.pixel-agents-multi/hooks/ */
 export function copyHookScript(extensionPath: string): void {
   const src = path.join(extensionPath, 'dist', 'hooks', CLAUDE_HOOK_SCRIPT_NAME);
   const dst = getHookScriptPath();

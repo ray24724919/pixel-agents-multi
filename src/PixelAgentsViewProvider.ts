@@ -48,6 +48,7 @@ import {
 } from './assetLoader.js';
 import { readConfig, writeConfig } from './configPersistence.js';
 import {
+  CONFIG_SECTION,
   GLOBAL_KEY_ALWAYS_SHOW_LABELS,
   GLOBAL_KEY_HOOKS_ENABLED,
   GLOBAL_KEY_HOOKS_INFO_SHOWN,
@@ -79,6 +80,7 @@ import {
 } from './fileWatcher.js';
 import type { LayoutWatcher } from './layoutPersistence.js';
 import { readLayoutFromFile, watchLayoutFile, writeLayoutToFile } from './layoutPersistence.js';
+import { getExtensionConfigValue, isExtensionConfigExplicitlyConfigured } from './settings.js';
 import { postAgentTimelineEvent } from './timelineEvents.js';
 import { readTokenUsageFromTranscript } from './tokenUsage.js';
 import {
@@ -541,17 +543,9 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
   }
 
   private getAdoptionCandidates(threads: CodexThread[]): CodexThread[] {
-    const codexConfig = vscode.workspace.getConfiguration('pixel-agents');
-    const discoverAll = codexConfig.get<boolean>('codex.discoverAllCwds', false);
-    const discoverAllInspection = codexConfig.inspect<boolean>('codex.discoverAllCwds');
+    const discoverAll = getExtensionConfigValue<boolean>('codex.discoverAllCwds', false);
     const discoverAllExplicitlyConfigured =
-      discoverAllInspection !== undefined &&
-      (discoverAllInspection.globalValue !== undefined ||
-        discoverAllInspection.workspaceValue !== undefined ||
-        discoverAllInspection.workspaceFolderValue !== undefined ||
-        discoverAllInspection.globalLanguageValue !== undefined ||
-        discoverAllInspection.workspaceLanguageValue !== undefined ||
-        discoverAllInspection.workspaceFolderLanguageValue !== undefined);
+      isExtensionConfigExplicitlyConfigured<boolean>('codex.discoverAllCwds');
     let effectiveDiscoverAll = discoverAll;
     const allowedCwds = new Set<string>();
     if (!discoverAll) {
@@ -568,7 +562,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     }
     if (!effectiveDiscoverAll && !discoverAllExplicitlyConfigured && allowedCwds.size === 0) {
       console.log(
-        '[Pixel Agents] Codex: no workspace folder and no user-spawned agents — adopting across all cwds (default fallback). Set pixel-agents.codex.discoverAllCwds=false to disable.',
+        `[Pixel Agents] Codex: no workspace folder and no user-spawned agents — adopting across all cwds (default fallback). Set ${CONFIG_SECTION}.codex.discoverAllCwds=false to disable.`,
       );
       effectiveDiscoverAll = true;
     }

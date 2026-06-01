@@ -29,7 +29,7 @@ const findRecentCodexThreadsMock = vi.hoisted(() => vi.fn());
 const readNewLinesMock = vi.hoisted(() => vi.fn());
 const startFileWatchingMock = vi.hoisted(() => vi.fn());
 const fallbackLogMessage =
-  '[Pixel Agents] Codex: no workspace folder and no user-spawned agents — adopting across all cwds (default fallback). Set pixel-agents.codex.discoverAllCwds=false to disable.';
+  '[Pixel Agents] Codex: no workspace folder and no user-spawned agents — adopting across all cwds (default fallback). Set pixel-agents-multi.codex.discoverAllCwds=false to disable.';
 
 vi.mock('vscode', () => ({
   commands: { executeCommand: vi.fn(), registerCommand: vi.fn() },

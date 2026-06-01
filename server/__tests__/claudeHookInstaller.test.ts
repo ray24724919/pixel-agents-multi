@@ -94,7 +94,7 @@ describe('claudeHookInstaller', () => {
   });
 
   // 9. copyHookScript copies file
-  it('copyHookScript copies to ~/.pixel-agents/hooks/', () => {
+  it('copyHookScript copies to ~/.pixel-agents-multi/hooks/', () => {
     // Create a mock extension path with dist/hooks/claude-hook.js
     const mockExtPath = path.join(tmpBase, 'mock-ext');
     const hookSrc = path.join(mockExtPath, 'dist', 'hooks');
@@ -103,7 +103,7 @@ describe('claudeHookInstaller', () => {
 
     copyHookScript(mockExtPath);
 
-    const dst = path.join(tmpBase, '.pixel-agents', 'hooks', 'claude-hook.js');
+    const dst = path.join(tmpBase, '.pixel-agents-multi', 'hooks', 'claude-hook.js');
     expect(fs.existsSync(dst)).toBe(true);
     expect(fs.readFileSync(dst, 'utf-8')).toBe('// mock hook script');
   });
@@ -119,9 +119,38 @@ describe('claudeHookInstaller', () => {
 
     copyHookScript(mockExtPath);
 
-    const dst = path.join(tmpBase, '.pixel-agents', 'hooks', 'claude-hook.js');
+    const dst = path.join(tmpBase, '.pixel-agents-multi', 'hooks', 'claude-hook.js');
     const stat = fs.statSync(dst);
     // Check owner execute bit
     expect(stat.mode & 0o100).toBeTruthy();
+  });
+
+  it('does not remove public Pixel Agents hook entries', () => {
+    const settingsPath = path.join(tmpBase, '.claude', 'settings.json');
+    fs.writeFileSync(
+      settingsPath,
+      JSON.stringify({
+        hooks: {
+          Notification: [
+            {
+              matcher: '',
+              hooks: [
+                {
+                  type: 'command',
+                  command: `node "${path.join(tmpBase, '.pixel-agents', 'hooks', 'claude-hook.js')}"`,
+                  timeout: 5,
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    );
+
+    installHooks();
+    uninstallHooks();
+
+    const hooks = readSettings().hooks as Record<string, unknown[]>;
+    expect(hooks['Notification']).toHaveLength(1);
   });
 });

@@ -22,11 +22,11 @@
 
 <br/>
 
-Pixel Agents turns AI coding sessions into something you can actually see and manage. Each Claude or Codex session becomes a character in a pixel art office. Agents walk around when idle, return to computer desks when working, show their current tool activity, and can be filtered, refreshed, inspected, or closed from the UI.
+Pixel Agents Multi turns AI coding sessions into something you can actually see and manage. Each Claude or Codex session becomes a character in a pixel art office. Agents walk around when idle, return to computer desks when working, show their current tool activity, and can be filtered, refreshed, inspected, or closed from the UI.
 
 This fork extends the original Claude Code-focused project into a Claude + Codex visual agent dashboard for VS Code. The goal is to make multi-project, multi-thread AI work feel observable: you can see which provider an agent came from, which project/thread it belongs to, whether it is active or waiting, and how much tracked token usage it has accumulated.
 
-This repository is derived from [pablodelucca/pixel-agents](https://github.com/pablodelucca/pixel-agents) (the original Claude-Code-focused project) and is intended for local source installation while the Codex integration is being developed.
+This repository is derived from [pablodelucca/pixel-agents](https://github.com/pablodelucca/pixel-agents) (the original Claude-Code-focused project). This fork publishes as `raychen.pixel-agents-multi`, with separate VS Code commands, settings, views, hook discovery, and user data so it can be installed without being mistaken for the public extension.
 
 ![Pixel Agents screenshot](webview-ui/public/Screenshot.jpg)
 
@@ -67,8 +67,8 @@ This fork is currently meant to be installed from source or packaged locally.
 ### Install from source
 
 ```bash
-git clone git@github.com:ray24724919/pixel-agents.git
-cd pixel-agents
+git clone git@github.com:ray24724919/pixel-agents-multi.git
+cd pixel-agents-multi
 npm install
 cd webview-ui && npm install && cd ..
 npm run build
@@ -83,14 +83,14 @@ If you want to use the built extension in normal VS Code windows:
 ```bash
 npm run build
 npx vsce package
-code --install-extension pixel-agents-1.3.0.vsix --force
+code --install-extension pixel-agents-multi-1.3.0.vsix --force
 ```
 
 Reload VS Code after installing. If the extension does not appear in a folder, open the Command Palette and run **Developer: Reload Window**.
 
 ### Usage
 
-1. Open the **Pixel Agents** panel (it appears in the bottom panel area alongside your terminal)
+1. Open the **Pixel Agents Multi** panel (it appears in the bottom panel area alongside your terminal)
 2. Click **+ Agent** to start a new Codex agent in a selected project and optionally provide an initial task
 3. Use **Refresh** to rescan Claude/Codex sessions and remove stale visual state
 4. Use the **All / Codex / Claude** filter to focus the canvas on one provider
@@ -132,7 +132,7 @@ Characters are based on the amazing work of [JIK-A-4, Metro City](https://jik-a-
 
 ## How It Works
 
-Pixel Agents watches local transcript/session files to track what each agent is doing. Claude sessions are observed through JSONL transcript files and hooks. Codex sessions are observed through Codex local thread metadata and rollout/transcript events. When an agent uses a tool, starts a turn, finishes a turn, or waits for approval, the extension posts messages into the webview and updates the character state.
+Pixel Agents Multi watches local transcript/session files to track what each agent is doing. Claude sessions are observed through JSONL transcript files and hooks. Codex sessions are observed through Codex local thread metadata and rollout/transcript events. When an agent uses a tool, starts a turn, finishes a turn, or waits for approval, the extension posts messages into the webview and updates the character state.
 
 The webview runs a lightweight game loop with canvas rendering, BFS pathfinding, and a character state machine (idle → walk → type/read). Everything is pixel-perfect at integer zoom levels.
 
@@ -157,7 +157,7 @@ The current provider bridge is intentionally local-first: it does not call Claud
 If your agent appears stuck on idle or doesn't spawn:
 
 1. **Refresh** — Click **Refresh** in the toolbar or Agent Center to rescan current Claude/Codex sessions.
-2. **Debug View** — In the Pixel Agents panel, click the gear icon (Settings), then toggle **Debug View**. This shows connection diagnostics per agent: JSONL file status, lines parsed, last data timestamp, runtime state, seat state, and recent webview events. If you see "JSONL not found", the extension can't locate the session file.
+2. **Debug View** — In the Pixel Agents Multi panel, click the gear icon (Settings), then toggle **Debug View**. This shows connection diagnostics per agent: JSONL file status, lines parsed, last data timestamp, runtime state, seat state, and recent webview events. If you see "JSONL not found", the extension can't locate the session file.
 3. **Debug Console** — If you're running from source (Extension Development Host via F5), open VS Code's **View > Debug Console**. Search for `[Pixel Agents]` to see detailed logs: project directory resolution, JSONL polling status, path encoding mismatches, Codex scan results, and unrecognized transcript record types.
 
 ## Where This Is Going
