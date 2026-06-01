@@ -96,65 +96,7 @@ export class OfficeState {
       }
     }
 
-    // Reassign characters to new seats, preserving existing assignments when possible
-    for (const seat of this.seats.values()) {
-      seat.assigned = false;
-    }
-
-    // First pass: try to keep characters at their existing seats
-    for (const ch of this.characters.values()) {
-      if (ch.seatId && this.seats.has(ch.seatId)) {
-        const seat = this.seats.get(ch.seatId)!;
-        const expectedKind = ch.isActive ? 'work' : 'rest';
-        if (!seat.assigned && seat.seatKind === expectedKind) {
-          seat.assigned = true;
-          // Snap character to seat position
-          ch.tileCol = seat.seatCol;
-          ch.tileRow = seat.seatRow;
-          const cx = seat.seatCol * TILE_SIZE + TILE_SIZE / 2;
-          const cy = seat.seatRow * TILE_SIZE + TILE_SIZE / 2;
-          ch.x = cx;
-          ch.y = cy;
-          ch.dir = seat.facingDir;
-          if (seat.seatKind === 'work') ch.workSeatId = ch.seatId;
-          if (seat.seatKind === 'rest') ch.restSeatId = ch.seatId;
-          continue;
-        }
-      }
-      ch.seatId = null; // will be reassigned below
-    }
-
-    // Second pass: assign remaining characters to free seats
-    for (const ch of this.characters.values()) {
-      if (ch.seatId) continue;
-      if (!ch.isActive) continue;
-      const seatId = this.findFreeSeatByKind('work');
-      if (seatId) {
-        this.seats.get(seatId)!.assigned = true;
-        ch.seatId = seatId;
-        const seat = this.seats.get(seatId)!;
-        ch.tileCol = seat.seatCol;
-        ch.tileRow = seat.seatRow;
-        ch.x = seat.seatCol * TILE_SIZE + TILE_SIZE / 2;
-        ch.y = seat.seatRow * TILE_SIZE + TILE_SIZE / 2;
-        ch.dir = seat.facingDir;
-        if (seat.seatKind === 'work') ch.workSeatId = seatId;
-        if (seat.seatKind === 'rest') ch.restSeatId = seatId;
-      }
-    }
-
-    // Relocate any characters that ended up outside bounds or on non-walkable tiles
-    for (const ch of this.characters.values()) {
-      if (ch.seatId) continue; // seated characters are fine
-      if (
-        ch.tileCol < 0 ||
-        ch.tileCol >= layout.cols ||
-        ch.tileRow < 0 ||
-        ch.tileRow >= layout.rows
-      ) {
-        this.relocateCharacterToWalkable(ch);
-      }
-    }
+    this.repairSeatingAssignments('layout');
   }
 
   /** Move a character to a random walkable tile */
@@ -184,23 +126,235 @@ export class OfficeState {
   /** Temporarily unblock a character's own seat, run fn, then re-block */
   private withOwnSeatUnblocked<T>(ch: Character, fn: () => T): T {
     const key = this.ownSeatKey(ch);
-    if (key) this.blockedTiles.delete(key);
-    const result = fn();
-    if (key) this.blockedTiles.add(key);
-    return result;
+    return this.withTilesUnblocked(key ? [key] : [], fn);
   }
 
-  private findFreeSeat(): string | null {
-    return this.findFreeSeatByKind('work') ?? this.findFreeSeatByKind('rest');
-  }
-
-  private findFreeSeatByKind(kind: 'work' | 'rest'): string | null {
-    const candidates: string[] = [];
-    for (const [uid, seat] of this.seats) {
-      if (seat.assigned) continue;
-      if (seat.seatKind === kind) candidates.push(uid);
+  private withTilesUnblocked<T>(keys: string[], fn: () => T): T {
+    const removed: string[] = [];
+    for (const key of keys) {
+      if (this.blockedTiles.delete(key)) removed.push(key);
     }
-    return candidates.length > 0 ? candidates[Math.floor(Math.random() * candidates.length)] : null;
+    try {
+      return fn();
+    } finally {
+      for (const key of removed) {
+        this.blockedTiles.add(key);
+      }
+    }
+  }
+
+  private seatKey(seat: Seat): string {
+    return `${seat.seatCol},${seat.seatRow}`;
+  }
+
+  private isTopLevelCharacter(ch: Character): boolean {
+    return !ch.isSubagent;
+  }
+
+  private isInsideLayout(col: number, row: number): boolean {
+    return row >= 0 && row < this.layout.rows && col >= 0 && col < this.layout.cols;
+  }
+
+  private isCharacterOnWalkableTile(ch: Character): boolean {
+    if (!this.isInsideLayout(ch.tileCol, ch.tileRow)) return false;
+    const ownSeatKey = this.ownSeatKey(ch);
+    const blocked = ownSeatKey
+      ? new Set([...this.blockedTiles].filter((key) => key !== ownSeatKey))
+      : this.blockedTiles;
+    return isWalkable(ch.tileCol, ch.tileRow, this.tileMap, blocked);
+  }
+
+  private isSeatReachableForCharacter(ch: Character, seat: Seat): boolean {
+    if (ch.tileCol === seat.seatCol && ch.tileRow === seat.seatRow) return true;
+    const keys = [this.seatKey(seat)];
+    const ownKey = this.ownSeatKey(ch);
+    if (ownKey) keys.push(ownKey);
+    return this.withTilesUnblocked(keys, () => {
+      const path = findPath(
+        ch.tileCol,
+        ch.tileRow,
+        seat.seatCol,
+        seat.seatRow,
+        this.tileMap,
+        this.blockedTiles,
+      );
+      return path.length > 0;
+    });
+  }
+
+  isSeatValidForAgent(ch: Character, seat: Seat, mode: 'work' | 'rest'): boolean {
+    if (!this.isTopLevelCharacter(ch)) return true;
+    if (!this.seats.has(seat.uid)) return false;
+    if (!this.isInsideLayout(seat.seatCol, seat.seatRow)) return false;
+    if (mode === 'work') {
+      if (seat.seatKind !== 'work' || seat.zoneSource !== 'workstation') return false;
+    } else if (seat.seatKind !== 'rest') {
+      return false;
+    }
+    if (seat.assigned && ch.seatId !== seat.uid) return false;
+    return this.isSeatReachableForCharacter(ch, seat);
+  }
+
+  private chooseSeatForAgent(ch: Character, mode: 'work' | 'rest'): string | null {
+    const preferredId = mode === 'work' ? ch.workSeatId : ch.restSeatId;
+    if (preferredId) {
+      const preferred = this.seats.get(preferredId);
+      if (preferred && this.isSeatValidForAgent(ch, preferred, mode)) {
+        return preferredId;
+      }
+    }
+
+    const candidates = [...this.seats.entries()]
+      .filter(([, seat]) => this.isSeatValidForAgent(ch, seat, mode))
+      .sort((a, b) => {
+        const distanceA = manhattan(
+          { col: ch.tileCol, row: ch.tileRow },
+          { col: a[1].seatCol, row: a[1].seatRow },
+        );
+        const distanceB = manhattan(
+          { col: ch.tileCol, row: ch.tileRow },
+          { col: b[1].seatCol, row: b[1].seatRow },
+        );
+        return distanceA - distanceB || a[0].localeCompare(b[0]);
+      });
+    return candidates[0]?.[0] ?? null;
+  }
+
+  private findUnassignedSeatByMode(mode: 'work' | 'rest'): string | null {
+    const candidates = [...this.seats.entries()]
+      .filter(([, seat]) => {
+        if (seat.assigned) return false;
+        if (mode === 'work') {
+          return seat.seatKind === 'work' && seat.zoneSource === 'workstation';
+        }
+        return seat.seatKind === 'rest';
+      })
+      .sort((a, b) => a[0].localeCompare(b[0]));
+    return candidates[0]?.[0] ?? null;
+  }
+
+  private snapCharacterToSeat(ch: Character, seat: Seat): void {
+    ch.tileCol = seat.seatCol;
+    ch.tileRow = seat.seatRow;
+    ch.x = seat.seatCol * TILE_SIZE + TILE_SIZE / 2;
+    ch.y = seat.seatRow * TILE_SIZE + TILE_SIZE / 2;
+    ch.dir = seat.facingDir;
+    ch.path = [];
+    ch.moveProgress = 0;
+  }
+
+  private assignSeatToCharacter(
+    ch: Character,
+    seatId: string,
+    mode: 'work' | 'rest',
+    snap = false,
+  ): void {
+    const seat = this.seats.get(seatId);
+    if (!seat) return;
+    this.releaseCurrentSeat(ch);
+    seat.assigned = true;
+    ch.seatId = seatId;
+    if (mode === 'work') {
+      ch.workSeatId = seatId;
+    } else {
+      ch.restSeatId = seatId;
+    }
+    if (snap) {
+      this.snapCharacterToSeat(ch, seat);
+      ch.state = mode === 'work' && !ch.isActive ? CharacterState.IDLE : CharacterState.TYPE;
+      return;
+    }
+    this.sendToSeat(ch.id);
+  }
+
+  private clearInvalidSeatPreference(ch: Character, mode: 'work' | 'rest'): void {
+    const seatId = mode === 'work' ? ch.workSeatId : ch.restSeatId;
+    if (!seatId) return;
+    const seat = this.seats.get(seatId);
+    if (!seat || !this.isSeatValidForAgent(ch, seat, mode)) {
+      if (mode === 'work') {
+        ch.workSeatId = null;
+      } else {
+        ch.restSeatId = null;
+      }
+    }
+  }
+
+  private keepActiveAgentNonTyping(ch: Character): void {
+    this.releaseCurrentSeat(ch);
+    ch.path = [];
+    ch.moveProgress = 0;
+    if (ch.state === CharacterState.TYPE) {
+      ch.state = CharacterState.IDLE;
+      ch.frame = 0;
+      ch.frameTimer = 0;
+    }
+    if (!this.isCharacterOnWalkableTile(ch)) {
+      this.relocateCharacterToWalkable(ch);
+    }
+  }
+
+  repairSeatingAssignments(reason: 'layout' | 'active' | 'idle' | 'manual' | 'tick'): void {
+    const snap = reason === 'layout';
+    for (const seat of this.seats.values()) {
+      seat.assigned = false;
+    }
+
+    const topLevelCharacters = [...this.characters.values()]
+      .filter((ch) => this.isTopLevelCharacter(ch))
+      .sort((a, b) => a.id - b.id);
+
+    for (const ch of topLevelCharacters) {
+      const mode = ch.isActive ? 'work' : 'rest';
+      const seat = ch.seatId ? this.seats.get(ch.seatId) : undefined;
+      if (seat && !seat.assigned && this.isSeatValidForAgent(ch, seat, mode)) {
+        seat.assigned = true;
+        if (mode === 'work') ch.workSeatId = ch.seatId;
+        if (mode === 'rest') ch.restSeatId = ch.seatId;
+        if (snap) {
+          this.snapCharacterToSeat(ch, seat);
+          ch.state = mode === 'work' && !ch.isActive ? CharacterState.IDLE : CharacterState.TYPE;
+        }
+        continue;
+      }
+      ch.seatId = null;
+      ch.path = [];
+      ch.moveProgress = 0;
+      if (ch.state === CharacterState.TYPE) {
+        ch.state = CharacterState.IDLE;
+      }
+    }
+
+    for (const ch of topLevelCharacters) {
+      this.clearInvalidSeatPreference(ch, 'work');
+      this.clearInvalidSeatPreference(ch, 'rest');
+      if (ch.isActive) {
+        if (ch.seatId) continue;
+        const workSeatId = this.chooseSeatForAgent(ch, 'work');
+        if (workSeatId) {
+          this.assignSeatToCharacter(ch, workSeatId, 'work', snap);
+        } else {
+          this.keepActiveAgentNonTyping(ch);
+        }
+      } else {
+        if (ch.seatId) continue;
+        const restSeatId = this.chooseSeatForAgent(ch, 'rest');
+        if (restSeatId) {
+          this.assignSeatToCharacter(ch, restSeatId, 'rest', snap);
+        } else if (!this.isCharacterOnWalkableTile(ch)) {
+          this.relocateCharacterToWalkable(ch);
+        }
+      }
+    }
+
+    for (const ch of this.characters.values()) {
+      if (!ch.isSubagent) continue;
+      if (!this.isCharacterOnWalkableTile(ch)) {
+        this.relocateCharacterToWalkable(ch);
+      }
+    }
+
+    this.rebuildFurnitureInstances();
   }
 
   private getIdleWalkableTiles(): Array<{ col: number; row: number }> {
@@ -348,19 +502,23 @@ export class OfficeState {
       hueShift = pick.hueShift;
     }
 
-    // Active agents begin at a work seat. Inactive/restored agents start roaming
-    // in rest zones and only sit when their idle cycle decides to rest.
+    // Persisted seats are preferences. Only valid workstation seats can seed active agents.
     let seatId: string | null = null;
-    if (initialActive) {
-      if (preferredSeatId && this.seats.has(preferredSeatId)) {
-        const seat = this.seats.get(preferredSeatId)!;
-        if (!seat.assigned && seat.seatKind === 'work') {
-          seatId = preferredSeatId;
-        }
+    const initialMode = initialActive ? 'work' : 'rest';
+    if (preferredSeatId && this.seats.has(preferredSeatId)) {
+      const seat = this.seats.get(preferredSeatId)!;
+      if (
+        !seat.assigned &&
+        ((initialMode === 'work' &&
+          seat.seatKind === 'work' &&
+          seat.zoneSource === 'workstation') ||
+          (initialMode === 'rest' && seat.seatKind === 'rest'))
+      ) {
+        seatId = preferredSeatId;
       }
-      if (!seatId) {
-        seatId = this.findFreeSeatByKind('work') ?? this.findFreeSeat();
-      }
+    }
+    if (!seatId) {
+      seatId = this.findUnassignedSeatByMode(initialMode);
     }
 
     let ch: Character;
@@ -369,10 +527,14 @@ export class OfficeState {
       seat.assigned = true;
       ch = createCharacter(id, palette, seatId, seat, hueShift);
       ch.isActive = initialActive;
-      ch.workSeatId = seat.seatKind === 'work' ? seatId : this.findFreeSeatByKind('work');
-      ch.restSeatId = seat.seatKind === 'rest' ? seatId : this.findFreeSeatByKind('rest');
+      ch.workSeatId = seat.seatKind === 'work' ? seatId : null;
+      ch.restSeatId = seat.seatKind === 'rest' ? seatId : null;
+      if (!initialActive) {
+        ch.state = CharacterState.IDLE;
+        ch.wanderLimit = this.randomShortIdleWanderLimit();
+      }
     } else {
-      // No seats — spawn inactive agents in the rest zone when possible.
+      // No seats: spawn inactive agents in the rest zone when possible.
       const spawnTiles = initialActive ? this.walkableTiles : this.idleWalkableTiles;
       const spawn =
         spawnTiles.length > 0
@@ -384,9 +546,9 @@ export class OfficeState {
       ch.tileCol = spawn.col;
       ch.tileRow = spawn.row;
       ch.isActive = initialActive;
-      ch.state = initialActive ? CharacterState.TYPE : CharacterState.IDLE;
-      ch.workSeatId = this.findFreeSeatByKind('work');
-      ch.restSeatId = this.findFreeSeatByKind('rest');
+      ch.state = CharacterState.IDLE;
+      ch.workSeatId = null;
+      ch.restSeatId = null;
       if (!initialActive) {
         ch.wanderLimit = this.randomShortIdleWanderLimit();
       }
@@ -401,6 +563,7 @@ export class OfficeState {
       ch.matrixEffectSeeds = matrixEffectSeeds();
     }
     this.characters.set(id, ch);
+    this.repairSeatingAssignments(initialActive ? 'active' : 'idle');
   }
 
   removeAgent(id: number): void {
@@ -432,85 +595,12 @@ export class OfficeState {
   /** Reassign an agent from their current seat to a new seat */
   reassignSeat(agentId: number, seatId: string): void {
     const ch = this.characters.get(agentId);
-    if (!ch) return;
-    // Assign new seat
+    if (!ch || ch.isSubagent) return;
     const seat = this.seats.get(seatId);
-    if (!seat || seat.assigned) return;
-    if (ch.isActive && seat.seatKind !== 'work') return;
-    if (!ch.isActive && seat.seatKind !== 'rest') return;
-    // Unassign old seat
-    if (ch.seatId) {
-      const old = this.seats.get(ch.seatId);
-      if (old) old.assigned = false;
-    }
-    seat.assigned = true;
-    ch.seatId = seatId;
-    if (seat.seatKind === 'work') {
-      ch.workSeatId = seatId;
-    } else {
-      ch.restSeatId = seatId;
-    }
-    // Pathfind to new seat (unblock own seat tile for this query)
-    const path = this.withOwnSeatUnblocked(ch, () =>
-      findPath(ch.tileCol, ch.tileRow, seat.seatCol, seat.seatRow, this.tileMap, this.blockedTiles),
-    );
-    if (path.length > 0) {
-      ch.path = path;
-      ch.moveProgress = 0;
-      ch.state = CharacterState.WALK;
-      ch.frame = 0;
-      ch.frameTimer = 0;
-    } else if (ch.tileCol === seat.seatCol && ch.tileRow === seat.seatRow) {
-      // Already at seat — sit down
-      ch.state = CharacterState.TYPE;
-      ch.dir = seat.facingDir;
-      ch.frame = 0;
-      ch.frameTimer = 0;
-      if (!ch.isActive) {
-        if (ch.seatTimer < 0) {
-          ch.seatTimer = 0;
-        } else {
-          ch.seatTimer = this.randomRestSeatDuration();
-        }
-      }
-    } else {
-      ch.state = CharacterState.IDLE;
-      ch.frame = 0;
-      ch.frameTimer = 0;
-    }
-  }
-
-  private switchAgentSeat(agentId: number, kind: 'work' | 'rest'): boolean {
-    const ch = this.characters.get(agentId);
-    if (!ch) return false;
-    const targetId = kind === 'work' ? ch.workSeatId : ch.restSeatId;
-    let nextSeatId: string | null = null;
-    if (targetId) {
-      const target = this.seats.get(targetId);
-      if (target && (!target.assigned || ch.seatId === targetId) && target.seatKind === kind) {
-        nextSeatId = targetId;
-      }
-    }
-    if (!nextSeatId) {
-      nextSeatId = this.findFreeSeatByKind(kind);
-    }
-    if (!nextSeatId) return false;
-    if (nextSeatId === ch.seatId) return true;
-
-    if (ch.seatId) {
-      const current = this.seats.get(ch.seatId);
-      if (current) current.assigned = false;
-    }
-    const nextSeat = this.seats.get(nextSeatId);
-    if (!nextSeat || nextSeat.assigned) return false;
-    nextSeat.assigned = true;
-    ch.seatId = nextSeatId;
-    if (kind === 'work') {
-      ch.workSeatId = nextSeatId;
-    } else {
-      ch.restSeatId = nextSeatId;
-    }
-    return true;
+    const mode = ch.isActive ? 'work' : 'rest';
+    if (!seat || !this.isSeatValidForAgent(ch, seat, mode)) return;
+    this.assignSeatToCharacter(ch, seatId, mode);
+    this.repairSeatingAssignments('manual');
   }
 
   private releaseCurrentSeat(ch: Character): void {
@@ -526,12 +616,12 @@ export class OfficeState {
     if (!ch || !ch.seatId) return;
     const seat = this.seats.get(ch.seatId);
     if (!seat) return;
-    if (ch.isActive && seat.seatKind !== 'work') return;
-    if (!ch.isActive && seat.seatKind !== 'rest') {
+    const mode = ch.isActive ? 'work' : 'rest';
+    if (!ch.isSubagent && !this.isSeatValidForAgent(ch, seat, mode)) {
       this.releaseCurrentSeat(ch);
       return;
     }
-    const path = this.withOwnSeatUnblocked(ch, () =>
+    const path = this.withTilesUnblocked([this.seatKey(seat)], () =>
       findPath(ch.tileCol, ch.tileRow, seat.seatCol, seat.seatRow, this.tileMap, this.blockedTiles),
     );
     if (path.length > 0) {
@@ -541,8 +631,11 @@ export class OfficeState {
       ch.frame = 0;
       ch.frameTimer = 0;
     } else if (ch.tileCol === seat.seatCol && ch.tileRow === seat.seatRow) {
-      // Already at seat — sit down
-      ch.state = CharacterState.TYPE;
+      // Already at seat: sit down
+      ch.state =
+        ch.isSubagent || !ch.isActive || seat.seatKind === 'work'
+          ? CharacterState.TYPE
+          : CharacterState.IDLE;
       ch.dir = seat.facingDir;
       ch.frame = 0;
       ch.frameTimer = 0;
@@ -700,37 +793,33 @@ export class OfficeState {
 
   setAgentActive(id: number, active: boolean): void {
     const ch = this.characters.get(id);
-    if (ch) {
-      ch.isActive = active;
-      if (!active) {
-        ch.path = [];
-        ch.moveProgress = 0;
+    if (!ch) return;
+    ch.isActive = active;
+    if (ch.isSubagent) {
+      if (active && ch.state === CharacterState.IDLE) {
+        ch.state = CharacterState.TYPE;
+      } else if (!active) {
         ch.currentTool = null;
         ch.state = CharacterState.IDLE;
-        ch.frame = 0;
-        ch.frameTimer = 0;
-        ch.seatTimer = 0;
-        ch.wanderTimer = 0;
-        const shouldSitNow = Math.random() < 0.45;
-        const hasRestSeat = shouldSitNow && this.switchAgentSeat(id, 'rest');
-        const restSeat = hasRestSeat && ch.seatId ? this.seats.get(ch.seatId) : undefined;
-        if (restSeat?.seatKind === 'rest') {
-          this.sendToSeat(id);
-        } else {
-          this.releaseCurrentSeat(ch);
-          ch.wanderLimit = this.randomShortIdleWanderLimit();
-        }
-      } else {
-        const hasWorkSeat = this.switchAgentSeat(id, 'work');
-        const seat = ch.seatId ? this.seats.get(ch.seatId) : undefined;
-        if (hasWorkSeat && seat?.seatKind === 'work') {
-          this.sendToSeat(id);
-        } else {
-          this.releaseCurrentSeat(ch);
-          ch.state = CharacterState.IDLE;
-        }
       }
       this.rebuildFurnitureInstances();
+      return;
+    }
+
+    if (!active) {
+      ch.path = [];
+      ch.moveProgress = 0;
+      ch.currentTool = null;
+      ch.state = CharacterState.IDLE;
+      ch.frame = 0;
+      ch.frameTimer = 0;
+      ch.seatTimer = 0;
+      ch.wanderTimer = 0;
+      ch.wanderLimit = this.randomShortIdleWanderLimit();
+      this.repairSeatingAssignments('idle');
+    } else {
+      ch.seatTimer = 0;
+      this.repairSeatingAssignments('active');
     }
   }
 

@@ -42,7 +42,7 @@ export function inferAgentZone(
       return {
         zone: seat.seatKind,
         source:
-          seat.zoneSource === 'computer-adjacent'
+          seat.zoneSource === 'workstation' || seat.zoneSource === 'computer-adjacent'
             ? 'seat-computer'
             : seat.zoneSource === 'zone-paint'
               ? 'seat-paint'
@@ -67,7 +67,7 @@ export function zoneSourceLabel(source: AgentZoneSource): string {
     case 'active-state':
       return 'active work state';
     case 'seat-computer':
-      return 'computer-adjacent seat';
+      return 'workstation seat';
     case 'seat-paint':
       return 'painted seat';
     case 'seat-zone':
