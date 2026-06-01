@@ -487,6 +487,9 @@ export function useExtensionMessages(
           if (os.cameraFollowId === id) os.cameraFollowId = null;
           if (os.hoveredAgentId === id) os.hoveredAgentId = null;
         }
+      } else if (msg.type === 'agentSeatsRefresh') {
+        os.randomizeTopLevelSeats();
+        saveAgentSeats(os);
       } else if (msg.type === 'agentToolStart') {
         const id = msg.id as number;
         const toolId = msg.toolId as string;
