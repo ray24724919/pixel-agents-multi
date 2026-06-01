@@ -17,7 +17,11 @@
 </div>
 
 <div align="center">
-<a href="https://github.com/ray24724919/pixel-agents-multi/releases">📦 Releases</a> • <a href="https://github.com/ray24724919/pixel-agents-multi/discussions">💬 Discussions</a> • <a href="https://github.com/ray24724919/pixel-agents-multi/issues">🐛 Issues</a> • <a href="CONTRIBUTING.md">🤝 Contributing</a> • <a href="CHANGELOG.md">📋 Changelog</a>
+<a href="https://github.com/ray24724919/pixel-agents-multi/releases">Releases</a> |
+<a href="https://github.com/ray24724919/pixel-agents-multi/discussions">Discussions</a> |
+<a href="https://github.com/ray24724919/pixel-agents-multi/issues">Issues</a> |
+<a href="CONTRIBUTING.md">Contributing</a> |
+<a href="CHANGELOG.md">Changelog</a>
 </div>
 
 <br/>
@@ -38,7 +42,7 @@ This repository is derived from [pablodelucca/pixel-agents](https://github.com/p
 - **Live activity tracking** — characters animate based on what the agent is actually doing (writing, reading, running commands)
 - **Work vs idle behavior** — active agents use computer desks; inactive agents leave desks and wander instead of occupying work seats
 - **Agent Center** — inspect agents, filter by All/Codex/Claude, refresh sessions, focus an agent, close/kill tracked agents, and view token totals
-- **Token meter** — Codex token totals are tracked when available; Claude token totals are displayed without applying OpenAI pricing
+- **Token meter** — Codex and Claude token totals are shown with exact/estimated labels; provider cost is a proxy estimate, not subscription billing
 - **Close confirmation** — closing an agent asks for confirmation before killing/archiving/removing the linked session
 - **Office layout editor** — design your office with floors, walls, and furniture using a built-in editor
 - **Speech bubbles** — visual indicators when an agent is waiting for input or needs permission
@@ -86,7 +90,39 @@ npx vsce package
 code --install-extension pixel-agents-multi-1.3.0.vsix --force
 ```
 
+Confirm that VS Code installed this fork, not the upstream public extension:
+
+```bash
+code --list-extensions --show-versions | rg "raychen\.pixel-agents-multi"
+```
+
+Expected output includes `raychen.pixel-agents-multi@1.3.0`.
+
 Reload VS Code after installing. If the extension does not appear in a folder, open the Command Palette and run **Developer: Reload Window**.
+
+### Windows release checklist
+
+Before sharing a VSIX from this repository, run the release path from a clean worktree:
+
+```powershell
+git status --short --branch
+npm run check-types
+npm run test:webview
+npm run test:server
+npm run build
+npx vsce ls
+npx vsce package
+code --install-extension pixel-agents-multi-1.3.0.vsix --force
+code --list-extensions --show-versions | rg "raychen\.pixel-agents-multi"
+```
+
+Then reload VS Code and smoke-test the **Pixel Agents Multi** panel:
+
+1. Open the panel and click **Refresh**.
+2. Set the provider filter to **All**.
+3. Confirm active Codex and Claude agents are visible with correct project labels.
+4. Open **Agents** and confirm the Usage tab renders token totals or an empty state, not a blank panel.
+5. Confirm the VSIX filename is `pixel-agents-multi-1.3.0.vsix` and the installed id is `raychen.pixel-agents-multi`.
 
 ### Usage
 
@@ -102,7 +138,7 @@ Reload VS Code after installing. If the extension does not appear in a folder, o
 
 - **Codex** sessions are discovered from Codex's local thread database/transcripts. Active turns are inferred from `task_started`, tool events, and `task_complete`/abort/error events. Codex token totals are read when available.
 - **Claude Code** sessions are discovered from Claude JSONL project transcripts and hook events.
-- **Claude Desktop/Cowork** local-agent-mode sessions are discovered from Claude's `local-agent-mode-sessions` metadata when they belong to the current workspace.
+- **Claude Desktop/Cowork** local-agent-mode sessions are discovered from Claude's `local-agent-mode-sessions` metadata when active, including sessions from other project folders. Use the **All / Codex / Claude** filter and Agent Center project labels to separate them.
 - **Working agents** are assigned to computer-adjacent work seats.
 - **Idle agents** leave work seats and roam, so they do not block active agents from using desks.
 
