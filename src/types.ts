@@ -1,5 +1,7 @@
 import type * as vscode from 'vscode';
 
+import type { TokenRateLimitSnapshot, TokenUsageDetails } from './tokenUsage.js';
+
 export interface AgentState {
   id: number;
   sessionId: string;
@@ -57,6 +59,10 @@ export interface AgentState {
   outputTokens: number;
   /** Estimated generated artifact/code tokens from tool-call payloads; not used for billing. */
   artifactOutputTokens?: number;
+  tokenUsageDetails?: TokenUsageDetails;
+  codexLastTokenUsage?: TokenUsageDetails;
+  codexRateLimits?: TokenRateLimitSnapshot[];
+  claudeUsageByMessageKey?: Map<string, TokenUsageDetails>;
   /** True once a regular Claude Code session title was derived from metadata/user text. */
   claudeTitleResolved?: boolean;
   /** Codex token total before the currently-bound thread; new thread totals are added to this. */

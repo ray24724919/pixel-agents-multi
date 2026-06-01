@@ -174,6 +174,75 @@ describe('Claude adoption dedup and titles', () => {
     );
   });
 
+  it('deduplicates streamed Claude usage updates for the same request and message', () => {
+    const jsonlFile = path.join(tmpDir, 'session-usage.jsonl');
+    const agent = makeAgent(1, jsonlFile);
+    const agents = new Map<number, AgentState>([[1, agent]]);
+    const webview = { postMessage: vi.fn() };
+
+    const firstUsage = {
+      type: 'assistant',
+      requestId: 'req-1',
+      message: {
+        id: 'msg-1',
+        content: [{ type: 'text', text: 'partial response' }],
+        usage: {
+          input_tokens: 10,
+          output_tokens: 3,
+          cache_read_input_tokens: 2,
+        },
+      },
+    };
+    const latestUsage = {
+      type: 'assistant',
+      requestId: 'req-1',
+      message: {
+        id: 'msg-1',
+        content: [{ type: 'text', text: 'complete response' }],
+        usage: {
+          input_tokens: 12,
+          output_tokens: 5,
+          cache_read_input_tokens: 4,
+          cache_creation_input_tokens: 1,
+        },
+      },
+    };
+
+    processTranscriptLine(
+      1,
+      JSON.stringify(firstUsage),
+      agents,
+      new Map(),
+      new Map(),
+      webview as unknown as import('vscode').Webview,
+    );
+    processTranscriptLine(
+      1,
+      JSON.stringify(latestUsage),
+      agents,
+      new Map(),
+      new Map(),
+      webview as unknown as import('vscode').Webview,
+    );
+
+    expect(agent.inputTokens).toBe(17);
+    expect(agent.outputTokens).toBe(5);
+    expect(agent.tokenUsageDetails).toMatchObject({
+      input: 12,
+      output: 5,
+      cacheRead: 4,
+      cacheWrite: 1,
+    });
+    expect(webview.postMessage).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        type: 'agentTokenUsage',
+        inputTokens: 17,
+        outputTokens: 5,
+        estimated: false,
+      }),
+    );
+  });
+
   it('detects chat-mode JSONL headers without flagging code or cowork fixtures', () => {
     expect(isClaudeChatSession(path.join(fixturesDir, 'chat.jsonl'))).toBe(true);
     expect(isClaudeChatSession(path.join(fixturesDir, 'code.jsonl'))).toBe(false);

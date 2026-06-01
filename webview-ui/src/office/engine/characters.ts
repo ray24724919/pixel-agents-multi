@@ -90,6 +90,8 @@ export function createCharacter(
     outputTokens: 0,
     artifactOutputTokens: 0,
     tokenUsageEstimated: false,
+    tokenUsageDetails: undefined,
+    codexRateLimit: undefined,
   };
 }
 

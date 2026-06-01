@@ -30,6 +30,8 @@ import type {
   PlacedFurniture,
   Seat,
   TileType as TileTypeVal,
+  TokenRateLimitSnapshot,
+  TokenUsageDetails,
 } from '../types.js';
 import { CharacterState, Direction, MATRIX_EFFECT_DURATION, TILE_SIZE } from '../types.js';
 import { inferTileZone } from '../zoneUtils.js';
@@ -1024,6 +1026,8 @@ export class OfficeState {
     outputTokens: number,
     estimated = false,
     artifactOutputTokens = 0,
+    details?: TokenUsageDetails,
+    codexRateLimit?: TokenRateLimitSnapshot,
   ): void {
     const ch = this.characters.get(id);
     if (!ch) return;
@@ -1031,6 +1035,8 @@ export class OfficeState {
     ch.outputTokens = outputTokens;
     ch.artifactOutputTokens = artifactOutputTokens;
     ch.tokenUsageEstimated = estimated;
+    ch.tokenUsageDetails = details;
+    ch.codexRateLimit = codexRateLimit;
   }
 
   update(dt: number): void {

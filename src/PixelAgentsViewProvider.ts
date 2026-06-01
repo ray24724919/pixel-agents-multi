@@ -502,6 +502,9 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       inputTokens: transcriptUsage?.inputTokens ?? thread.tokensUsed,
       outputTokens: transcriptUsage?.outputTokens ?? 0,
       artifactOutputTokens: transcriptUsage?.artifactOutputTokens ?? 0,
+      tokenUsageDetails: transcriptUsage?.details,
+      codexLastTokenUsage: transcriptUsage?.lastTokenUsage,
+      codexRateLimits: transcriptUsage?.rateLimits,
       agentName,
     };
 
@@ -526,6 +529,9 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         outputTokens: agent.outputTokens,
         artifactOutputTokens: agent.artifactOutputTokens ?? 0,
         estimated: transcriptUsage?.estimated ?? false,
+        details: agent.tokenUsageDetails,
+        lastTokenUsage: agent.codexLastTokenUsage,
+        rateLimits: agent.codexRateLimits,
       });
     }
 

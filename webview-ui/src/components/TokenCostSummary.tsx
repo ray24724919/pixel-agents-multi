@@ -1,4 +1,5 @@
 import type { OfficeState } from '../office/engine/officeState.js';
+import type { TokenRateLimitSnapshot, TokenUsageDetails } from '../office/types.js';
 
 type ProviderId = 'codex' | 'claude';
 
@@ -18,6 +19,8 @@ interface ProviderTokenSummary {
   outputCost: number;
   totalCost: number;
   estimated: boolean;
+  details: TokenUsageDetails;
+  codexRateLimit?: TokenRateLimitSnapshot;
   note: string;
 }
 
@@ -52,6 +55,9 @@ export function TokenCostSummary({ agents, officeState, compact = false }: Token
               {formatCompact(summary.inputTokens + summary.outputTokens)} tokens ·{' '}
               {formatCost(summary.totalCost)}
             </div>
+            <div className="mt-1 text-xs uppercase tracking-wide text-text-muted">
+              {summary.estimated ? 'Estimated usage' : 'Exact usage'}
+            </div>
             <div
               className={`mt-1 grid gap-x-4 gap-y-1 text-text ${compact ? 'text-xs' : 'text-sm'} sm:grid-cols-2`}
             >
@@ -64,11 +70,22 @@ export function TokenCostSummary({ agents, officeState, compact = false }: Token
               <span className="truncate sm:col-span-2">
                 Artifact {formatCompact(summary.artifactOutputTokens)} est.
               </span>
+              {summary.details.reasoningOutput > 0 && (
+                <span className="truncate">
+                  Reasoning {formatCompact(summary.details.reasoningOutput)}
+                </span>
+              )}
+              {(summary.details.cacheRead > 0 || summary.details.cacheWrite > 0) && (
+                <span className="truncate">
+                  Cache {formatCompact(summary.details.cacheRead + summary.details.cacheWrite)}
+                </span>
+              )}
             </div>
             {!compact && (
               <div className="mt-1 text-xs text-text-muted">
-                {summary.estimated ? 'Some tokens are estimated. ' : ''}
+                {summary.estimated ? 'Some tokens are estimated. ' : 'Provider exact usage. '}
                 {summary.note}
+                {summary.codexRateLimit ? ` ${formatCodexRateLimit(summary.codexRateLimit)}` : ''}
               </div>
             )}
           </div>
@@ -93,9 +110,18 @@ function getProviderTokenSummaries(
           outputTokens: sum.outputTokens + ch.outputTokens,
           artifactOutputTokens: sum.artifactOutputTokens + (ch.artifactOutputTokens ?? 0),
           estimated: sum.estimated || ch.tokenUsageEstimated === true,
+          details: addDetails(sum.details, ch.tokenUsageDetails),
+          codexRateLimit: ch.codexRateLimit ?? sum.codexRateLimit,
         };
       },
-      { inputTokens: 0, outputTokens: 0, artifactOutputTokens: 0, estimated: false },
+      {
+        inputTokens: 0,
+        outputTokens: 0,
+        artifactOutputTokens: 0,
+        estimated: false,
+        details: emptyDetails(),
+        codexRateLimit: undefined as TokenRateLimitSnapshot | undefined,
+      },
     );
     const inputCost = estimateCost(totals.inputTokens, rate.inputRatePerMillion);
     const outputCost = estimateCost(totals.outputTokens, rate.outputRatePerMillion);
@@ -109,9 +135,60 @@ function getProviderTokenSummaries(
       outputCost,
       totalCost: inputCost + outputCost,
       estimated: totals.estimated,
+      details: totals.details,
+      codexRateLimit: totals.codexRateLimit,
       note: rate.note,
     };
   });
+}
+
+function emptyDetails(): TokenUsageDetails {
+  return {
+    input: 0,
+    output: 0,
+    reasoningOutput: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    artifactEstimate: 0,
+    estimated: false,
+  };
+}
+
+function addDetails(a: TokenUsageDetails, b: TokenUsageDetails | undefined): TokenUsageDetails {
+  if (!b) return a;
+  return {
+    input: a.input + b.input,
+    output: a.output + b.output,
+    reasoningOutput: a.reasoningOutput + b.reasoningOutput,
+    cacheRead: a.cacheRead + b.cacheRead,
+    cacheWrite: a.cacheWrite + b.cacheWrite,
+    artifactEstimate: a.artifactEstimate + b.artifactEstimate,
+    estimated: a.estimated || b.estimated,
+  };
+}
+
+function formatCodexRateLimit(limit: TokenRateLimitSnapshot): string {
+  const percent =
+    limit.usedPercent !== undefined
+      ? `${Math.round(limit.usedPercent)}% quota used`
+      : limit.remainingPercent !== undefined
+        ? `${Math.round(limit.remainingPercent)}% quota remaining`
+        : 'quota snapshot available';
+  const reset = rateLimitResetText(limit);
+  return reset ? `Codex ${percent}; resets ${reset}.` : `Codex ${percent}.`;
+}
+
+function rateLimitResetText(limit: TokenRateLimitSnapshot): string | undefined {
+  let seconds: number | undefined;
+  if (limit.resetAfterSeconds !== undefined) {
+    seconds = limit.resetAfterSeconds;
+  } else if (limit.resetAtMs !== undefined) {
+    seconds = Math.max(0, Math.round((limit.resetAtMs - Date.now()) / 1000));
+  }
+  if (seconds === undefined) return undefined;
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
+  return `${Math.round(seconds / 3600)}h`;
 }
 
 function estimateCost(tokens: number, ratePerMillion: number): number {

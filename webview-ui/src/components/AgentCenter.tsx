@@ -7,7 +7,7 @@ import type {
   AgentTimelineEvent,
 } from '../hooks/useExtensionMessages.js';
 import type { OfficeState } from '../office/engine/officeState.js';
-import type { ToolActivity } from '../office/types.js';
+import type { TokenRateLimitSnapshot, TokenUsageDetails, ToolActivity } from '../office/types.js';
 import {
   type AgentZone,
   type AgentZoneSource,
@@ -60,6 +60,8 @@ interface AgentSummary {
   outputTokens: number;
   artifactOutputTokens: number;
   tokenUsageEstimated: boolean;
+  tokenUsageDetails?: TokenUsageDetails;
+  codexRateLimit?: TokenRateLimitSnapshot;
   zone: AgentZone;
   zoneSource: AgentZoneSource;
   projectDir?: string;
@@ -616,16 +618,27 @@ function AgentDetail({
       <div className="mt-4 grid gap-3 sm:grid-cols-4">
         <TokenBox label="Input" value={agent.inputTokens} />
         <TokenBox label="Output" value={agent.outputTokens} />
+        {agent.tokenUsageDetails && agent.tokenUsageDetails.reasoningOutput > 0 && (
+          <TokenBox label="Reasoning" value={agent.tokenUsageDetails.reasoningOutput} />
+        )}
+        {agent.tokenUsageDetails &&
+          (agent.tokenUsageDetails.cacheRead > 0 || agent.tokenUsageDetails.cacheWrite > 0) && (
+            <TokenBox
+              label="Cache"
+              value={agent.tokenUsageDetails.cacheRead + agent.tokenUsageDetails.cacheWrite}
+            />
+          )}
         <TokenBox label="Artifact" value={agent.artifactOutputTokens} />
         <TokenBox label="Total" value={agent.tokens} />
       </div>
       <div className="mt-2 text-xs text-text-muted">
         {agent.tokenUsageEstimated
-          ? 'Token count estimated from transcript text; API proxy cost is approximate.'
-          : 'Token count from provider usage fields when available; API proxy cost is approximate.'}
+          ? 'Estimated from transcript text; API proxy cost is approximate.'
+          : 'Exact provider usage when available; API proxy cost is approximate.'}
         {agent.artifactOutputTokens > 0
           ? ' Artifact is generated code/patch estimate and is not included in billing proxy total.'
           : ''}
+        {agent.codexRateLimit ? ` ${formatRateLimit(agent.codexRateLimit)}` : ''}
       </div>
 
       {teamMembers.length > 0 && (
@@ -800,6 +813,8 @@ function getAgentSummary(
     outputTokens,
     artifactOutputTokens,
     tokenUsageEstimated: ch?.tokenUsageEstimated ?? false,
+    tokenUsageDetails: ch?.tokenUsageDetails,
+    codexRateLimit: ch?.codexRateLimit,
     zone: zone.zone,
     zoneSource: zone.source,
     projectDir: metadata?.projectDir,
@@ -1014,6 +1029,30 @@ function compactNumber(value: number): string {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}m`;
   if (value >= 1_000) return `${Math.round(value / 1_000)}k`;
   return value.toLocaleString();
+}
+
+function formatRateLimit(limit: TokenRateLimitSnapshot): string {
+  const percent =
+    limit.usedPercent !== undefined
+      ? `${Math.round(limit.usedPercent)}% quota used`
+      : limit.remainingPercent !== undefined
+        ? `${Math.round(limit.remainingPercent)}% quota remaining`
+        : 'quota snapshot available';
+  const reset = rateLimitResetText(limit);
+  return reset ? `Codex ${percent}; resets ${reset}.` : `Codex ${percent}.`;
+}
+
+function rateLimitResetText(limit: TokenRateLimitSnapshot): string | undefined {
+  let seconds: number | undefined;
+  if (limit.resetAfterSeconds !== undefined) {
+    seconds = limit.resetAfterSeconds;
+  } else if (limit.resetAtMs !== undefined) {
+    seconds = Math.max(0, Math.round((limit.resetAtMs - Date.now()) / 1000));
+  }
+  if (seconds === undefined) return undefined;
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
+  return `${Math.round(seconds / 3600)}h`;
 }
 
 function formatRelative(timestamp: number): string {

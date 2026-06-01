@@ -214,4 +214,24 @@ export interface Character {
   artifactOutputTokens?: number;
   /** True when tokens are inferred from transcript text instead of provider usage fields */
   tokenUsageEstimated?: boolean;
+  tokenUsageDetails?: TokenUsageDetails;
+  codexRateLimit?: TokenRateLimitSnapshot;
+}
+
+export interface TokenUsageDetails {
+  input: number;
+  output: number;
+  reasoningOutput: number;
+  cacheRead: number;
+  cacheWrite: number;
+  artifactEstimate: number;
+  estimated: boolean;
+}
+
+export interface TokenRateLimitSnapshot {
+  name: 'primary' | 'secondary';
+  usedPercent?: number;
+  remainingPercent?: number;
+  resetAtMs?: number;
+  resetAfterSeconds?: number;
 }

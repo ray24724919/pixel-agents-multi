@@ -85,10 +85,20 @@ vi.mock('../../server/src/providers/file/codex/codex.js', async () => {
       };
       const total = record.payload?.info?.total_token_usage;
       if (record.type === 'event_msg' && record.payload?.type === 'token_count' && total) {
+        const details = {
+          input: total.input_tokens ?? 0,
+          output: total.output_tokens ?? 0,
+          reasoningOutput: total.reasoning_output_tokens ?? 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          artifactEstimate: 0,
+          estimated: false,
+        };
         return {
           kind: 'tokenUsage',
-          inputTokens: total.input_tokens ?? 0,
-          outputTokens: (total.output_tokens ?? 0) + (total.reasoning_output_tokens ?? 0),
+          inputTokens: details.input,
+          outputTokens: details.output + details.reasoningOutput,
+          details,
         };
       }
       return { kind: 'unknown' };

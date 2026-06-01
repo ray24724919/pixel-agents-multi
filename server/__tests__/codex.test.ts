@@ -439,5 +439,68 @@ describe('codexProvider', () => {
         role: 'worker',
       });
     });
+
+    it('parses Codex token_count details and rate limits', () => {
+      const result = parseCodexTranscriptLine(
+        codexLine('event_msg', {
+          type: 'token_count',
+          info: {
+            total_token_usage: {
+              input_tokens: 100,
+              cached_input_tokens: 25,
+              output_tokens: 40,
+              reasoning_output_tokens: 7,
+            },
+            last_token_usage: {
+              input_tokens: 9,
+              output_tokens: 3,
+              reasoning_output_tokens: 2,
+            },
+            rate_limits: {
+              primary: {
+                used_percent: 0.42,
+                reset_after_seconds: 1800,
+              },
+              secondary: {
+                remaining_percent: 75,
+                reset_at: '2026-06-01T10:00:00.000Z',
+              },
+            },
+          },
+        }),
+      );
+
+      expect(result).toMatchObject({
+        kind: 'tokenUsage',
+        inputTokens: 100,
+        outputTokens: 47,
+        details: {
+          input: 75,
+          output: 40,
+          reasoningOutput: 7,
+          cacheRead: 25,
+          cacheWrite: 0,
+          artifactEstimate: 0,
+          estimated: false,
+        },
+        lastTokenUsage: {
+          input: 9,
+          output: 3,
+          reasoningOutput: 2,
+        },
+        rateLimits: [
+          {
+            name: 'primary',
+            usedPercent: 42,
+            resetAfterSeconds: 1800,
+          },
+          {
+            name: 'secondary',
+            remainingPercent: 75,
+            resetAtMs: Date.parse('2026-06-01T10:00:00.000Z'),
+          },
+        ],
+      });
+    });
   });
 });

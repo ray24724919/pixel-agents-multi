@@ -23,7 +23,14 @@ export interface CodexThread {
 export type CodexTranscriptEvent =
   | AgentEvent
   | { kind: 'permissionClear'; toolId?: string }
-  | { kind: 'tokenUsage'; inputTokens: number; outputTokens: number }
+  | {
+      kind: 'tokenUsage';
+      inputTokens: number;
+      outputTokens: number;
+      details: CodexTokenUsageDetails;
+      lastTokenUsage?: CodexTokenUsageDetails;
+      rateLimits?: CodexRateLimitSnapshot[];
+    }
   | {
       kind: 'codexSubagentSpawn';
       childThreadId: string;
@@ -32,6 +39,24 @@ export type CodexTranscriptEvent =
       role?: string;
       callId?: string;
     };
+
+export interface CodexTokenUsageDetails {
+  input: number;
+  output: number;
+  reasoningOutput: number;
+  cacheRead: number;
+  cacheWrite: number;
+  artifactEstimate: number;
+  estimated: boolean;
+}
+
+export interface CodexRateLimitSnapshot {
+  name: 'primary' | 'secondary';
+  usedPercent?: number;
+  remainingPercent?: number;
+  resetAtMs?: number;
+  resetAfterSeconds?: number;
+}
 
 function codexHome(): string {
   return process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
@@ -590,6 +615,100 @@ function callId(payload: Record<string, unknown>): string | undefined {
   return typeof raw === 'string' ? raw : undefined;
 }
 
+function objectValue(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : null;
+}
+
+function numberValue(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
+
+function parseCodexTokenUsage(value: unknown): CodexTokenUsageDetails {
+  const usage = objectValue(value) ?? {};
+  const cacheRead =
+    numberValue(usage.cache_read_input_tokens) +
+    numberValue(usage.cached_input_tokens) +
+    numberValue(objectValue(usage.input_tokens_details)?.cache_read_tokens);
+  return {
+    input: Math.max(0, numberValue(usage.input_tokens) - cacheRead),
+    output: numberValue(usage.output_tokens),
+    reasoningOutput:
+      numberValue(usage.reasoning_output_tokens) +
+      numberValue(objectValue(usage.output_tokens_details)?.reasoning_tokens),
+    cacheRead,
+    cacheWrite:
+      numberValue(usage.cache_creation_input_tokens) +
+      numberValue(usage.cache_write_input_tokens) +
+      numberValue(objectValue(usage.input_tokens_details)?.cache_creation_tokens),
+    artifactEstimate: 0,
+    estimated: false,
+  };
+}
+
+function codexInputTotal(details: CodexTokenUsageDetails): number {
+  return details.input + details.cacheRead + details.cacheWrite;
+}
+
+function codexOutputTotal(details: CodexTokenUsageDetails): number {
+  return details.output + details.reasoningOutput;
+}
+
+function percentValue(value: unknown): number | undefined {
+  const parsed = numberValue(value);
+  if (parsed === 0 && value !== 0 && value !== '0') return undefined;
+  if (parsed > 0 && parsed <= 1) return parsed * 100;
+  return parsed;
+}
+
+function timestampMs(value: unknown): number | undefined {
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  const parsed = numberValue(value);
+  if (parsed <= 0) return undefined;
+  return parsed < 10_000_000_000 ? parsed * 1000 : parsed;
+}
+
+function parseCodexRateLimits(value: unknown): CodexRateLimitSnapshot[] | undefined {
+  const record = objectValue(value);
+  if (!record) return undefined;
+  const out: CodexRateLimitSnapshot[] = [];
+  for (const name of ['primary', 'secondary'] as const) {
+    const limit = objectValue(record[name]);
+    if (!limit) continue;
+    const snapshot: CodexRateLimitSnapshot = { name };
+    const usedPercent = percentValue(
+      limit.used_percent ?? limit.usedPercent ?? limit.percent_used ?? limit.percentUsed,
+    );
+    const remainingPercent = percentValue(
+      limit.remaining_percent ?? limit.remainingPercent ?? limit.percent_remaining,
+    );
+    if (usedPercent !== undefined) snapshot.usedPercent = usedPercent;
+    if (remainingPercent !== undefined) snapshot.remainingPercent = remainingPercent;
+    const resetAfterSeconds = numberValue(
+      limit.reset_after_seconds ?? limit.resetAfterSeconds ?? limit.resets_in_seconds,
+    );
+    if (resetAfterSeconds > 0) snapshot.resetAfterSeconds = resetAfterSeconds;
+    const resetAtMs = timestampMs(limit.reset_at_ms ?? limit.resetAtMs ?? limit.reset_at);
+    if (resetAtMs !== undefined) snapshot.resetAtMs = resetAtMs;
+    if (
+      snapshot.usedPercent !== undefined ||
+      snapshot.remainingPercent !== undefined ||
+      snapshot.resetAfterSeconds !== undefined ||
+      snapshot.resetAtMs !== undefined
+    ) {
+      out.push(snapshot);
+    }
+  }
+  return out.length > 0 ? out : undefined;
+}
+
 export function parseCodexTranscriptLine(line: string): CodexTranscriptEvent | null {
   let record: Record<string, unknown>;
   try {
@@ -672,23 +791,19 @@ export function parseCodexTranscriptLine(line: string): CodexTranscriptEvent | n
         typeof payload.info === 'object' && payload.info !== null
           ? (payload.info as Record<string, unknown>)
           : {};
-      const total =
-        typeof info.total_token_usage === 'object' && info.total_token_usage !== null
-          ? (info.total_token_usage as Record<string, unknown>)
-          : {};
-      const inputTokens =
-        typeof total.input_tokens === 'number' && Number.isFinite(total.input_tokens)
-          ? total.input_tokens
-          : 0;
-      const outputTokens =
-        (typeof total.output_tokens === 'number' && Number.isFinite(total.output_tokens)
-          ? total.output_tokens
-          : 0) +
-        (typeof total.reasoning_output_tokens === 'number' &&
-        Number.isFinite(total.reasoning_output_tokens)
-          ? total.reasoning_output_tokens
-          : 0);
-      return { kind: 'tokenUsage', inputTokens, outputTokens };
+      const details = parseCodexTokenUsage(info.total_token_usage);
+      const inputTokens = codexInputTotal(details);
+      const outputTokens = codexOutputTotal(details);
+      return {
+        kind: 'tokenUsage',
+        inputTokens,
+        outputTokens,
+        details,
+        lastTokenUsage: info.last_token_usage
+          ? parseCodexTokenUsage(info.last_token_usage)
+          : undefined,
+        rateLimits: parseCodexRateLimits(info.rate_limits),
+      };
     }
     if (
       payloadType === 'task_complete' ||

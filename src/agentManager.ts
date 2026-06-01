@@ -504,6 +504,11 @@ export function startCodexCwdPoll(
         agent.outputTokens = (agent.codexOutputTokenBase ?? 0) + threadOutputTokens;
         agent.artifactOutputTokens =
           (agent.artifactOutputTokens ?? 0) + (transcriptUsage?.artifactOutputTokens ?? 0);
+        if (transcriptUsage) {
+          agent.tokenUsageDetails = transcriptUsage.details;
+          agent.codexLastTokenUsage = transcriptUsage.lastTokenUsage;
+          agent.codexRateLimits = transcriptUsage.rateLimits;
+        }
         clearCodexTransientState(agent);
         cancelWaitingTimer(agentId, waitingTimers);
         cancelPermissionTimer(agentId, permissionTimers);
@@ -525,6 +530,9 @@ export function startCodexCwdPoll(
           outputTokens: agent.outputTokens,
           artifactOutputTokens: agent.artifactOutputTokens ?? 0,
           estimated: transcriptUsage?.estimated ?? false,
+          details: agent.tokenUsageDetails,
+          lastTokenUsage: agent.codexLastTokenUsage,
+          rateLimits: agent.codexRateLimits,
         });
         if (previousJsonlFile) {
           fileWatchers.get(agentId)?.close();
@@ -1043,7 +1051,10 @@ export function sendCurrentAgentStatuses(
         inputTokens: agent.inputTokens,
         outputTokens: agent.outputTokens,
         artifactOutputTokens: agent.artifactOutputTokens ?? 0,
-        estimated: false,
+        estimated: agent.tokenUsageDetails?.estimated ?? false,
+        details: agent.tokenUsageDetails,
+        lastTokenUsage: agent.codexLastTokenUsage,
+        rateLimits: agent.codexRateLimits,
       });
     }
     scheduleTokenUsageRefresh(agent, webview);
@@ -1088,6 +1099,9 @@ function scheduleTokenUsageRefresh(agent: AgentState, webview: vscode.Webview): 
     agent.inputTokens = (agent.codexInputTokenBase ?? 0) + transcriptUsage.inputTokens;
     agent.outputTokens = (agent.codexOutputTokenBase ?? 0) + transcriptUsage.outputTokens;
     agent.artifactOutputTokens = transcriptUsage.artifactOutputTokens;
+    agent.tokenUsageDetails = transcriptUsage.details;
+    agent.codexLastTokenUsage = transcriptUsage.lastTokenUsage;
+    agent.codexRateLimits = transcriptUsage.rateLimits;
     webview.postMessage({
       type: 'agentTokenUsage',
       id: agent.id,
@@ -1095,6 +1109,9 @@ function scheduleTokenUsageRefresh(agent: AgentState, webview: vscode.Webview): 
       outputTokens: agent.outputTokens,
       artifactOutputTokens: agent.artifactOutputTokens ?? 0,
       estimated: transcriptUsage.estimated,
+      details: agent.tokenUsageDetails,
+      lastTokenUsage: agent.codexLastTokenUsage,
+      rateLimits: agent.codexRateLimits,
     });
   }, 250);
 }

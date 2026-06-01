@@ -28,7 +28,17 @@ import {
   startPermissionTimer,
   startWaitingTimer,
 } from './timerManager.js';
-import { estimateArtifactOutputTokens, extractClaudeUsage } from './tokenUsage.js';
+import {
+  addTokenUsageDetails,
+  emptyTokenUsageDetails,
+  estimateArtifactOutputTokens,
+  extractClaudeUsage,
+  subtractTokenUsageDetails,
+  tokenDetailsInputTotal,
+  tokenDetailsOutputTotal,
+  type TokenUsageDetails,
+  type TokenUsageSummary,
+} from './tokenUsage.js';
 import type { AgentState } from './types.js';
 
 const PERMISSION_EXEMPT_TOOLS = new Set(['Task', 'Agent', 'AskUserQuestion']);
@@ -115,6 +125,23 @@ function defaultFormatToolStatus(toolName: string, input: Record<string, unknown
   }
 }
 
+function applyClaudeUsageDelta(agent: AgentState, usage: TokenUsageSummary): TokenUsageDetails {
+  let delta = usage.details;
+  if (!usage.estimated && usage.usageKey) {
+    agent.claudeUsageByMessageKey ??= new Map();
+    const previous = agent.claudeUsageByMessageKey.get(usage.usageKey);
+    agent.claudeUsageByMessageKey.set(usage.usageKey, usage.details);
+    if (previous) {
+      delta = subtractTokenUsageDetails(usage.details, previous);
+    }
+  }
+
+  agent.inputTokens += tokenDetailsInputTotal(delta);
+  agent.outputTokens += tokenDetailsOutputTotal(delta);
+  agent.tokenUsageDetails = addTokenUsageDetails(agent.tokenUsageDetails, delta);
+  return delta;
+}
+
 export function processTranscriptLine(
   agentId: number,
   line: string,
@@ -184,15 +211,21 @@ export function processTranscriptLine(
     }
     const usage = extractClaudeUsage(record);
     if (usage || artifactOutputTokens > 0) {
-      agent.inputTokens += usage?.inputTokens ?? 0;
-      agent.outputTokens += usage?.outputTokens ?? 0;
+      const usageDelta = usage ? applyClaudeUsageDelta(agent, usage) : undefined;
+      if (artifactOutputTokens > 0) {
+        agent.tokenUsageDetails = addTokenUsageDetails(agent.tokenUsageDetails, {
+          ...emptyTokenUsageDetails(true),
+          artifactEstimate: artifactOutputTokens,
+        });
+      }
       webview?.postMessage({
         type: 'agentTokenUsage',
         id: agentId,
         inputTokens: agent.inputTokens,
         outputTokens: agent.outputTokens,
         artifactOutputTokens: agent.artifactOutputTokens ?? 0,
-        estimated: usage?.estimated ?? true,
+        estimated: usageDelta?.estimated ?? usage?.estimated ?? true,
+        details: agent.tokenUsageDetails,
       });
     }
 
@@ -552,6 +585,10 @@ function processCodexTranscriptLine(
   const artifactOutputTokens = record ? estimateArtifactOutputTokens(record, agent.providerId) : 0;
   if (artifactOutputTokens > 0) {
     agent.artifactOutputTokens = (agent.artifactOutputTokens ?? 0) + artifactOutputTokens;
+    agent.tokenUsageDetails = addTokenUsageDetails(agent.tokenUsageDetails, {
+      ...emptyTokenUsageDetails(true),
+      artifactEstimate: artifactOutputTokens,
+    });
     webview?.postMessage({
       type: 'agentTokenUsage',
       id: agentId,
@@ -559,6 +596,9 @@ function processCodexTranscriptLine(
       outputTokens: agent.outputTokens,
       artifactOutputTokens: agent.artifactOutputTokens,
       estimated: false,
+      details: agent.tokenUsageDetails,
+      lastTokenUsage: agent.codexLastTokenUsage,
+      rateLimits: agent.codexRateLimits,
     });
   }
   const event = parseCodexTranscriptLine(line);
@@ -641,6 +681,12 @@ function processCodexTranscriptLine(
       if (event.kind === 'tokenUsage') {
         agent.inputTokens = (agent.codexInputTokenBase ?? 0) + event.inputTokens;
         agent.outputTokens = (agent.codexOutputTokenBase ?? 0) + event.outputTokens;
+        agent.tokenUsageDetails = addTokenUsageDetails(event.details, {
+          ...emptyTokenUsageDetails(true),
+          artifactEstimate: agent.artifactOutputTokens ?? 0,
+        });
+        agent.codexLastTokenUsage = event.lastTokenUsage;
+        agent.codexRateLimits = event.rateLimits;
         webview?.postMessage({
           type: 'agentTokenUsage',
           id: agentId,
@@ -648,6 +694,9 @@ function processCodexTranscriptLine(
           outputTokens: agent.outputTokens,
           artifactOutputTokens: agent.artifactOutputTokens ?? 0,
           estimated: false,
+          details: agent.tokenUsageDetails,
+          lastTokenUsage: agent.codexLastTokenUsage,
+          rateLimits: agent.codexRateLimits,
         });
       }
       break;

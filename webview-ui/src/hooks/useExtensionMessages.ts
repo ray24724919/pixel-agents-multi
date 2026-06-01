@@ -7,7 +7,12 @@ import { buildDynamicCatalog } from '../office/layout/furnitureCatalog.js';
 import { migrateLayoutColors } from '../office/layout/layoutSerializer.js';
 import { setCharacterTemplates } from '../office/sprites/spriteData.js';
 import { extractToolName } from '../office/toolUtils.js';
-import type { OfficeLayout, ToolActivity } from '../office/types.js';
+import type {
+  OfficeLayout,
+  TokenRateLimitSnapshot,
+  TokenUsageDetails,
+  ToolActivity,
+} from '../office/types.js';
 import { setWallSprites } from '../office/wallTiles.js';
 import { vscode } from '../vscodeApi.js';
 import { shouldRetainTimelineEventAfterAgentRemoval } from './timelineRetention.js';
@@ -857,12 +862,17 @@ export function useExtensionMessages(
       } else if (msg.type === 'agentTokenUsage') {
         const id = msg.id as number;
         traceAgentEvent(id, 'agentTokenUsage', `${msg.inputTokens ?? 0}/${msg.outputTokens ?? 0}`);
+        const rateLimits = Array.isArray(msg.rateLimits)
+          ? (msg.rateLimits as TokenRateLimitSnapshot[])
+          : undefined;
         os.setAgentTokens(
           id,
           msg.inputTokens as number,
           msg.outputTokens as number,
           msg.estimated === true,
           (msg.artifactOutputTokens as number | undefined) ?? 0,
+          msg.details as TokenUsageDetails | undefined,
+          rateLimits?.find((limit) => limit.name === 'primary') ?? rateLimits?.[0],
         );
       }
     };
