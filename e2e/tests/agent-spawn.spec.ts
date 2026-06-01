@@ -7,6 +7,7 @@
  *   3. A VS Code terminal named "Codex #1" appears in the workbench.
  *   4. A mock Codex child thread is adopted as a Pixel Agents teammate.
  *   5. Agent Center > Usage renders a visible dashboard body.
+ *   6. A seeded Claude Cowork session is adopted and visible through the Claude filter.
  *
  * NOTE FOR NEW TESTS: As more specs are added, refactor session setup into a
  * Playwright fixture using test.extend<{ session: VSCodeSession }>() so that
@@ -25,10 +26,59 @@ import {
   startCodexAgent,
 } from '../helpers/webview';
 
+function seedClaudeCoworkSession(appDataDir: string, projectDir: string) {
+  const sessionId = 'local_cowork_e2e';
+  const title = 'E2E Cowork Lead';
+  const metadataDir = path.join(
+    appDataDir,
+    'Claude',
+    'local-agent-mode-sessions',
+    'space-1',
+    'process-1',
+  );
+  const sessionDir = path.join(metadataDir, sessionId);
+  const outputDir = path.join(sessionDir, 'outputs');
+  const auditPath = path.join(sessionDir, 'audit.jsonl');
+
+  fs.mkdirSync(outputDir, { recursive: true });
+  fs.mkdirSync(projectDir, { recursive: true });
+  fs.writeFileSync(
+    auditPath,
+    JSON.stringify({
+      type: 'system',
+      subtype: 'init',
+      cwd: outputDir,
+      session_id: sessionId,
+      tools: ['Read', 'Edit', 'Bash'],
+    }) + '\n',
+  );
+  fs.writeFileSync(
+    path.join(metadataDir, `${sessionId}.json`),
+    JSON.stringify(
+      {
+        sessionId,
+        title,
+        cwd: outputDir,
+        userSelectedFolders: [projectDir],
+        isArchived: false,
+        isAgentCompleted: false,
+      },
+      null,
+      2,
+    ),
+  );
+
+  return { sessionId, title, projectDir, auditPath };
+}
+
 test('starting a Codex agent spawns mock codex and adopts a child thread teammate', async ({}, testInfo) => {
   const session = await launchVSCode(testInfo.title);
-  const { window, tmpHome, mockLogFile } = session;
+  const { window, tmpHome, appDataDir, workspaceDir, mockLogFile } = session;
   const runVideo = window.video();
+  const seededCowork = seedClaudeCoworkSession(
+    appDataDir,
+    path.join(path.dirname(workspaceDir), 'animfy_gs1'),
+  );
 
   test.setTimeout(120_000);
 
@@ -142,6 +192,40 @@ test('starting a Codex agent spawns mock codex and adopts a child thread teammat
 
     // 8. Assert: Agent Center > Usage renders a visible state instead of a blank panel.
     await openAgentCenterUsage(activeFrame);
+
+    // 9. Assert: the seeded Claude Cowork session is adopted and provider filtering can show it.
+    await expect
+      .poll(async () => (await root.getAttribute('data-agent-names')) ?? '', {
+        message: 'Expected seeded Claude Cowork session to appear in webview state',
+        timeout: 20_000,
+        intervals: [500, 1000],
+      })
+      .toContain(seededCowork.title);
+    await expect
+      .poll(async () => (await root.getAttribute('data-agent-providers')) ?? '', {
+        message: 'Expected seeded Claude Cowork session to retain providerId=claude',
+        timeout: 20_000,
+        intervals: [500, 1000],
+      })
+      .toContain(':claude');
+
+    await activeFrame.locator('button', { hasText: /^x$/ }).last().click();
+    await expect(activeFrame.getByText('Agent Center')).toBeHidden({ timeout: 10_000 });
+    await activeFrame.locator('button', { hasText: /^Claude$/ }).click();
+    await expect
+      .poll(async () => Number((await root.getAttribute('data-visible-agent-count')) ?? '0'), {
+        message: 'Expected Claude provider filter to show the seeded Cowork agent',
+        timeout: 20_000,
+        intervals: [500, 1000],
+      })
+      .toBe(1);
+    await expect
+      .poll(async () => (await root.getAttribute('data-visible-agent-names')) ?? '', {
+        message: 'Expected Claude provider filter to show the seeded Cowork title',
+        timeout: 20_000,
+        intervals: [500, 1000],
+      })
+      .toContain(seededCowork.title);
   } finally {
     // Save a screenshot of the final state regardless of outcome
     const screenshotPath = path.join(
