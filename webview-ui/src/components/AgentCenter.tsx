@@ -19,6 +19,7 @@ import { isAgentVisibleWithHiddenToggle } from './agentCenterFilters.js';
 import { isPausedStatus, pauseActionLabel } from './pauseResume.js';
 import { TokenCostSummary } from './TokenCostSummary.js';
 import { Button } from './ui/Button.js';
+import { Modal } from './ui/Modal.js';
 
 type ProviderFilter = 'all' | 'codex' | 'claude';
 type StatusFilter = 'all' | 'active' | 'paused' | 'waiting' | 'needs_me' | 'error';
@@ -198,12 +199,6 @@ export function AgentCenter({
     () => buildGlobalTimeline(visibleSummaries, agentTimelineEvents, agentLifecycleEvents),
     [agentLifecycleEvents, agentTimelineEvents, visibleSummaries],
   );
-  const pageMeta = getAgentCenterPageMeta(
-    activeTab,
-    visibleSummaries.length,
-    usageTotals.totalTokens,
-    globalTimeline.length,
-  );
 
   useEffect(() => {
     officeState.setMeetingTeam(teamFilter === 'all' ? null : teamFilter);
@@ -229,45 +224,14 @@ export function AgentCenter({
   const selectedTeamMembers = selectedSummary?.teamName
     ? visibleSummaries.filter((agent) => agent.teamName === selectedSummary.teamName)
     : [];
-  if (!isOpen) return null;
-
   return (
-    <div className="agent-center-page modern-surface fixed inset-0 z-50 flex flex-col bg-bg text-text">
-      <header className="shrink-0 border-b border-border bg-bg-dark">
-        <div className="mx-auto flex min-h-[66px] w-full max-w-[1320px] flex-wrap items-center justify-between gap-4 px-6 py-4">
-          <div className="min-w-0">
-            <div className="text-lg font-semibold text-text">Agent Center</div>
-            <div className="mt-1 max-w-[720px] truncate text-xs text-text-muted">
-              {pageMeta.subtitle}
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <label className="flex items-center gap-2 rounded-[6px] border border-border bg-btn-bg px-3 py-2 text-xs text-text-muted">
-              <input
-                type="checkbox"
-                checked={showHiddenAgents}
-                onChange={(event) => onShowHiddenAgentsChange(event.currentTarget.checked)}
-              />
-              <span>Show hidden</span>
-              {hiddenCount > 0 && <span>({hiddenCount})</span>}
-            </label>
-            <button
-              type="button"
-              className="rounded-[6px] border border-border bg-btn-bg px-3 py-2 text-xs text-text hover:bg-btn-hover"
-              onClick={() => vscode.postMessage({ type: 'refreshAgents' })}
-            >
-              Refresh
-            </button>
-            <button
-              type="button"
-              className="rounded-[6px] border border-transparent bg-transparent px-3 py-2 text-xs text-text-muted hover:bg-btn-bg hover:text-text"
-              onClick={onClose}
-              aria-label="Close Agent Center"
-            >
-              Close
-            </button>
-          </div>
-        </div>
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title="Agent Center"
+      className="flex h-[min(86vh,760px)] w-[min(96vw,1120px)] flex-col overflow-hidden"
+    >
+      <div className="mb-4 flex shrink-0 flex-wrap items-center justify-between gap-3 px-6 pr-7">
         <AgentCenterTabs
           active={activeTab}
           onChange={setActiveTab}
@@ -275,106 +239,109 @@ export function AgentCenter({
           usageLabel={compactNumber(usageTotals.totalTokens)}
           timelineCount={globalTimeline.length}
         />
-      </header>
-
-      <main className="min-h-0 flex-1 overflow-y-auto bg-bg px-6 py-6">
-        <div className="mx-auto flex w-full max-w-[1320px] flex-col gap-4">
-          <section className="rounded-[8px] border border-border bg-btn-bg px-5 py-4">
-            <div className="flex flex-wrap items-end justify-between gap-3">
-              <div className="min-w-0">
-                <h2 className="text-xl font-semibold text-text">{pageMeta.title}</h2>
-                <p className="mt-1 max-w-[760px] text-sm text-text-muted">{pageMeta.description}</p>
-              </div>
-              <div className="text-xs text-text-muted">{pageMeta.metric}</div>
-            </div>
-          </section>
-
-          {activeTab === 'agents' && (
-            <>
-              <div className="mb-4 flex shrink-0 flex-wrap items-center justify-between gap-3">
-                <SegmentedButtons
-                  values={['all', 'codex', 'claude']}
-                  active={providerFilter}
-                  label={(provider) => (provider === 'all' ? 'All' : providerLabel(provider))}
-                  onChange={setProviderFilter}
-                />
-                <div className="text-xs uppercase tracking-wide text-text-muted">
-                  {filteredAgents.length} shown / {visibleSummaries.length} visible
-                </div>
-              </div>
-
-              <div className="mb-3 flex shrink-0 flex-wrap items-center gap-2">
-                <SegmentedButtons
-                  values={['all', 'active', 'paused', 'waiting', 'needs_me', 'error']}
-                  active={statusFilter}
-                  label={statusFilterLabel}
-                  onChange={setStatusFilter}
-                />
-              </div>
-
-              <ProjectDashboard
-                projects={projectSummaries}
-                activeProject={projectFilter}
-                onProjectChange={setProjectFilter}
-                onOpenProject={(projectDir) =>
-                  vscode.postMessage({ type: 'openProjectPath', projectDir })
-                }
-              />
-
-              <TeamDashboard
-                teams={teamSummaries}
-                activeTeam={teamFilter}
-                onTeamChange={setTeamFilter}
-              />
-
-              <div className="grid border border-border lg:grid-cols-[minmax(320px,0.92fr)_minmax(0,1.08fr)]">
-                <div className="border-b border-border lg:border-b-0 lg:border-r">
-                  {filteredAgents.length === 0 ? (
-                    <div className="p-8 text-center text-text-muted">
-                      No agents match these filters
-                    </div>
-                  ) : (
-                    <div className="divide-y divide-border">
-                      {filteredAgents.map((agent) => (
-                        <AgentRow
-                          key={agent.id}
-                          agent={agent}
-                          isSelected={selectedSummary?.id === agent.id}
-                          onSelect={() => setDetailAgentId(agent.id)}
-                        />
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <AgentDetail
-                  agent={selectedSummary}
-                  lifecycle={
-                    selectedSummary ? agentLifecycleStatuses[selectedSummary.id] : undefined
-                  }
-                  timeline={selectedTimeline}
-                  teamMembers={selectedTeamMembers}
-                  onCloseAgent={onCloseAgent}
-                  onPauseAgent={onPauseAgent}
-                  onResumeAgent={onResumeAgent}
-                />
-              </div>
-            </>
-          )}
-
-          {activeTab === 'usage' && (
-            <UsageDashboard
-              agents={visibleSummaries}
-              visibleAgentIds={visibleAgentIds}
-              officeState={officeState}
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="flex items-center gap-2 border border-border bg-btn-bg px-3 py-2 text-xs text-text-muted">
+            <input
+              type="checkbox"
+              checked={showHiddenAgents}
+              onChange={(event) => onShowHiddenAgentsChange(event.currentTarget.checked)}
             />
-          )}
-
-          {activeTab === 'timeline' && (
-            <TimelineDashboard agents={visibleSummaries} timeline={globalTimeline} />
-          )}
+            <span>Show hidden</span>
+            {hiddenCount > 0 && <span>({hiddenCount})</span>}
+          </label>
+          <Button
+            variant="default"
+            size="sm"
+            onClick={() => vscode.postMessage({ type: 'refreshAgents' })}
+          >
+            Refresh
+          </Button>
         </div>
-      </main>
-    </div>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6 pr-7">
+        {activeTab === 'agents' && (
+          <>
+            <div className="mb-4 flex shrink-0 flex-wrap items-center justify-between gap-3">
+              <SegmentedButtons
+                values={['all', 'codex', 'claude']}
+                active={providerFilter}
+                label={(provider) => (provider === 'all' ? 'All' : providerLabel(provider))}
+                onChange={setProviderFilter}
+              />
+              <div className="text-xs uppercase tracking-wide text-text-muted">
+                {filteredAgents.length} shown / {visibleSummaries.length} visible
+              </div>
+            </div>
+
+            <div className="mb-3 flex shrink-0 flex-wrap items-center gap-2">
+              <SegmentedButtons
+                values={['all', 'active', 'paused', 'waiting', 'needs_me', 'error']}
+                active={statusFilter}
+                label={statusFilterLabel}
+                onChange={setStatusFilter}
+              />
+            </div>
+
+            <ProjectDashboard
+              projects={projectSummaries}
+              activeProject={projectFilter}
+              onProjectChange={setProjectFilter}
+              onOpenProject={(projectDir) =>
+                vscode.postMessage({ type: 'openProjectPath', projectDir })
+              }
+            />
+
+            <TeamDashboard
+              teams={teamSummaries}
+              activeTeam={teamFilter}
+              onTeamChange={setTeamFilter}
+            />
+
+            <div className="grid border border-border lg:grid-cols-[minmax(320px,0.92fr)_minmax(0,1.08fr)]">
+              <div className="border-b border-border lg:border-b-0 lg:border-r">
+                {filteredAgents.length === 0 ? (
+                  <div className="p-8 text-center text-text-muted">
+                    No agents match these filters
+                  </div>
+                ) : (
+                  <div className="divide-y divide-border">
+                    {filteredAgents.map((agent) => (
+                      <AgentRow
+                        key={agent.id}
+                        agent={agent}
+                        isSelected={selectedSummary?.id === agent.id}
+                        onSelect={() => setDetailAgentId(agent.id)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+              <AgentDetail
+                agent={selectedSummary}
+                lifecycle={selectedSummary ? agentLifecycleStatuses[selectedSummary.id] : undefined}
+                timeline={selectedTimeline}
+                teamMembers={selectedTeamMembers}
+                onCloseAgent={onCloseAgent}
+                onPauseAgent={onPauseAgent}
+                onResumeAgent={onResumeAgent}
+              />
+            </div>
+          </>
+        )}
+
+        {activeTab === 'usage' && (
+          <UsageDashboard
+            agents={visibleSummaries}
+            visibleAgentIds={visibleAgentIds}
+            officeState={officeState}
+          />
+        )}
+
+        {activeTab === 'timeline' && (
+          <TimelineDashboard agents={visibleSummaries} timeline={globalTimeline} />
+        )}
+      </div>
+    </Modal>
   );
 }
 
@@ -398,59 +365,23 @@ function AgentCenterTabs({
   ];
 
   return (
-    <nav
-      className="mx-auto flex w-full max-w-[1320px] min-w-0 flex-wrap items-end gap-1 px-6"
-      aria-label="Agent Center pages"
-    >
+    <div className="flex min-w-0 flex-wrap gap-1 border border-border bg-bg p-1">
       {tabs.map((tab) => (
-        <button
+        <Button
           key={tab.id}
-          type="button"
-          className={`-mb-px min-w-[150px] rounded-t-[8px] border px-4 py-3 text-left transition-colors ${
-            active === tab.id
-              ? 'border-border border-b-bg bg-bg text-text shadow-sm'
-              : 'border-transparent bg-transparent text-text-muted hover:border-border hover:bg-btn-bg hover:text-text'
-          }`}
+          variant={active === tab.id ? 'active' : 'default'}
+          size="sm"
+          className="min-w-[116px] px-4 text-left"
           onClick={() => onChange(tab.id)}
-          aria-current={active === tab.id ? 'page' : undefined}
         >
-          <span className="block truncate text-sm font-medium">{tab.label}</span>
-          <span className="mt-1 block truncate text-xs text-text-muted">{tab.meta}</span>
-        </button>
+          <span className="block truncate text-sm">{tab.label}</span>
+          <span className="block truncate text-[10px] uppercase tracking-wide text-text-muted">
+            {tab.meta}
+          </span>
+        </Button>
       ))}
-    </nav>
+    </div>
   );
-}
-
-function getAgentCenterPageMeta(
-  tab: AgentCenterTab,
-  agentsCount: number,
-  totalTokens: number,
-  timelineCount: number,
-): { title: string; subtitle: string; description: string; metric: string } {
-  if (tab === 'usage') {
-    return {
-      title: 'Usage',
-      subtitle: 'Token and cost signals across active agents',
-      description:
-        'Review provider, project, and agent-level token usage without crowding the office view.',
-      metric: `${compactNumber(totalTokens)} total tokens`,
-    };
-  }
-  if (tab === 'timeline') {
-    return {
-      title: 'Timeline',
-      subtitle: 'Recent agent lifecycle and activity events',
-      description: 'Scan what changed recently, including attention, completion, and error events.',
-      metric: `${timelineCount} events`,
-    };
-  }
-  return {
-    title: 'Agents',
-    subtitle: 'Live agent operations, grouped by project and team',
-    description: 'Manage active agents, inspect their current work, and jump to related files.',
-    metric: `${agentsCount} visible agents`,
-  };
 }
 
 function UsageDashboard({
