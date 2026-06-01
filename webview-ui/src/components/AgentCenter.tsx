@@ -25,6 +25,7 @@ type ProviderFilter = 'all' | 'codex' | 'claude';
 type StatusFilter = 'all' | 'active' | 'paused' | 'waiting' | 'needs_me' | 'error';
 type ProjectFilter = 'all' | string;
 type TeamFilter = 'all' | string;
+type AgentCenterTab = 'agents' | 'usage' | 'timeline';
 
 interface AgentCenterProps {
   isOpen: boolean;
@@ -97,6 +98,29 @@ interface TeamSummary {
   projects: string[];
 }
 
+interface UsageTotals {
+  agentCount: number;
+  inputTokens: number;
+  outputTokens: number;
+  artifactOutputTokens: number;
+  totalTokens: number;
+  cacheTokens: number;
+  reasoningTokens: number;
+  estimatedCount: number;
+  exactCount: number;
+}
+
+interface ProviderUsageSummary extends UsageTotals {
+  providerId: string;
+  label: string;
+  codexRateLimit?: TokenRateLimitSnapshot;
+}
+
+interface ProjectUsageSummary extends UsageTotals {
+  project: string;
+  projectDir?: string;
+}
+
 export function AgentCenter({
   isOpen,
   onClose,
@@ -121,6 +145,7 @@ export function AgentCenter({
   const [projectFilter, setProjectFilter] = useState<ProjectFilter>('all');
   const [teamFilter, setTeamFilter] = useState<TeamFilter>('all');
   const [detailAgentId, setDetailAgentId] = useState<number | null>(selectedAgent);
+  const [activeTab, setActiveTab] = useState<AgentCenterTab>('agents');
 
   const summaries = useMemo(
     () =>
@@ -169,6 +194,11 @@ export function AgentCenter({
     [visibleSummaries],
   );
   const hiddenCount = summaries.filter((agent) => agent.hidden).length;
+  const usageTotals = useMemo(() => getUsageTotals(visibleSummaries), [visibleSummaries]);
+  const globalTimeline = useMemo(
+    () => buildGlobalTimeline(visibleSummaries, agentTimelineEvents, agentLifecycleEvents),
+    [agentLifecycleEvents, agentTimelineEvents, visibleSummaries],
+  );
 
   useEffect(() => {
     officeState.setMeetingTeam(teamFilter === 'all' ? null : teamFilter);
@@ -201,84 +231,454 @@ export function AgentCenter({
       title="Agent Center"
       className="flex h-[min(86vh,760px)] w-[min(96vw,1120px)] flex-col overflow-hidden"
     >
-      <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6 pr-7">
-        <div className="mb-4 grid shrink-0 gap-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
-          <TokenCostSummary agents={visibleAgentIds} officeState={officeState} />
-          <div className="flex flex-wrap items-center gap-2">
-            <label className="flex items-center gap-2 border border-border bg-btn-bg px-3 py-2 text-xs text-text-muted">
-              <input
-                type="checkbox"
-                checked={showHiddenAgents}
-                onChange={(event) => onShowHiddenAgentsChange(event.currentTarget.checked)}
-              />
-              <span>Show hidden</span>
-              {hiddenCount > 0 && <span>({hiddenCount})</span>}
-            </label>
-            <SegmentedButtons
-              values={['all', 'codex', 'claude']}
-              active={providerFilter}
-              label={(provider) => (provider === 'all' ? 'All' : providerLabel(provider))}
-              onChange={setProviderFilter}
-            />
-            <Button
-              variant="default"
-              size="sm"
-              onClick={() => vscode.postMessage({ type: 'refreshAgents' })}
-            >
-              Refresh
-            </Button>
-          </div>
-        </div>
-
-        <div className="mb-3 flex shrink-0 flex-wrap items-center gap-2">
-          <SegmentedButtons
-            values={['all', 'active', 'paused', 'waiting', 'needs_me', 'error']}
-            active={statusFilter}
-            label={statusFilterLabel}
-            onChange={setStatusFilter}
-          />
-        </div>
-
-        <ProjectDashboard
-          projects={projectSummaries}
-          activeProject={projectFilter}
-          onProjectChange={setProjectFilter}
-          onOpenProject={(projectDir) =>
-            vscode.postMessage({ type: 'openProjectPath', projectDir })
-          }
+      <div className="mb-4 flex shrink-0 flex-wrap items-center justify-between gap-3 px-6 pr-7">
+        <AgentCenterTabs
+          active={activeTab}
+          onChange={setActiveTab}
+          agentsCount={visibleSummaries.length}
+          usageLabel={compactNumber(usageTotals.totalTokens)}
+          timelineCount={globalTimeline.length}
         />
-
-        <TeamDashboard teams={teamSummaries} activeTeam={teamFilter} onTeamChange={setTeamFilter} />
-
-        <div className="grid border border-border lg:grid-cols-[minmax(320px,0.92fr)_minmax(0,1.08fr)]">
-          <div className="border-b border-border lg:border-b-0 lg:border-r">
-            {filteredAgents.length === 0 ? (
-              <div className="p-8 text-center text-text-muted">No agents match these filters</div>
-            ) : (
-              <div className="divide-y divide-border">
-                {filteredAgents.map((agent) => (
-                  <AgentRow
-                    key={agent.id}
-                    agent={agent}
-                    isSelected={selectedSummary?.id === agent.id}
-                    onSelect={() => setDetailAgentId(agent.id)}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-          <AgentDetail
-            agent={selectedSummary}
-            lifecycle={selectedSummary ? agentLifecycleStatuses[selectedSummary.id] : undefined}
-            timeline={selectedTimeline}
-            teamMembers={selectedTeamMembers}
-            onCloseAgent={onCloseAgent}
-            onPauseAgent={onPauseAgent}
-            onResumeAgent={onResumeAgent}
-          />
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="flex items-center gap-2 border border-border bg-btn-bg px-3 py-2 text-xs text-text-muted">
+            <input
+              type="checkbox"
+              checked={showHiddenAgents}
+              onChange={(event) => onShowHiddenAgentsChange(event.currentTarget.checked)}
+            />
+            <span>Show hidden</span>
+            {hiddenCount > 0 && <span>({hiddenCount})</span>}
+          </label>
+          <Button
+            variant="default"
+            size="sm"
+            onClick={() => vscode.postMessage({ type: 'refreshAgents' })}
+          >
+            Refresh
+          </Button>
         </div>
       </div>
+      <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6 pr-7">
+        {activeTab === 'agents' && (
+          <>
+            <div className="mb-4 flex shrink-0 flex-wrap items-center justify-between gap-3">
+              <SegmentedButtons
+                values={['all', 'codex', 'claude']}
+                active={providerFilter}
+                label={(provider) => (provider === 'all' ? 'All' : providerLabel(provider))}
+                onChange={setProviderFilter}
+              />
+              <div className="text-xs uppercase tracking-wide text-text-muted">
+                {filteredAgents.length} shown / {visibleSummaries.length} visible
+              </div>
+            </div>
+
+            <div className="mb-3 flex shrink-0 flex-wrap items-center gap-2">
+              <SegmentedButtons
+                values={['all', 'active', 'paused', 'waiting', 'needs_me', 'error']}
+                active={statusFilter}
+                label={statusFilterLabel}
+                onChange={setStatusFilter}
+              />
+            </div>
+
+            <ProjectDashboard
+              projects={projectSummaries}
+              activeProject={projectFilter}
+              onProjectChange={setProjectFilter}
+              onOpenProject={(projectDir) =>
+                vscode.postMessage({ type: 'openProjectPath', projectDir })
+              }
+            />
+
+            <TeamDashboard
+              teams={teamSummaries}
+              activeTeam={teamFilter}
+              onTeamChange={setTeamFilter}
+            />
+
+            <div className="grid border border-border lg:grid-cols-[minmax(320px,0.92fr)_minmax(0,1.08fr)]">
+              <div className="border-b border-border lg:border-b-0 lg:border-r">
+                {filteredAgents.length === 0 ? (
+                  <div className="p-8 text-center text-text-muted">
+                    No agents match these filters
+                  </div>
+                ) : (
+                  <div className="divide-y divide-border">
+                    {filteredAgents.map((agent) => (
+                      <AgentRow
+                        key={agent.id}
+                        agent={agent}
+                        isSelected={selectedSummary?.id === agent.id}
+                        onSelect={() => setDetailAgentId(agent.id)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+              <AgentDetail
+                agent={selectedSummary}
+                lifecycle={selectedSummary ? agentLifecycleStatuses[selectedSummary.id] : undefined}
+                timeline={selectedTimeline}
+                teamMembers={selectedTeamMembers}
+                onCloseAgent={onCloseAgent}
+                onPauseAgent={onPauseAgent}
+                onResumeAgent={onResumeAgent}
+              />
+            </div>
+          </>
+        )}
+
+        {activeTab === 'usage' && (
+          <UsageDashboard
+            agents={visibleSummaries}
+            visibleAgentIds={visibleAgentIds}
+            officeState={officeState}
+          />
+        )}
+
+        {activeTab === 'timeline' && (
+          <TimelineDashboard agents={visibleSummaries} timeline={globalTimeline} />
+        )}
+      </div>
     </Modal>
+  );
+}
+
+function AgentCenterTabs({
+  active,
+  onChange,
+  agentsCount,
+  usageLabel,
+  timelineCount,
+}: {
+  active: AgentCenterTab;
+  onChange: (tab: AgentCenterTab) => void;
+  agentsCount: number;
+  usageLabel: string;
+  timelineCount: number;
+}) {
+  const tabs: Array<{ id: AgentCenterTab; label: string; meta: string }> = [
+    { id: 'agents', label: 'Agents', meta: `${agentsCount} visible` },
+    { id: 'usage', label: 'Usage', meta: `${usageLabel} tokens` },
+    { id: 'timeline', label: 'Timeline', meta: `${timelineCount} events` },
+  ];
+
+  return (
+    <div className="flex min-w-0 flex-wrap gap-1 border border-border bg-bg p-1">
+      {tabs.map((tab) => (
+        <Button
+          key={tab.id}
+          variant={active === tab.id ? 'active' : 'default'}
+          size="sm"
+          className="min-w-[116px] px-4 text-left"
+          onClick={() => onChange(tab.id)}
+        >
+          <span className="block truncate text-sm">{tab.label}</span>
+          <span className="block truncate text-[10px] uppercase tracking-wide text-text-muted">
+            {tab.meta}
+          </span>
+        </Button>
+      ))}
+    </div>
+  );
+}
+
+function UsageDashboard({
+  agents,
+  visibleAgentIds,
+  officeState,
+}: {
+  agents: AgentSummary[];
+  visibleAgentIds: number[];
+  officeState: OfficeState;
+}) {
+  const totals = getUsageTotals(agents);
+  const providerSummaries = getProviderUsageSummaries(agents);
+  const projectSummaries = getProjectUsageSummaries(agents);
+  const activeRows = agents
+    .filter((agent) => agent.tokens > 0 || agent.artifactOutputTokens > 0)
+    .slice()
+    .sort((a, b) => b.tokens + b.artifactOutputTokens - (a.tokens + a.artifactOutputTokens));
+
+  return (
+    <div className="grid gap-4">
+      <TokenCostSummary agents={visibleAgentIds} officeState={officeState} />
+
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <UsageMetric
+          label="Total tokens"
+          value={compactNumber(totals.totalTokens)}
+          detail={`${totals.agentCount} visible agents`}
+        />
+        <UsageMetric
+          label="Input"
+          value={compactNumber(totals.inputTokens)}
+          detail={`${totals.exactCount} exact / ${totals.estimatedCount} estimated`}
+        />
+        <UsageMetric
+          label="Output"
+          value={compactNumber(totals.outputTokens)}
+          detail={`${compactNumber(totals.reasoningTokens)} reasoning`}
+        />
+        <UsageMetric
+          label="Cache"
+          value={compactNumber(totals.cacheTokens)}
+          detail={`${compactNumber(totals.artifactOutputTokens)} artifact est.`}
+        />
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+        <section className="border border-border bg-bg">
+          <SectionHeader title="Provider Usage" subtitle="Token mix and quota signals" />
+          <div className="divide-y divide-border">
+            {providerSummaries.map((provider) => (
+              <div key={provider.providerId} className="p-4">
+                <div className="mb-3 flex min-w-0 flex-wrap items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <ProviderBadge providerId={provider.providerId} />
+                      <span className="truncate text-sm text-text">{provider.label}</span>
+                    </div>
+                    <div className="mt-1 text-xs text-text-muted">
+                      {provider.agentCount} agents / {compactNumber(provider.totalTokens)} tokens
+                    </div>
+                  </div>
+                  <div className="text-right text-xs uppercase tracking-wide text-text-muted">
+                    {provider.estimatedCount > 0 ? 'Mixed estimate' : 'Exact'}
+                  </div>
+                </div>
+                <UsageBar
+                  label="Input"
+                  value={provider.inputTokens}
+                  total={Math.max(provider.totalTokens, 1)}
+                />
+                <UsageBar
+                  label="Output"
+                  value={provider.outputTokens}
+                  total={Math.max(provider.totalTokens, 1)}
+                />
+                {provider.cacheTokens > 0 && (
+                  <UsageBar
+                    label="Cache"
+                    value={provider.cacheTokens}
+                    total={Math.max(provider.inputTokens + provider.cacheTokens, 1)}
+                  />
+                )}
+                {provider.codexRateLimit && (
+                  <div className="mt-3 text-xs text-text-muted">
+                    {formatRateLimit(provider.codexRateLimit)}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="border border-border bg-bg">
+          <SectionHeader
+            title="Project Usage"
+            subtitle="Where current agents are spending tokens"
+          />
+          <div className="divide-y divide-border">
+            {projectSummaries.length === 0 ? (
+              <div className="p-4 text-sm text-text-muted">No token usage yet</div>
+            ) : (
+              projectSummaries.slice(0, 8).map((project) => (
+                <div key={project.project} className="p-4">
+                  <div className="mb-2 flex min-w-0 flex-wrap items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="truncate text-sm text-accent-bright">{project.project}</div>
+                      <div className="mt-1 text-xs text-text-muted">
+                        {project.agentCount} agents / {compactNumber(project.totalTokens)} tokens
+                      </div>
+                    </div>
+                    {project.projectDir && (
+                      <Button
+                        variant="default"
+                        size="sm"
+                        className="px-5"
+                        onClick={() =>
+                          vscode.postMessage({
+                            type: 'openProjectPath',
+                            projectDir: project.projectDir,
+                          })
+                        }
+                      >
+                        Open
+                      </Button>
+                    )}
+                  </div>
+                  <UsageBar
+                    label="Share"
+                    value={project.totalTokens}
+                    total={Math.max(totals.totalTokens, 1)}
+                  />
+                </div>
+              ))
+            )}
+          </div>
+        </section>
+      </div>
+
+      <section className="border border-border bg-bg">
+        <SectionHeader title="Agent Usage Ledger" subtitle="Highest usage agents first" />
+        <div className="divide-y divide-border">
+          {activeRows.length === 0 ? (
+            <div className="p-4 text-sm text-text-muted">No token usage has been recorded yet</div>
+          ) : (
+            activeRows.slice(0, 24).map((agent) => (
+              <div
+                key={agent.id}
+                className="grid gap-3 p-4 md:grid-cols-[minmax(0,1fr)_repeat(4,minmax(74px,auto))]"
+              >
+                <div className="min-w-0">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <ProviderBadge providerId={agent.providerId} />
+                    <span className="truncate text-sm text-text">{agent.name}</span>
+                    <span className="shrink-0 text-xs text-text-muted">#{agent.id}</span>
+                  </div>
+                  <div className="mt-1 truncate text-xs text-text-muted">{agent.project}</div>
+                </div>
+                <LedgerValue label="Input" value={agent.inputTokens} />
+                <LedgerValue label="Output" value={agent.outputTokens} />
+                <LedgerValue
+                  label="Cache"
+                  value={
+                    (agent.tokenUsageDetails?.cacheRead ?? 0) +
+                    (agent.tokenUsageDetails?.cacheWrite ?? 0)
+                  }
+                />
+                <LedgerValue label="Total" value={agent.tokens} highlight />
+              </div>
+            ))
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function TimelineDashboard({
+  agents,
+  timeline,
+}: {
+  agents: AgentSummary[];
+  timeline: GlobalTimelineItem[];
+}) {
+  const activeCount = agents.filter((agent) => agent.statusGroup === 'active').length;
+  const needsMeCount = agents.filter((agent) => agent.statusGroup === 'needs_me').length;
+  const errorCount = agents.filter((agent) => agent.statusGroup === 'error').length;
+
+  return (
+    <div className="grid gap-4">
+      <div className="grid gap-3 sm:grid-cols-3">
+        <UsageMetric
+          label="Events"
+          value={timeline.length.toLocaleString()}
+          detail="visible agents"
+        />
+        <UsageMetric
+          label="Active now"
+          value={activeCount.toLocaleString()}
+          detail="currently working"
+        />
+        <UsageMetric
+          label="Needs me"
+          value={needsMeCount.toLocaleString()}
+          detail={`${errorCount} errors`}
+        />
+      </div>
+
+      <section className="border border-border bg-bg">
+        <SectionHeader
+          title="Global Timeline"
+          subtitle="Recent agent, tool, and lifecycle events"
+        />
+        <div className="divide-y divide-border">
+          {timeline.length === 0 ? (
+            <div className="p-8 text-center text-text-muted">No timeline events yet</div>
+          ) : (
+            timeline.slice(0, 80).map((event) => (
+              <div key={event.id} className="grid gap-3 p-4 md:grid-cols-[94px_minmax(0,1fr)]">
+                <div className="text-xs text-text-muted">{formatRelative(event.timestamp)}</div>
+                <div className="min-w-0">
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
+                    <span
+                      className={`h-2 w-2 shrink-0 rounded-full ${severityDot(event.severity)}`}
+                    />
+                    <ProviderBadge providerId={event.providerId} />
+                    <span className="truncate text-sm text-text">{event.title}</span>
+                  </div>
+                  <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2 text-xs text-text-muted">
+                    <span className="truncate">{event.agentName}</span>
+                    <span>#{event.agentId}</span>
+                    <span className="truncate">{event.project}</span>
+                  </div>
+                  {event.summary && (
+                    <div className="mt-1 break-words text-xs text-text-muted">{event.summary}</div>
+                  )}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function SectionHeader({ title, subtitle }: { title: string; subtitle: string }) {
+  return (
+    <div className="border-b border-border bg-btn-bg p-4">
+      <div className="text-sm uppercase tracking-wide text-accent-bright">{title}</div>
+      <div className="mt-1 text-xs text-text-muted">{subtitle}</div>
+    </div>
+  );
+}
+
+function UsageMetric({ label, value, detail }: { label: string; value: string; detail: string }) {
+  return (
+    <div className="min-w-0 border border-border bg-btn-bg p-4">
+      <div className="text-xs uppercase tracking-wide text-text-muted">{label}</div>
+      <div className="mt-1 truncate text-xl text-accent-bright">{value}</div>
+      <div className="mt-1 truncate text-xs text-text-muted">{detail}</div>
+    </div>
+  );
+}
+
+function UsageBar({ label, value, total }: { label: string; value: number; total: number }) {
+  const percent = total > 0 ? Math.min(100, Math.max(value > 0 ? 2 : 0, (value / total) * 100)) : 0;
+
+  return (
+    <div className="mt-2">
+      <div className="mb-1 flex items-center justify-between gap-3 text-xs text-text-muted">
+        <span>{label}</span>
+        <span>{compactNumber(value)}</span>
+      </div>
+      <div className="h-3 border border-border bg-btn-bg">
+        <div className="h-full bg-accent" style={{ width: `${percent}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function LedgerValue({
+  label,
+  value,
+  highlight = false,
+}: {
+  label: string;
+  value: number;
+  highlight?: boolean;
+}) {
+  return (
+    <div className="min-w-0 text-left md:text-right">
+      <div className="text-[10px] uppercase tracking-wide text-text-muted">{label}</div>
+      <div className={`truncate text-sm ${highlight ? 'text-accent-bright' : 'text-text'}`}>
+        {compactNumber(value)}
+      </div>
+    </div>
   );
 }
 
@@ -836,6 +1236,13 @@ interface TimelineItem {
   severity?: 'info' | 'success' | 'warning' | 'error';
 }
 
+interface GlobalTimelineItem extends TimelineItem {
+  agentId: number;
+  agentName: string;
+  providerId: string;
+  project: string;
+}
+
 function buildAgentTimeline(
   agentId: number,
   timelineEvents: AgentTimelineEvent[],
@@ -865,6 +1272,138 @@ function buildAgentTimeline(
       severity: event.severity,
     }))
     .sort((a, b) => b.timestamp - a.timestamp);
+}
+
+function buildGlobalTimeline(
+  agents: AgentSummary[],
+  timelineEvents: AgentTimelineEvent[],
+  lifecycleEvents: AgentLifecycleEvent[],
+): GlobalTimelineItem[] {
+  const agentsById = new Map(agents.map((agent) => [agent.id, agent]));
+  const items: GlobalTimelineItem[] = [];
+
+  for (const event of timelineEvents) {
+    const agent = agentsById.get(event.agentId);
+    if (!agent) continue;
+    items.push({
+      id: `timeline-${event.id}`,
+      agentId: agent.id,
+      agentName: agent.name,
+      providerId: agent.providerId,
+      project: agent.project,
+      timestamp: event.timestamp,
+      title: event.title,
+      summary: event.summary ?? event.kind,
+      severity: event.severity,
+    });
+  }
+
+  lifecycleEvents.forEach((event, index) => {
+    const agent = agentsById.get(event.id);
+    if (!agent) return;
+    items.push({
+      id: `lifecycle-${event.receivedAt}-${event.id}-${index}`,
+      agentId: agent.id,
+      agentName: agent.name,
+      providerId: agent.providerId,
+      project: agent.project,
+      timestamp: event.receivedAt,
+      title: event.label,
+      summary: [event.status, event.detail].filter(Boolean).join(' / '),
+      severity: event.severity,
+    });
+  });
+
+  return items.sort((a, b) => b.timestamp - a.timestamp);
+}
+
+function getUsageTotals(agents: AgentSummary[]): UsageTotals {
+  const totals = createUsageTotals();
+  for (const agent of agents) {
+    addAgentUsage(totals, agent);
+  }
+  return totals;
+}
+
+function getProviderUsageSummaries(agents: AgentSummary[]): ProviderUsageSummary[] {
+  const providers = new Map<string, ProviderUsageSummary>();
+  const ensureProvider = (providerId: string) => {
+    const existing = providers.get(providerId);
+    if (existing) return existing;
+    const summary: ProviderUsageSummary = {
+      ...createUsageTotals(),
+      providerId,
+      label: providerLabel(providerId),
+    };
+    providers.set(providerId, summary);
+    return summary;
+  };
+
+  ensureProvider('codex');
+  ensureProvider('claude');
+
+  for (const agent of agents) {
+    const provider = ensureProvider(agent.providerId);
+    addAgentUsage(provider, agent);
+    if (agent.codexRateLimit) provider.codexRateLimit = agent.codexRateLimit;
+  }
+
+  return [...providers.values()].sort((a, b) => {
+    const providerOrder = providerSortOrder(a.providerId) - providerSortOrder(b.providerId);
+    if (providerOrder !== 0) return providerOrder;
+    return b.totalTokens - a.totalTokens;
+  });
+}
+
+function getProjectUsageSummaries(agents: AgentSummary[]): ProjectUsageSummary[] {
+  const projects = new Map<string, ProjectUsageSummary>();
+  for (const agent of agents) {
+    const project = projects.get(agent.project) ?? {
+      ...createUsageTotals(),
+      project: agent.project,
+      projectDir: agent.projectDir,
+    };
+    addAgentUsage(project, agent);
+    if (!project.projectDir && agent.projectDir) project.projectDir = agent.projectDir;
+    projects.set(agent.project, project);
+  }
+  return [...projects.values()].sort((a, b) => b.totalTokens - a.totalTokens);
+}
+
+function createUsageTotals(): UsageTotals {
+  return {
+    agentCount: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    artifactOutputTokens: 0,
+    totalTokens: 0,
+    cacheTokens: 0,
+    reasoningTokens: 0,
+    estimatedCount: 0,
+    exactCount: 0,
+  };
+}
+
+function addAgentUsage(target: UsageTotals, agent: AgentSummary): void {
+  target.agentCount += 1;
+  target.inputTokens += agent.inputTokens;
+  target.outputTokens += agent.outputTokens;
+  target.artifactOutputTokens += agent.artifactOutputTokens;
+  target.totalTokens += agent.tokens;
+  target.cacheTokens +=
+    (agent.tokenUsageDetails?.cacheRead ?? 0) + (agent.tokenUsageDetails?.cacheWrite ?? 0);
+  target.reasoningTokens += agent.tokenUsageDetails?.reasoningOutput ?? 0;
+  if (agent.tokenUsageEstimated) {
+    target.estimatedCount += 1;
+  } else {
+    target.exactCount += 1;
+  }
+}
+
+function providerSortOrder(providerId: string): number {
+  if (providerId === 'codex') return 0;
+  if (providerId === 'claude') return 1;
+  return 2;
 }
 
 function getStatusGroup(status: string): StatusFilter {
