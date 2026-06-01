@@ -1,5 +1,12 @@
 # Changelog
 
+## Pixel Agents Multi fork notes
+
+- This fork is packaged as `raychen.pixel-agents-multi`, with VSIX files named `pixel-agents-multi-<version>.vsix`.
+- Commands, view ids, settings, workspace state keys, hook discovery, and user data directories use `pixel-agents-multi` identities so this extension can be installed beside the public Pixel Agents package without sharing runtime state.
+- Windows release verification should include `npm run check-types`, `npm run test:webview`, `npm run test:server`, `npm run build`, `npx vsce ls`, `npx vsce package`, `code --install-extension pixel-agents-multi-1.3.0.vsix --force`, and `code --list-extensions --show-versions | rg "raychen\.pixel-agents-multi"`.
+- Recent fork stabilization includes Codex multi-thread adoption, Claude Cowork/local-agent-mode refresh visibility, random seat redistribution on refresh, and clearer token usage labels for exact vs estimated counts.
+
 ## v1.3.0
 
 ### Features
