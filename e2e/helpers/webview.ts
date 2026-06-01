@@ -70,10 +70,10 @@ async function ensurePanelIsLarge(window: Page): Promise<void> {
 
 /**
  * Open the Pixel Agents panel via the Command Palette and wait for the
- * "Pixel Agents: Show Panel" command to execute.
+ * "Pixel Agents Multi: Show Panel" command to execute.
  */
 export async function openPixelAgentsPanel(window: Page): Promise<void> {
-  await runCommand(window, 'Pixel Agents: Show Panel');
+  await runCommand(window, 'Pixel Agents Multi: Show Panel');
 
   // Wait for the panel container to appear
   await window
@@ -119,10 +119,17 @@ export async function getPixelAgentsFrame(window: Page): Promise<Frame> {
 }
 
 /**
- * Click "+ Agent" in the webview and wait for the call to be dispatched.
+ * Start a Codex agent through the New Agent modal.
  */
-export async function clickAddAgent(frame: Frame): Promise<void> {
+export async function startCodexAgent(frame: Frame): Promise<void> {
   const btn = frame.locator('button', { hasText: '+ Agent' });
   await expect(btn).toBeVisible({ timeout: WEBVIEW_TIMEOUT_MS });
   await btn.click();
+
+  await expect(frame.getByText('New Agent')).toBeVisible({ timeout: WEBVIEW_TIMEOUT_MS });
+  await frame
+    .locator('button', { hasText: /^Codex$/ })
+    .last()
+    .click();
+  await frame.locator('button', { hasText: 'Start Agent' }).click();
 }

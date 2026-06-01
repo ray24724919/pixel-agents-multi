@@ -51,9 +51,12 @@ create table if not exists threads (
   id text primary key,
   rollout_path text not null,
   cwd text not null,
+  title text,
   created_at_ms integer,
   updated_at_ms integer,
+  tokens_used integer default 0,
   archived integer default 0,
+  source text,
   agent_nickname text,
   agent_role text
 );
@@ -61,18 +64,24 @@ insert or replace into threads (
   id,
   rollout_path,
   cwd,
+  title,
   created_at_ms,
   updated_at_ms,
+  tokens_used,
   archived,
+  source,
   agent_nickname,
   agent_role
 ) values (
   '$(printf "%s" "$THREAD_ID" | sed "s/'/''/g")',
   '$(printf "%s" "$ROLLOUT_PATH" | sed "s/'/''/g")',
   '$(printf "%s" "$TARGET_CWD" | sed "s/'/''/g")',
+  'Codex',
   ${NOW_MS},
   ${NOW_MS},
   0,
+  0,
+  'vscode',
   '',
   ''
 );
@@ -80,18 +89,24 @@ insert or replace into threads (
   id,
   rollout_path,
   cwd,
+  title,
   created_at_ms,
   updated_at_ms,
+  tokens_used,
   archived,
+  source,
   agent_nickname,
   agent_role
 ) values (
   '$(printf "%s" "$CHILD_THREAD_ID" | sed "s/'/''/g")',
   '$(printf "%s" "$CHILD_ROLLOUT_PATH" | sed "s/'/''/g")',
   '$(printf "%s" "$TARGET_CWD" | sed "s/'/''/g")',
+  'Curie',
   ${NOW_MS},
   ${NOW_MS},
   0,
+  0,
+  'vscode',
   'Curie',
   'worker'
 );

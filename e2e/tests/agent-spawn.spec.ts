@@ -1,5 +1,5 @@
 /**
- * E2E: Clicking "+ Agent" in the Pixel Agents webview spawns a mock Codex terminal.
+ * E2E: Starting a Codex agent in the Pixel Agents webview spawns a mock Codex terminal.
  *
  * Assertions:
  *   1. The mock `codex` binary was invoked (invocations.log exists and is non-empty).
@@ -17,9 +17,9 @@ import fs from 'fs';
 import path from 'path';
 
 import { launchVSCode, waitForWorkbench } from '../helpers/launch';
-import { clickAddAgent, getPixelAgentsFrame, openPixelAgentsPanel } from '../helpers/webview';
+import { getPixelAgentsFrame, openPixelAgentsPanel, startCodexAgent } from '../helpers/webview';
 
-test('clicking + Agent spawns mock codex and adopts a child thread teammate', async ({}, testInfo) => {
+test('starting a Codex agent spawns mock codex and adopts a child thread teammate', async ({}, testInfo) => {
   const session = await launchVSCode(testInfo.title);
   const { window, tmpHome, mockLogFile } = session;
   const runVideo = window.video();
@@ -33,9 +33,9 @@ test('clicking + Agent spawns mock codex and adopts a child thread teammate', as
     // 2. Open the Pixel Agents panel
     await openPixelAgentsPanel(window);
 
-    // 3. Find the webview frame and click + Agent
+    // 3. Find the webview frame and start a Codex agent
     const frame = await getPixelAgentsFrame(window);
-    await clickAddAgent(frame);
+    await startCodexAgent(frame);
 
     // 4. Assert: mock codex was invoked.
     //    The mock script writes to $HOME/.codex-mock/invocations.log.
@@ -116,7 +116,9 @@ test('clicking + Agent spawns mock codex and adopts a child thread teammate', as
     await expect(terminalTab.first()).toBeVisible({ timeout: 15_000 });
 
     // 7. Assert: the child Codex thread was adopted as a teammate in the webview.
-    const root = frame.locator('[data-testid="pixel-agents-root"]');
+    await openPixelAgentsPanel(window);
+    const activeFrame = await getPixelAgentsFrame(window);
+    const root = activeFrame.locator('[data-testid="pixel-agents-root"]');
     await expect
       .poll(async () => Number((await root.getAttribute('data-agent-count')) ?? '0'), {
         message: 'Expected Pixel Agents to show parent + Codex child teammate',

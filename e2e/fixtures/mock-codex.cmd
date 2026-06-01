@@ -61,9 +61,9 @@ if not exist "%SESSION_DIR%" mkdir "%SESSION_DIR%"
 powershell -NoProfile -Command ^
   "$db = $env:DB_PATH; $id = $env:THREAD_ID; $rollout = $env:ROLLOUT_PATH; $childId = $env:CHILD_THREAD_ID; $childRollout = $env:CHILD_ROLLOUT_PATH; $cwd = $env:TARGET_CWD; $now = $env:NOW_MS; " ^
   "$q = { param($v) '''' + ($v -replace '''', '''''') + '''' }; " ^
-  "$sql = @('create table if not exists threads (id text primary key, rollout_path text not null, cwd text not null, created_at_ms integer, updated_at_ms integer, archived integer default 0, agent_nickname text, agent_role text);', " ^
-  "'insert or replace into threads (id, rollout_path, cwd, created_at_ms, updated_at_ms, archived, agent_nickname, agent_role) values (' + (& $q $id) + ', ' + (& $q $rollout) + ', ' + (& $q $cwd) + ', ' + $now + ', ' + $now + ', 0, '''', '''');', " ^
-  "'insert or replace into threads (id, rollout_path, cwd, created_at_ms, updated_at_ms, archived, agent_nickname, agent_role) values (' + (& $q $childId) + ', ' + (& $q $childRollout) + ', ' + (& $q $cwd) + ', ' + $now + ', ' + $now + ', 0, ''Curie'', ''worker'');') -join \"`n\"; " ^
+  "$sql = @('create table if not exists threads (id text primary key, rollout_path text not null, cwd text not null, title text, created_at_ms integer, updated_at_ms integer, tokens_used integer default 0, archived integer default 0, source text, agent_nickname text, agent_role text);', " ^
+  "'insert or replace into threads (id, rollout_path, cwd, title, created_at_ms, updated_at_ms, tokens_used, archived, source, agent_nickname, agent_role) values (' + (& $q $id) + ', ' + (& $q $rollout) + ', ' + (& $q $cwd) + ', ''Codex'', ' + $now + ', ' + $now + ', 0, 0, ''vscode'', '''', '''');', " ^
+  "'insert or replace into threads (id, rollout_path, cwd, title, created_at_ms, updated_at_ms, tokens_used, archived, source, agent_nickname, agent_role) values (' + (& $q $childId) + ', ' + (& $q $childRollout) + ', ' + (& $q $cwd) + ', ''Curie'', ' + $now + ', ' + $now + ', 0, 0, ''vscode'', ''Curie'', ''worker'');') -join \"`n\"; " ^
   "$sql | sqlite3 $db"
 
 >>"%ROLLOUT_PATH%" echo {"type":"event_msg","payload":{"type":"collab_agent_spawn_end","call_id":"call-spawn-child","sender_thread_id":"%THREAD_ID%","new_thread_id":"%CHILD_THREAD_ID%","new_agent_nickname":"Curie","new_agent_role":"worker","status":"pending_init"}}
