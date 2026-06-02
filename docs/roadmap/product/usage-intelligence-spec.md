@@ -157,7 +157,7 @@ SQLite if query performance or compaction requires it.
 Recommended local path:
 
 ```text
-~/.pixel-agents/usage/usage-v1.jsonl
+~/.pixel-agents-multi/usage/usage-v1.jsonl
 ```
 
 Each persisted record should represent a normalized delta or standalone observation, not an
@@ -443,7 +443,7 @@ Required states:
 ## Privacy and Local-First Expectations
 
 - Usage records stay on the user's machine.
-- Default storage lives under `~/.pixel-agents/`.
+- Default storage lives under `~/.pixel-agents-multi/`.
 - Do not upload usage, transcript paths, project paths, prompts, outputs, or analytics.
 - Do not require provider API keys for the default experience.
 - Exports should offer a redacted mode that replaces absolute project and transcript paths with
@@ -563,7 +563,7 @@ Notification behavior:
   chart, anomaly/threshold area, and export button.
 - Empty and error states render visible, useful content instead of a blank page.
 - Export supports JSON and CSV, with redacted paths by default.
-- Usage data remains local-first under `~/.pixel-agents/`.
+- Usage data remains local-first under `~/.pixel-agents-multi/`.
 - Backfill and live ingestion tests cover Codex snapshots, Claude streamed snapshots, exact usage,
   estimated usage, artifact estimates, and rate-limit snapshots.
 - No analytics UI or parser implementation is part of this W4-C package.

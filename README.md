@@ -86,8 +86,8 @@ If you want to use the built extension in normal VS Code windows:
 
 ```bash
 npm run build
-npx vsce package
-code --install-extension pixel-agents-multi-1.3.0.vsix --force
+npm run package:vsix
+npm run install:local
 ```
 
 Confirm that VS Code installed this fork, not the upstream public extension:
@@ -110,9 +110,11 @@ npm run check-types
 npm run test:webview
 npm run test:server
 npm run build
-npx vsce ls
-npx vsce package
-code --install-extension pixel-agents-multi-1.3.0.vsix --force
+npm run verify:identity
+npm run verify:vsix
+npm run package:vsix
+npm run install:local
+npm run verify:installed
 code --list-extensions --show-versions | rg "raychen\.pixel-agents-multi"
 ```
 

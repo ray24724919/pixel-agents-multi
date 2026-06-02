@@ -9,7 +9,6 @@ const expected = {
   name: 'pixel-agents-multi',
   displayName: 'Pixel Agents Multi',
   publisher: 'raychen',
-  version: '1.3.0',
   extensionId: 'raychen.pixel-agents-multi',
   viewContainerId: 'pixel-agents-multi-panel',
   webviewId: 'pixel-agents-multi.panelView',
@@ -54,7 +53,9 @@ const pkg = readJson('package.json');
 assertEqual('package.name', pkg.name, expected.name);
 assertEqual('package.displayName', pkg.displayName, expected.displayName);
 assertEqual('package.publisher', pkg.publisher, expected.publisher);
-assertEqual('package.version', pkg.version, expected.version);
+if (!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(pkg.version ?? '')) {
+  fail(`package.version must be a semver release version, got ${JSON.stringify(pkg.version)}`);
+}
 
 const commands = pkg.contributes?.commands ?? [];
 for (const command of commands) {
@@ -110,6 +111,8 @@ const requiredTextChecks = [
       'CONFIG_SECTION = EXTENSION_NAME',
       'VIEW_CONTAINER_ID = `${EXTENSION_NAME}-panel`',
       'VIEW_ID = `${EXTENSION_NAME}.panelView`',
+      'USAGE_STORE_FILE_DIR = LAYOUT_FILE_DIR',
+      'LEGACY_USAGE_STORE_FILE_DIR = LEGACY_LAYOUT_FILE_DIR',
     ],
   },
   {
@@ -215,4 +218,4 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log(`Release identity verified: ${expected.extensionId}@${expected.version}`);
+console.log(`Release identity verified: ${expected.extensionId}@${pkg.version}`);

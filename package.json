@@ -95,6 +95,9 @@
     "verify:vsix": "node scripts/verify-vsix-contents.mjs",
     "verify:installed": "node scripts/verify-installed-extension.mjs",
     "verify:release": "npm run verify:identity && npm run verify:vsix && npm run verify:installed",
+    "package:vsix": "node scripts/package-local-vsix.mjs",
+    "install:local": "node scripts/install-local-vsix.mjs",
+    "release:local": "npm run build && npm run verify:identity && npm run verify:vsix && npm run package:vsix && npm run install:local && npm run verify:installed",
     "e2e": "playwright test --config e2e/playwright.config.ts",
     "e2e:debug": "playwright test --config e2e/playwright.config.ts --debug",
     "knip": "knip"

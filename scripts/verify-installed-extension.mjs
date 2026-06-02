@@ -1,7 +1,14 @@
 import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const expectedExtension = 'raychen.pixel-agents-multi';
-const expectedVersion = '1.3.0';
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const rootDir = path.resolve(__dirname, '..');
+const pkg = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8'));
+
+const expectedExtension = `${pkg.publisher}.${pkg.name}`;
+const expectedVersion = pkg.version;
 const expectedInstalledLine = `${expectedExtension}@${expectedVersion}`;
 const upstreamExtension = 'pablodelucca.pixel-agents';
 

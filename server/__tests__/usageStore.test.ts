@@ -12,8 +12,10 @@ const {
   createRateLimitSnapshotRecord,
   createUsageDeltaRecord,
   ensureUsageStoreDir,
+  getLegacyUsageStorePath,
   getUsageStorePath,
   hashUsagePath,
+  migrateUsageStoreFromLegacy,
   readUsageRecords,
   redactUsagePath,
 } = await import('../../src/usageStore.js');
@@ -33,9 +35,75 @@ describe('usage store foundation', () => {
     const storePath = getUsageStorePath(tmpDir);
     const storeDir = ensureUsageStoreDir({ homeDir: tmpDir });
 
-    expect(storePath).toBe(path.join(tmpDir, '.pixel-agents', 'usage', 'usage-v1.jsonl'));
+    expect(storePath).toBe(path.join(tmpDir, '.pixel-agents-multi', 'usage', 'usage-v1.jsonl'));
     expect(storeDir).toBe(path.dirname(storePath));
     expect(fs.existsSync(storeDir)).toBe(true);
+  });
+
+  it('copies legacy usage records once into the private fork store', () => {
+    const legacyStorePath = getLegacyUsageStorePath(tmpDir);
+    fs.mkdirSync(path.dirname(legacyStorePath), { recursive: true });
+    const legacyRecord = createUsageDeltaRecord({
+      id: 'legacy-usage',
+      capturedAtMs: 1000,
+      provider: { id: 'codex', label: 'Codex' },
+      project: { name: 'legacy-project' },
+      agent: { id: 1, name: 'Codex #1' },
+      usage: { inputTokens: 12, outputTokens: 8 },
+      tokenSource: UsageTokenSource.EXACT_PROVIDER,
+    });
+    fs.writeFileSync(legacyStorePath, `${JSON.stringify(legacyRecord)}\n`, 'utf8');
+
+    const migratedPath = migrateUsageStoreFromLegacy({ homeDir: tmpDir });
+    const records = readUsageRecords({ homeDir: tmpDir });
+
+    expect(migratedPath).toBe(getUsageStorePath(tmpDir));
+    expect(records).toHaveLength(1);
+    expect(records[0]?.id).toBe('legacy-usage');
+    expect(fs.readFileSync(legacyStorePath, 'utf8')).toContain('legacy-usage');
+  });
+
+  it('does not overwrite an existing private fork usage store with legacy data', () => {
+    const legacyStorePath = getLegacyUsageStorePath(tmpDir);
+    fs.mkdirSync(path.dirname(legacyStorePath), { recursive: true });
+    fs.writeFileSync(
+      legacyStorePath,
+      `${JSON.stringify(
+        createUsageDeltaRecord({
+          id: 'legacy-usage',
+          capturedAtMs: 1000,
+          provider: { id: 'codex' },
+          project: { name: 'legacy-project' },
+          agent: { id: 1, name: 'Codex #1' },
+          usage: { inputTokens: 1 },
+          tokenSource: UsageTokenSource.EXACT_PROVIDER,
+        }),
+      )}\n`,
+      'utf8',
+    );
+    const privateStorePath = getUsageStorePath(tmpDir);
+    fs.mkdirSync(path.dirname(privateStorePath), { recursive: true });
+    fs.writeFileSync(
+      privateStorePath,
+      `${JSON.stringify(
+        createUsageDeltaRecord({
+          id: 'private-usage',
+          capturedAtMs: 2000,
+          provider: { id: 'claude' },
+          project: { name: 'private-project' },
+          agent: { id: 2, name: 'Claude #2' },
+          usage: { outputTokens: 2 },
+          tokenSource: UsageTokenSource.ESTIMATED_TRANSCRIPT,
+        }),
+      )}\n`,
+      'utf8',
+    );
+
+    const migratedPath = migrateUsageStoreFromLegacy({ homeDir: tmpDir });
+    const records = readUsageRecords({ homeDir: tmpDir });
+
+    expect(migratedPath).toBeUndefined();
+    expect(records.map((record) => record.id)).toEqual(['private-usage']);
   });
 
   it('appends and reads usage records as JSONL without raw paths by default', () => {
@@ -92,9 +160,7 @@ describe('usage store foundation', () => {
     expect(records[0]?.project.dirHash).toMatch(/^sha256:/);
     expect(records[0]?.session.transcriptPath).toBeUndefined();
     expect(records[0]?.session.transcriptPathHash).toMatch(/^sha256:/);
-    expect(records[0]?.apiProxyEstimate?.nonBillingLabel).toBe(
-      UsageDisplayLabel.API_PROXY,
-    );
+    expect(records[0]?.apiProxyEstimate?.nonBillingLabel).toBe(UsageDisplayLabel.API_PROXY);
     expect(records[0]?.apiProxyEstimate?.subscriptionBillingLabel).toBe(
       UsageDisplayLabel.NON_BILLING,
     );

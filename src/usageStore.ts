@@ -4,6 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 
 import {
+  LEGACY_USAGE_STORE_FILE_DIR,
   USAGE_PATH_HASH_LENGTH,
   USAGE_PATH_HASH_PREFIX,
   USAGE_RECORD_SCHEMA_VERSION,
@@ -31,8 +32,7 @@ export const UsageArtifactSource = {
   ESTIMATED_TOOL_PAYLOAD: 'estimated_tool_payload',
   NONE: 'none',
 } as const;
-export type UsageArtifactSource =
-  (typeof UsageArtifactSource)[keyof typeof UsageArtifactSource];
+export type UsageArtifactSource = (typeof UsageArtifactSource)[keyof typeof UsageArtifactSource];
 
 export const UsageModelSource = {
   PROVIDER: 'provider',
@@ -45,15 +45,13 @@ export const UsageProxyRateSource = {
   CONFIGURED: 'configured',
   DEFAULT: 'default',
 } as const;
-export type UsageProxyRateSource =
-  (typeof UsageProxyRateSource)[keyof typeof UsageProxyRateSource];
+export type UsageProxyRateSource = (typeof UsageProxyRateSource)[keyof typeof UsageProxyRateSource];
 
 export const UsageRateLimitSource = {
   PROVIDER_EXACT: 'provider_exact',
   ESTIMATED_WINDOW: 'estimated_window',
 } as const;
-export type UsageRateLimitSource =
-  (typeof UsageRateLimitSource)[keyof typeof UsageRateLimitSource];
+export type UsageRateLimitSource = (typeof UsageRateLimitSource)[keyof typeof UsageRateLimitSource];
 
 export const UsageDisplayLabel = {
   EXACT_PROVIDER: 'Exact provider usage',
@@ -259,32 +257,30 @@ export interface CreateRateLimitSnapshotRecordInput extends UsageRecordBaseInput
 }
 
 export function getUsageStorePath(homeDir = os.homedir()): string {
-  return path.join(
-    homeDir,
-    USAGE_STORE_FILE_DIR,
-    USAGE_STORE_SUBDIR,
-    USAGE_STORE_FILE_NAME,
-  );
+  return path.join(homeDir, USAGE_STORE_FILE_DIR, USAGE_STORE_SUBDIR, USAGE_STORE_FILE_NAME);
+}
+
+export function getLegacyUsageStorePath(homeDir = os.homedir()): string {
+  return path.join(homeDir, LEGACY_USAGE_STORE_FILE_DIR, USAGE_STORE_SUBDIR, USAGE_STORE_FILE_NAME);
 }
 
 export function ensureUsageStoreDir(options: UsageStoreOptions = {}): string {
   const storePath = resolveUsageStorePath(options);
+  migrateUsageStoreFromLegacy(options);
   const dir = path.dirname(storePath);
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
 
-export function appendUsageRecord(
-  record: UsageRecordV1,
-  options: UsageStoreOptions = {},
-): void {
+export function appendUsageRecord(record: UsageRecordV1, options: UsageStoreOptions = {}): void {
   const storePath = resolveUsageStorePath(options);
-  fs.mkdirSync(path.dirname(storePath), { recursive: true });
+  ensureUsageStoreDir(options);
   fs.appendFileSync(storePath, `${JSON.stringify(record)}\n`, 'utf8');
 }
 
 export function readUsageRecords(options: UsageStoreOptions = {}): UsageRecordV1[] {
   const storePath = resolveUsageStorePath(options);
+  migrateUsageStoreFromLegacy(options);
   if (!fs.existsSync(storePath)) return [];
   const records: UsageRecordV1[] = [];
   const lines = fs.readFileSync(storePath, 'utf8').split(/\r?\n/);
@@ -300,6 +296,20 @@ export function readUsageRecords(options: UsageStoreOptions = {}): UsageRecordV1
     }
   }
   return records;
+}
+
+export function migrateUsageStoreFromLegacy(options: UsageStoreOptions = {}): string | undefined {
+  if (options.storePath) return undefined;
+  const homeDir = options.homeDir ?? os.homedir();
+  const storePath = getUsageStorePath(homeDir);
+  if (fs.existsSync(storePath)) return undefined;
+
+  const legacyStorePath = getLegacyUsageStorePath(homeDir);
+  if (!fs.existsSync(legacyStorePath)) return undefined;
+
+  fs.mkdirSync(path.dirname(storePath), { recursive: true });
+  fs.copyFileSync(legacyStorePath, storePath);
+  return storePath;
 }
 
 export function createUsageRecordId(): string {
@@ -468,8 +478,7 @@ function normalizeUsage(input: Partial<UsageTokenCounts>): UsageTokenCounts {
 }
 
 function usageTotals(usage: UsageTokenCounts): UsageTotals {
-  const providerInputTotal =
-    usage.inputTokens + usage.cacheReadTokens + usage.cacheWriteTokens;
+  const providerInputTotal = usage.inputTokens + usage.cacheReadTokens + usage.cacheWriteTokens;
   const providerOutputTotal = usage.outputTokens + usage.reasoningOutputTokens;
   const providerTotal = providerInputTotal + providerOutputTotal;
   return {
