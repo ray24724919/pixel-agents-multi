@@ -27,6 +27,16 @@ import {
 } from './agentCenterListModel.js';
 import type { AgentCenterPage } from './agentCenterPages.js';
 import { isPausedStatus, pauseActionLabel } from './pauseResume.js';
+import {
+  buildTimelinePageItems,
+  buildTimelinePageModel,
+  type TimelinePageFilters,
+  type TimelinePageItem,
+  type TimelinePageModel,
+  type TimelineSeverity,
+  type TimelineSeverityFilter,
+  timelineSeverityLabel,
+} from './timelinePageModel.js';
 import { TokenCostSummary } from './TokenCostSummary.js';
 import { Button } from './ui/Button.js';
 import {
@@ -139,6 +149,12 @@ export function AgentCenterSurface({
   const [teamFilter, setTeamFilter] = useState<TeamFilter>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [sortKey, setSortKey] = useState<AgentListSortKey>('attention');
+  const [timelineSearchQuery, setTimelineSearchQuery] = useState('');
+  const [timelineProviderFilter, setTimelineProviderFilter] = useState<'all' | string>('all');
+  const [timelineSeverityFilter, setTimelineSeverityFilter] =
+    useState<TimelineSeverityFilter>('all');
+  const [timelineProjectFilter, setTimelineProjectFilter] = useState<'all' | string>('all');
+  const [timelineAgentFilter, setTimelineAgentFilter] = useState<'all' | string>('all');
   const [detailAgentId, setDetailAgentId] = useState<number | null>(selectedAgent);
 
   const summaries = useMemo(
@@ -207,9 +223,29 @@ export function AgentCenterSurface({
     teamFilter !== 'all' ||
     searchQuery.trim().length > 0 ||
     sortKey !== 'attention';
-  const globalTimeline = useMemo(
-    () => buildGlobalTimeline(visibleSummaries, agentTimelineEvents, agentLifecycleEvents),
+  const timelineItems = useMemo(
+    () => buildTimelinePageItems(visibleSummaries, agentTimelineEvents, agentLifecycleEvents),
     [agentLifecycleEvents, agentTimelineEvents, visibleSummaries],
+  );
+  const timelineFilters = useMemo<TimelinePageFilters>(
+    () => ({
+      providerFilter: timelineProviderFilter,
+      severityFilter: timelineSeverityFilter,
+      projectFilter: timelineProjectFilter,
+      agentFilter: timelineAgentFilter,
+      searchQuery: timelineSearchQuery,
+    }),
+    [
+      timelineAgentFilter,
+      timelineProjectFilter,
+      timelineProviderFilter,
+      timelineSearchQuery,
+      timelineSeverityFilter,
+    ],
+  );
+  const timelineModel = useMemo(
+    () => buildTimelinePageModel(timelineItems, timelineFilters),
+    [timelineFilters, timelineItems],
   );
 
   const clearAgentListFilters = () => {
@@ -219,6 +255,14 @@ export function AgentCenterSurface({
     setTeamFilter('all');
     setSearchQuery('');
     setSortKey('attention');
+  };
+
+  const clearTimelineFilters = () => {
+    setTimelineProviderFilter('all');
+    setTimelineSeverityFilter('all');
+    setTimelineProjectFilter('all');
+    setTimelineAgentFilter('all');
+    setTimelineSearchQuery('');
   };
 
   useEffect(() => {
@@ -400,7 +444,17 @@ export function AgentCenterSurface({
         )}
 
         {activePage === 'timeline' && (
-          <TimelineDashboard agents={visibleSummaries} timeline={globalTimeline} />
+          <TimelineDashboard
+            agents={visibleSummaries}
+            model={timelineModel}
+            filters={timelineFilters}
+            onSearchChange={setTimelineSearchQuery}
+            onProviderFilterChange={setTimelineProviderFilter}
+            onSeverityFilterChange={setTimelineSeverityFilter}
+            onProjectFilterChange={setTimelineProjectFilter}
+            onAgentFilterChange={setTimelineAgentFilter}
+            onClearFilters={clearTimelineFilters}
+          />
         )}
       </div>
     </div>
@@ -687,10 +741,24 @@ function UsageDashboard({
 
 function TimelineDashboard({
   agents,
-  timeline,
+  model,
+  filters,
+  onSearchChange,
+  onProviderFilterChange,
+  onSeverityFilterChange,
+  onProjectFilterChange,
+  onAgentFilterChange,
+  onClearFilters,
 }: {
   agents: AgentSummary[];
-  timeline: GlobalTimelineItem[];
+  model: TimelinePageModel;
+  filters: TimelinePageFilters;
+  onSearchChange: (query: string) => void;
+  onProviderFilterChange: (provider: 'all' | string) => void;
+  onSeverityFilterChange: (severity: TimelineSeverityFilter) => void;
+  onProjectFilterChange: (project: 'all' | string) => void;
+  onAgentFilterChange: (agent: 'all' | string) => void;
+  onClearFilters: () => void;
 }) {
   const activeCount = agents.filter((agent) => agent.statusGroup === 'active').length;
   const needsMeCount = agents.filter((agent) => agent.statusGroup === 'needs_me').length;
@@ -698,59 +766,253 @@ function TimelineDashboard({
 
   return (
     <div className="grid gap-4">
-      <div className="grid gap-3 sm:grid-cols-3">
+      <section className="border border-border bg-bg p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-sm uppercase tracking-wide text-accent-bright">Timeline</div>
+            <div className="mt-1 text-xs text-text-muted">
+              Local event history across visible agents and retained action events
+            </div>
+          </div>
+          <div className="text-xs uppercase tracking-wide text-text-muted">
+            {agents.length} visible agents / {activeCount} active / {needsMeCount} needs me /{' '}
+            {errorCount} errors
+          </div>
+        </div>
+      </section>
+
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
         <UsageMetric
-          label="Events"
-          value={timeline.length.toLocaleString()}
-          detail="visible agents"
+          label="Total"
+          value={model.counts.total.toLocaleString()}
+          detail="events indexed"
         />
         <UsageMetric
-          label="Active now"
-          value={activeCount.toLocaleString()}
-          detail="currently working"
+          label="Shown"
+          value={model.counts.shown.toLocaleString()}
+          detail="after filters"
         />
         <UsageMetric
-          label="Needs me"
-          value={needsMeCount.toLocaleString()}
-          detail={`${errorCount} errors`}
+          label="Info"
+          value={model.counts.info.toLocaleString()}
+          detail="info/success"
+        />
+        <UsageMetric
+          label="Warning"
+          value={model.counts.warning.toLocaleString()}
+          detail="attention events"
+        />
+        <UsageMetric
+          label="Error"
+          value={model.counts.error.toLocaleString()}
+          detail="failure events"
+        />
+        <UsageMetric
+          label="Actions"
+          value={model.counts.actionLike.toLocaleString()}
+          detail="retained history"
         />
       </div>
 
+      <section className="grid gap-3 border border-border bg-btn-bg p-3 xl:grid-cols-[minmax(220px,1fr)_160px_170px_220px_220px_auto]">
+        <label className="min-w-0 text-xs uppercase tracking-wide text-text-muted">
+          Search
+          <input
+            className="mt-2 h-34 w-full border border-border bg-bg px-3 text-sm normal-case tracking-normal text-text outline-none focus:border-accent"
+            value={filters.searchQuery}
+            onChange={(event) => onSearchChange(event.currentTarget.value)}
+            placeholder="Event, agent, project, provider..."
+            aria-label="Search timeline"
+          />
+        </label>
+        <TimelineFilterSelect
+          label="Provider"
+          value={filters.providerFilter}
+          allLabel="All providers"
+          options={model.providerOptions}
+          onChange={onProviderFilterChange}
+          ariaLabel="Filter timeline provider"
+        />
+        <label className="min-w-0 text-xs uppercase tracking-wide text-text-muted">
+          Severity
+          <select
+            className="mt-2 h-34 w-full border border-border bg-bg px-3 text-sm normal-case tracking-normal text-text outline-none focus:border-accent"
+            value={filters.severityFilter}
+            onChange={(event) =>
+              onSeverityFilterChange(event.currentTarget.value as TimelineSeverityFilter)
+            }
+            aria-label="Filter timeline severity"
+          >
+            {(['all', 'info', 'success', 'warning', 'error'] as const).map((severity) => (
+              <option key={severity} value={severity}>
+                {timelineSeverityLabel(severity)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <TimelineFilterSelect
+          label="Project"
+          value={filters.projectFilter}
+          allLabel="All projects"
+          options={model.projectOptions}
+          onChange={onProjectFilterChange}
+          ariaLabel="Filter timeline project"
+        />
+        <TimelineFilterSelect
+          label="Agent"
+          value={filters.agentFilter}
+          allLabel="All agents"
+          options={model.agentOptions}
+          onChange={onAgentFilterChange}
+          ariaLabel="Filter timeline agent"
+        />
+        <div className="flex items-end">
+          {model.hasFilters && (
+            <Button variant="ghost" size="sm" className="h-34 px-4" onClick={onClearFilters}>
+              Clear filters
+            </Button>
+          )}
+        </div>
+      </section>
+
       <section className="border border-border bg-bg">
         <SectionHeader
-          title="Global Timeline"
-          subtitle="Recent agent, tool, and lifecycle events"
+          title="Event History"
+          subtitle="Recent lifecycle and action events, newest first"
         />
         <div className="divide-y divide-border">
-          {timeline.length === 0 ? (
-            <div className="p-8 text-center text-text-muted">No timeline events yet</div>
+          {model.events.length === 0 ? (
+            <TimelineEmptyState
+              hasEvents={model.counts.total > 0}
+              hasFilters={model.hasFilters}
+              onClearFilters={onClearFilters}
+            />
           ) : (
-            timeline.slice(0, 80).map((event) => (
-              <div key={event.id} className="grid gap-3 p-4 md:grid-cols-[94px_minmax(0,1fr)]">
-                <div className="text-xs text-text-muted">{formatRelative(event.timestamp)}</div>
-                <div className="min-w-0">
-                  <div className="flex min-w-0 flex-wrap items-center gap-2">
-                    <span
-                      className={`h-2 w-2 shrink-0 rounded-full ${severityDot(event.severity)}`}
-                    />
-                    <ProviderBadge providerId={event.providerId} />
-                    <span className="truncate text-sm text-text">{event.title}</span>
-                  </div>
-                  <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2 text-xs text-text-muted">
-                    <span className="truncate">{event.agentName}</span>
-                    <span>#{event.agentId}</span>
-                    <span className="truncate">{event.project}</span>
-                  </div>
-                  {event.summary && (
-                    <div className="mt-1 break-words text-xs text-text-muted">{event.summary}</div>
-                  )}
-                </div>
-              </div>
-            ))
+            model.events
+              .slice(0, 120)
+              .map((event) => <TimelineEventRow key={event.id} event={event} />)
           )}
         </div>
       </section>
     </div>
+  );
+}
+
+function TimelineFilterSelect({
+  label,
+  value,
+  allLabel,
+  options,
+  onChange,
+  ariaLabel,
+}: {
+  label: string;
+  value: string;
+  allLabel: string;
+  options: Array<{ value: string; label: string; count: number }>;
+  onChange: (value: string) => void;
+  ariaLabel: string;
+}) {
+  return (
+    <label className="min-w-0 text-xs uppercase tracking-wide text-text-muted">
+      {label}
+      <select
+        className="mt-2 h-34 w-full border border-border bg-bg px-3 text-sm normal-case tracking-normal text-text outline-none focus:border-accent"
+        value={value}
+        onChange={(event) => onChange(event.currentTarget.value)}
+        aria-label={ariaLabel}
+      >
+        <option value="all">{allLabel}</option>
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label} ({option.count})
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function TimelineEmptyState({
+  hasEvents,
+  hasFilters,
+  onClearFilters,
+}: {
+  hasEvents: boolean;
+  hasFilters: boolean;
+  onClearFilters: () => void;
+}) {
+  return (
+    <div className="p-8 text-center text-text-muted">
+      <div className="text-lg text-accent-bright">
+        {hasEvents ? 'No events match these filters' : 'No timeline events yet'}
+      </div>
+      <div className="mt-2 text-sm">
+        {hasEvents
+          ? 'Adjust search or filters to widen the event history.'
+          : 'Lifecycle and action events will appear here as agents run.'}
+      </div>
+      {hasFilters && (
+        <div className="mt-4">
+          <Button variant="default" size="sm" onClick={onClearFilters}>
+            Clear filters
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TimelineEventRow({ event }: { event: TimelinePageItem }) {
+  return (
+    <div className="grid gap-3 p-4 md:grid-cols-[98px_minmax(0,1.2fr)_minmax(180px,0.8fr)]">
+      <div className="text-xs text-text-muted">{formatRelative(event.timestamp)}</div>
+      <div className="min-w-0">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <span className={`h-2 w-2 shrink-0 rounded-full ${severityDot(event.severity)}`} />
+          <TimelineSeverityPill severity={event.severity} />
+          {event.isActionLike && <TimelineActionPill />}
+          <span className="min-w-[120px] max-w-full truncate text-sm text-text">{event.title}</span>
+        </div>
+        {event.summary && (
+          <div className="mt-1 break-words text-xs text-text-muted">{event.summary}</div>
+        )}
+        <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2 text-xs text-text-muted">
+          <span className="truncate">{event.kind}</span>
+          <span>{event.source}</span>
+          {event.sessionId && <span className="truncate">{event.sessionId}</span>}
+          {event.runId && <span className="truncate">{event.runId}</span>}
+        </div>
+      </div>
+      <div className="min-w-0">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <ProviderBadge providerId={event.providerId} />
+          <span className="truncate text-sm text-text">{event.agentName}</span>
+          <span className="shrink-0 text-xs text-text-muted">#{event.agentId}</span>
+        </div>
+        <div className="mt-1 truncate text-xs text-text-muted">{event.project}</div>
+      </div>
+    </div>
+  );
+}
+
+function TimelineSeverityPill({ severity }: { severity: TimelineSeverity }) {
+  return (
+    <span
+      className={`shrink-0 border px-2 py-1 text-xs uppercase tracking-wide ${timelineSeverityClass(
+        severity,
+      )}`}
+    >
+      {timelineSeverityLabel(severity)}
+    </span>
+  );
+}
+
+function TimelineActionPill() {
+  return (
+    <span className="shrink-0 border border-accent bg-btn-bg px-2 py-1 text-xs uppercase tracking-wide text-accent-bright">
+      Action
+    </span>
   );
 }
 
@@ -1622,13 +1884,6 @@ interface TimelineItem {
   severity?: 'info' | 'success' | 'warning' | 'error';
 }
 
-interface GlobalTimelineItem extends TimelineItem {
-  agentId: number;
-  agentName: string;
-  providerId: string;
-  project: string;
-}
-
 function buildAgentTimeline(
   agentId: number,
   timelineEvents: AgentTimelineEvent[],
@@ -1658,49 +1913,6 @@ function buildAgentTimeline(
       severity: event.severity,
     }))
     .sort((a, b) => b.timestamp - a.timestamp);
-}
-
-function buildGlobalTimeline(
-  agents: AgentSummary[],
-  timelineEvents: AgentTimelineEvent[],
-  lifecycleEvents: AgentLifecycleEvent[],
-): GlobalTimelineItem[] {
-  const agentsById = new Map(agents.map((agent) => [agent.id, agent]));
-  const items: GlobalTimelineItem[] = [];
-
-  for (const event of timelineEvents) {
-    const agent = agentsById.get(event.agentId);
-    if (!agent) continue;
-    items.push({
-      id: `timeline-${event.id}`,
-      agentId: agent.id,
-      agentName: agent.name,
-      providerId: agent.providerId,
-      project: agent.project,
-      timestamp: event.timestamp,
-      title: event.title,
-      summary: event.summary ?? event.kind,
-      severity: event.severity,
-    });
-  }
-
-  lifecycleEvents.forEach((event, index) => {
-    const agent = agentsById.get(event.id);
-    if (!agent) return;
-    items.push({
-      id: `lifecycle-${event.receivedAt}-${event.id}-${index}`,
-      agentId: agent.id,
-      agentName: agent.name,
-      providerId: agent.providerId,
-      project: agent.project,
-      timestamp: event.receivedAt,
-      title: event.label,
-      summary: [event.status, event.detail].filter(Boolean).join(' / '),
-      severity: event.severity,
-    });
-  });
-
-  return items.sort((a, b) => b.timestamp - a.timestamp);
 }
 
 function getStatusGroup(status: string): AgentListStatusGroup {
@@ -1894,6 +2106,13 @@ function severityDot(severity?: 'info' | 'success' | 'warning' | 'error'): strin
   if (severity === 'warning') return 'bg-status-permission';
   if (severity === 'success') return 'bg-status-success';
   return 'bg-status-active';
+}
+
+function timelineSeverityClass(severity: TimelineSeverity): string {
+  if (severity === 'error') return 'border-status-error bg-bg text-status-error';
+  if (severity === 'warning') return 'border-status-permission bg-bg text-status-permission';
+  if (severity === 'success') return 'border-status-success bg-bg text-status-success';
+  return 'border-status-active bg-bg text-status-active';
 }
 
 function usageInsightClass(severity: UsageInsight['severity']): string {
