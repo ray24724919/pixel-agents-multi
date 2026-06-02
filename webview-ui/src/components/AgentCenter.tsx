@@ -29,6 +29,13 @@ import type { AgentCenterPage } from './agentCenterPages.js';
 import { isPausedStatus, pauseActionLabel } from './pauseResume.js';
 import { TokenCostSummary } from './TokenCostSummary.js';
 import { Button } from './ui/Button.js';
+import {
+  buildUsageIntelligenceDashboard,
+  type UsageAccuracy,
+  usageAccuracyLabel,
+  type UsageCategorySummary,
+  type UsageInsight,
+} from './usageIntelligenceModel.js';
 
 type ProviderFilter = 'all' | 'codex' | 'claude';
 type StatusFilter = AgentListStatusFilter;
@@ -105,29 +112,6 @@ interface TeamSummary {
   errorCount: number;
   tokens: number;
   projects: string[];
-}
-
-interface UsageTotals {
-  agentCount: number;
-  inputTokens: number;
-  outputTokens: number;
-  artifactOutputTokens: number;
-  totalTokens: number;
-  cacheTokens: number;
-  reasoningTokens: number;
-  estimatedCount: number;
-  exactCount: number;
-}
-
-interface ProviderUsageSummary extends UsageTotals {
-  providerId: string;
-  label: string;
-  codexRateLimit?: TokenRateLimitSnapshot;
-}
-
-interface ProjectUsageSummary extends UsageTotals {
-  project: string;
-  projectDir?: string;
 }
 
 export function AgentCenterSurface({
@@ -472,23 +456,30 @@ function UsageDashboard({
   visibleAgentIds: number[];
   officeState: OfficeState;
 }) {
-  const totals = getUsageTotals(agents);
-  const providerSummaries = getProviderUsageSummaries(agents);
-  const projectSummaries = getProjectUsageSummaries(agents);
-  const activeRows = agents
-    .filter((agent) => agent.tokens > 0 || agent.artifactOutputTokens > 0)
-    .slice()
-    .sort((a, b) => b.tokens + b.artifactOutputTokens - (a.tokens + a.artifactOutputTokens));
-  const hasAgents = agents.length > 0;
+  const dashboard = buildUsageIntelligenceDashboard(agents);
+  const { totals } = dashboard;
+  const activeRows = dashboard.ledgerRows.filter((agent) => agent.displayTokens > 0);
+  const hasAgents = totals.agentCount > 0;
 
   return (
     <div className="grid gap-4">
       <section className="border border-border bg-bg p-4">
-        <div className="text-sm uppercase tracking-wide text-accent-bright">Usage</div>
-        <div className="mt-1 text-xs text-text-muted">
-          {hasAgents
-            ? `${agents.length} visible agents tracked in this view`
-            : 'No visible agents are currently available for usage tracking'}
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-sm uppercase tracking-wide text-accent-bright">
+              Usage Intelligence
+            </div>
+            <div className="mt-1 text-xs text-text-muted">
+              {hasAgents
+                ? `${totals.agentCount} visible agents / ${totals.meteredAgentCount} with usage`
+                : 'No visible agents are currently available for usage tracking'}
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2 text-xs uppercase tracking-wide text-text-muted">
+            <span className="border border-border bg-btn-bg px-2 py-1">Live scope</span>
+            <span className="border border-border bg-btn-bg px-2 py-1">Local only</span>
+            <span className="border border-border bg-btn-bg px-2 py-1">Proxy estimate only</span>
+          </div>
         </div>
       </section>
 
@@ -505,32 +496,39 @@ function UsageDashboard({
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <UsageMetric
-          label="Total tokens"
-          value={compactNumber(totals.totalTokens)}
-          detail={`${totals.agentCount} visible agents`}
+          label="Provider tokens"
+          value={compactNumber(totals.providerTokens)}
+          detail={`${compactNumber(totals.inputTokens)} in / ${compactNumber(
+            totals.outputTokens,
+          )} out`}
         />
         <UsageMetric
-          label="Input"
-          value={compactNumber(totals.inputTokens)}
+          label="Accuracy"
+          value={usageAccuracyShort(totals.accuracy)}
           detail={`${totals.exactCount} exact / ${totals.estimatedCount} estimated`}
         />
         <UsageMetric
-          label="Output"
-          value={compactNumber(totals.outputTokens)}
-          detail={`${compactNumber(totals.reasoningTokens)} reasoning`}
+          label="Reasoning"
+          value={compactNumber(totals.reasoningTokens)}
+          detail={`${compactNumber(totals.cacheTokens)} cache detail`}
         />
         <UsageMetric
-          label="Cache"
-          value={compactNumber(totals.cacheTokens)}
-          detail={`${compactNumber(totals.artifactOutputTokens)} artifact est.`}
+          label="Artifact est."
+          value={compactNumber(totals.artifactOutputTokens)}
+          detail="separate from proxy total"
         />
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+        <UsageCategoryPanel categories={dashboard.categories} />
+        <UsageInsightPanel insights={dashboard.insights} />
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
         <section className="border border-border bg-bg">
           <SectionHeader title="Provider Usage" subtitle="Token mix and quota signals" />
           <div className="divide-y divide-border">
-            {providerSummaries.map((provider) => (
+            {dashboard.providers.map((provider) => (
               <div key={provider.providerId} className="p-4">
                 <div className="mb-3 flex min-w-0 flex-wrap items-center justify-between gap-2">
                   <div className="min-w-0">
@@ -539,28 +537,40 @@ function UsageDashboard({
                       <span className="truncate text-sm text-text">{provider.label}</span>
                     </div>
                     <div className="mt-1 text-xs text-text-muted">
-                      {provider.agentCount} agents / {compactNumber(provider.totalTokens)} tokens
+                      {provider.agentCount} agents / {compactNumber(provider.providerTokens)} tokens
                     </div>
                   </div>
-                  <div className="text-right text-xs uppercase tracking-wide text-text-muted">
-                    {provider.estimatedCount > 0 ? 'Mixed exact/est.' : 'Exact reported'}
-                  </div>
+                  <UsageAccuracyPill accuracy={provider.accuracy} />
                 </div>
                 <UsageBar
                   label="Input"
                   value={provider.inputTokens}
-                  total={Math.max(provider.totalTokens, 1)}
+                  total={Math.max(provider.providerTokens, 1)}
                 />
                 <UsageBar
                   label="Output"
                   value={provider.outputTokens}
-                  total={Math.max(provider.totalTokens, 1)}
+                  total={Math.max(provider.providerTokens, 1)}
                 />
                 {provider.cacheTokens > 0 && (
                   <UsageBar
                     label="Cache"
                     value={provider.cacheTokens}
                     total={Math.max(provider.inputTokens + provider.cacheTokens, 1)}
+                  />
+                )}
+                {provider.reasoningTokens > 0 && (
+                  <UsageBar
+                    label="Reasoning"
+                    value={provider.reasoningTokens}
+                    total={Math.max(provider.outputTokens, provider.reasoningTokens, 1)}
+                  />
+                )}
+                {provider.artifactOutputTokens > 0 && (
+                  <UsageBar
+                    label="Artifact est."
+                    value={provider.artifactOutputTokens}
+                    total={Math.max(provider.displayTokens, 1)}
                   />
                 )}
                 {provider.codexRateLimit && (
@@ -579,39 +589,54 @@ function UsageDashboard({
             subtitle="Where current agents are spending tokens"
           />
           <div className="divide-y divide-border">
-            {projectSummaries.length === 0 ? (
+            {dashboard.projects.length === 0 ? (
               <div className="p-4 text-sm text-text-muted">No token usage yet</div>
             ) : (
-              projectSummaries.slice(0, 8).map((project) => (
+              dashboard.projects.slice(0, 8).map((project) => (
                 <div key={project.project} className="p-4">
                   <div className="mb-2 flex min-w-0 flex-wrap items-center justify-between gap-2">
                     <div className="min-w-0">
                       <div className="truncate text-sm text-accent-bright">{project.project}</div>
                       <div className="mt-1 text-xs text-text-muted">
-                        {project.agentCount} agents / {compactNumber(project.totalTokens)} tokens
+                        {project.agentCount} agents / {compactNumber(project.providerTokens)} tokens
                       </div>
                     </div>
-                    {project.projectDir && (
-                      <Button
-                        variant="default"
-                        size="sm"
-                        className="px-5"
-                        onClick={() =>
-                          vscode.postMessage({
-                            type: 'openProjectPath',
-                            projectDir: project.projectDir,
-                          })
-                        }
-                      >
-                        Open
-                      </Button>
+                    <UsageAccuracyPill accuracy={project.accuracy} />
+                  </div>
+                  <div className="mb-2 flex min-w-0 flex-wrap gap-2 text-xs text-text-muted">
+                    {project.providerIds.map((providerId) => (
+                      <ProviderBadge key={providerId} providerId={providerId} />
+                    ))}
+                    {project.topAgentName && (
+                      <span className="truncate">
+                        Top: {project.topAgentName} / {compactNumber(project.topAgentTokens)}
+                      </span>
+                    )}
+                    {project.updatedAt !== undefined && project.updatedAt > 0 && (
+                      <span>Updated {formatRelative(project.updatedAt)}</span>
                     )}
                   </div>
                   <UsageBar
                     label="Share"
-                    value={project.totalTokens}
-                    total={Math.max(totals.totalTokens, 1)}
+                    value={project.providerTokens}
+                    total={Math.max(totals.providerTokens, 1)}
                   />
+                  {project.projectDir && (
+                    <Button
+                      variant="default"
+                      size="sm"
+                      className="mt-3 px-5"
+                      onClick={() =>
+                        vscode.postMessage({
+                          type: 'openProjectPath',
+                          projectDir: project.projectDir,
+                        })
+                      }
+                      title={project.projectDir}
+                    >
+                      Open Project
+                    </Button>
+                  )}
                 </div>
               ))
             )}
@@ -628,7 +653,7 @@ function UsageDashboard({
             activeRows.slice(0, 24).map((agent) => (
               <div
                 key={agent.id}
-                className="grid gap-3 p-4 md:grid-cols-[minmax(0,1fr)_repeat(4,minmax(74px,auto))]"
+                className="grid gap-3 p-4 md:grid-cols-[minmax(0,1fr)_repeat(6,minmax(68px,auto))_auto]"
               >
                 <div className="min-w-0">
                   <div className="flex min-w-0 items-center gap-2">
@@ -636,18 +661,21 @@ function UsageDashboard({
                     <span className="truncate text-sm text-text">{agent.name}</span>
                     <span className="shrink-0 text-xs text-text-muted">#{agent.id}</span>
                   </div>
-                  <div className="mt-1 truncate text-xs text-text-muted">{agent.project}</div>
+                  <div className="mt-1 flex min-w-0 flex-wrap gap-2 text-xs text-text-muted">
+                    <span className="truncate">{agent.project}</span>
+                    {agent.teamName && <span className="truncate">{agent.teamName}</span>}
+                    {agent.sessionId && <span className="truncate">{agent.sessionId}</span>}
+                  </div>
                 </div>
                 <LedgerValue label="Input" value={agent.inputTokens} />
                 <LedgerValue label="Output" value={agent.outputTokens} />
-                <LedgerValue
-                  label="Cache"
-                  value={
-                    (agent.tokenUsageDetails?.cacheRead ?? 0) +
-                    (agent.tokenUsageDetails?.cacheWrite ?? 0)
-                  }
-                />
-                <LedgerValue label="Total" value={agent.tokens} highlight />
+                <LedgerValue label="Cache" value={agent.cacheTokens} />
+                <LedgerValue label="Reason" value={agent.reasoningTokens} />
+                <LedgerValue label="Artifact" value={agent.artifactOutputTokens} />
+                <LedgerValue label="Provider" value={agent.providerTokens} highlight />
+                <div className="flex items-start justify-start md:justify-end">
+                  <UsageAccuracyPill accuracy={agent.accuracy} />
+                </div>
               </div>
             ))
           )}
@@ -742,6 +770,65 @@ function UsageMetric({ label, value, detail }: { label: string; value: string; d
       <div className="mt-1 truncate text-xl text-accent-bright">{value}</div>
       <div className="mt-1 truncate text-xs text-text-muted">{detail}</div>
     </div>
+  );
+}
+
+function UsageCategoryPanel({ categories }: { categories: UsageCategorySummary[] }) {
+  return (
+    <section className="border border-border bg-bg">
+      <SectionHeader title="Token Mix" subtitle="Live provider totals and category detail" />
+      <div className="grid gap-3 p-4 sm:grid-cols-2">
+        {categories.map((category) => (
+          <div key={category.id} className="min-w-0 border border-border bg-btn-bg p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="truncate text-sm text-accent-bright">{category.label}</div>
+              <div className="shrink-0 text-xs text-text-muted">
+                {compactNumber(category.value)}
+              </div>
+            </div>
+            <UsageBar label="Share" value={category.value} total={category.total} />
+            <div className="mt-2 break-words text-xs text-text-muted">{category.detail}</div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function UsageInsightPanel({ insights }: { insights: UsageInsight[] }) {
+  return (
+    <section className="border border-border bg-bg">
+      <SectionHeader title="Live Signals" subtitle="Local warnings from the current scope" />
+      <div className="divide-y divide-border">
+        {insights.map((insight) => (
+          <div
+            key={insight.id}
+            className={`grid gap-3 p-4 sm:grid-cols-[18px_minmax(0,1fr)] ${usageInsightClass(
+              insight.severity,
+            )}`}
+          >
+            <span className={`mt-1 h-3 w-3 ${usageInsightDotClass(insight.severity)}`} />
+            <div className="min-w-0">
+              <div className="truncate text-sm text-text">{insight.title}</div>
+              <div className="mt-1 break-words text-xs text-text-muted">{insight.detail}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function UsageAccuracyPill({ accuracy }: { accuracy: UsageAccuracy }) {
+  return (
+    <span
+      className={`shrink-0 border px-2 py-1 text-xs uppercase tracking-wide ${usageAccuracyClass(
+        accuracy,
+      )}`}
+      title={usageAccuracyLabel(accuracy)}
+    >
+      {usageAccuracyShort(accuracy)}
+    </span>
   );
 }
 
@@ -1616,95 +1703,6 @@ function buildGlobalTimeline(
   return items.sort((a, b) => b.timestamp - a.timestamp);
 }
 
-function getUsageTotals(agents: AgentSummary[]): UsageTotals {
-  const totals = createUsageTotals();
-  for (const agent of agents) {
-    addAgentUsage(totals, agent);
-  }
-  return totals;
-}
-
-function getProviderUsageSummaries(agents: AgentSummary[]): ProviderUsageSummary[] {
-  const providers = new Map<string, ProviderUsageSummary>();
-  const ensureProvider = (providerId: string) => {
-    const existing = providers.get(providerId);
-    if (existing) return existing;
-    const summary: ProviderUsageSummary = {
-      ...createUsageTotals(),
-      providerId,
-      label: providerLabel(providerId),
-    };
-    providers.set(providerId, summary);
-    return summary;
-  };
-
-  ensureProvider('codex');
-  ensureProvider('claude');
-
-  for (const agent of agents) {
-    const provider = ensureProvider(agent.providerId);
-    addAgentUsage(provider, agent);
-    if (agent.codexRateLimit) provider.codexRateLimit = agent.codexRateLimit;
-  }
-
-  return [...providers.values()].sort((a, b) => {
-    const providerOrder = providerSortOrder(a.providerId) - providerSortOrder(b.providerId);
-    if (providerOrder !== 0) return providerOrder;
-    return b.totalTokens - a.totalTokens;
-  });
-}
-
-function getProjectUsageSummaries(agents: AgentSummary[]): ProjectUsageSummary[] {
-  const projects = new Map<string, ProjectUsageSummary>();
-  for (const agent of agents) {
-    const project = projects.get(agent.project) ?? {
-      ...createUsageTotals(),
-      project: agent.project,
-      projectDir: agent.projectDir,
-    };
-    addAgentUsage(project, agent);
-    if (!project.projectDir && agent.projectDir) project.projectDir = agent.projectDir;
-    projects.set(agent.project, project);
-  }
-  return [...projects.values()].sort((a, b) => b.totalTokens - a.totalTokens);
-}
-
-function createUsageTotals(): UsageTotals {
-  return {
-    agentCount: 0,
-    inputTokens: 0,
-    outputTokens: 0,
-    artifactOutputTokens: 0,
-    totalTokens: 0,
-    cacheTokens: 0,
-    reasoningTokens: 0,
-    estimatedCount: 0,
-    exactCount: 0,
-  };
-}
-
-function addAgentUsage(target: UsageTotals, agent: AgentSummary): void {
-  target.agentCount += 1;
-  target.inputTokens += agent.inputTokens;
-  target.outputTokens += agent.outputTokens;
-  target.artifactOutputTokens += agent.artifactOutputTokens;
-  target.totalTokens += agent.tokens;
-  target.cacheTokens +=
-    (agent.tokenUsageDetails?.cacheRead ?? 0) + (agent.tokenUsageDetails?.cacheWrite ?? 0);
-  target.reasoningTokens += agent.tokenUsageDetails?.reasoningOutput ?? 0;
-  if (agent.tokenUsageEstimated || agent.tokenUsageDetails?.estimated === true) {
-    target.estimatedCount += 1;
-  } else {
-    target.exactCount += 1;
-  }
-}
-
-function providerSortOrder(providerId: string): number {
-  if (providerId === 'codex') return 0;
-  if (providerId === 'claude') return 1;
-  return 2;
-}
-
 function getStatusGroup(status: string): AgentListStatusGroup {
   if (status === 'paused') return 'paused';
   if (status === 'error') return 'error';
@@ -1896,6 +1894,32 @@ function severityDot(severity?: 'info' | 'success' | 'warning' | 'error'): strin
   if (severity === 'warning') return 'bg-status-permission';
   if (severity === 'success') return 'bg-status-success';
   return 'bg-status-active';
+}
+
+function usageInsightClass(severity: UsageInsight['severity']): string {
+  if (severity === 'error') return 'bg-bg border-l-4 border-l-status-error';
+  if (severity === 'warning') return 'bg-bg border-l-4 border-l-status-permission';
+  return 'bg-bg';
+}
+
+function usageInsightDotClass(severity: UsageInsight['severity']): string {
+  if (severity === 'error') return 'bg-status-error';
+  if (severity === 'warning') return 'bg-status-permission';
+  return 'bg-status-active';
+}
+
+function usageAccuracyShort(accuracy: UsageAccuracy): string {
+  if (accuracy === 'exact') return 'Exact';
+  if (accuracy === 'estimated') return 'Estimated';
+  if (accuracy === 'mixed') return 'Mixed';
+  return 'None';
+}
+
+function usageAccuracyClass(accuracy: UsageAccuracy): string {
+  if (accuracy === 'exact') return 'border-status-success bg-btn-bg text-text';
+  if (accuracy === 'estimated') return 'border-status-permission bg-btn-bg text-text';
+  if (accuracy === 'mixed') return 'border-status-active bg-btn-bg text-text';
+  return 'border-border bg-btn-bg text-text-muted';
 }
 
 function compactNumber(value: number): string {
