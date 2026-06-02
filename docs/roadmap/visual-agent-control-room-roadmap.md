@@ -11,6 +11,7 @@ This roadmap was assembled under supervised parallel planning. Three draft works
 - `docs/roadmap/drafts/status-timeline-replay.md`
 - `docs/roadmap/drafts/agent-center-projects-integration.md`
 - `docs/roadmap/drafts/zones-cost-actions-team.md`
+- `docs/roadmap/drafts/supervisor-delegation-visibility.md`
 
 The drafts are kept as supporting notes. This file is the canonical execution roadmap.
 
@@ -23,6 +24,8 @@ The drafts are kept as supporting notes. This file is the canonical execution ro
 - Add safer controls for hiding, archiving, and killing sessions.
 - Improve token and cost visibility for Codex/OpenAI and Claude usage.
 - Prepare the architecture for richer team and supervisor/child-agent visualization.
+- Show supervisor agents as working when they are actively delegating to child agents, teammates, or
+  internal background workers.
 
 ## Recommended Build Order
 

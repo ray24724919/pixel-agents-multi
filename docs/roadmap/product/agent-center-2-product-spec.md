@@ -143,6 +143,11 @@ Drawer sections:
 - Team:
   - Lead/member role and team name when available.
   - Nearby team members for future team workflows.
+- Delegation:
+  - Active delegated worker count when the agent is supervising background work.
+  - Delegate source when known, such as terminal-backed agent, hook-detected teammate, or internal
+    app worker.
+  - Provider-agnostic display so Codex and Claude supervisors use the same visual state.
 - Recent timeline:
   - Latest lifecycle/action/tool events for this agent.
   - Action events must remain visible after Hide, Archive, and Kill.
@@ -294,6 +299,23 @@ user changes sorting.
 Waiting means idle or awaiting user input. Needs me means permission or attention is required.
 Needs-me rows should be visually prominent and sort above ordinary idle rows by default.
 
+### Delegating or Supervising
+
+Delegating means an agent has assigned work to child agents, teammates, terminal-backed executors, or
+internal app workers. A delegating supervisor is working, not resting, even if its own terminal is not
+currently streaming output.
+
+Behavior:
+
+- Delegating supervisors remain visible in active management views.
+- Delegating supervisors sort above ordinary idle/waiting agents, below needs-me/error/active tool
+  execution unless the user changes sorting.
+- The detail drawer shows active, completed, and failed delegate counts when available.
+- Office visuals can either keep the supervisor in a work/supervision pose or show nearby
+  team/child-agent markers.
+- Internal-only workers should be visually distinguished from real terminal-backed agents.
+- Codex and Claude providers share the same normalized delegation state and timeline events.
+
 ## Filters, Sorting, and Search
 
 ### Provider Filter
@@ -410,6 +432,8 @@ Relationship to Agents:
 Future Timeline page additions:
 
 - Filter by provider/project/status/event kind.
+- Filter and retain delegation events such as `delegation.started`, `delegation.completed`, and
+  `delegation.failed`.
 - Handoff-ready summaries.
 - Export recent history to markdown.
 - Correlate agent events with branch/commit/PR metadata.
