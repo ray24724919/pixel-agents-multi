@@ -16,13 +16,22 @@ import {
 } from '../office/zoneUtils.js';
 import { vscode } from '../vscodeApi.js';
 import { isAgentVisibleWithHiddenToggle } from './agentCenterFilters.js';
+import {
+  AGENT_LIST_SORT_OPTIONS,
+  type AgentListItem,
+  type AgentListSortKey,
+  agentListSortLabel,
+  type AgentListStatusFilter,
+  type AgentListStatusGroup,
+  filterAndSortAgentList,
+} from './agentCenterListModel.js';
 import type { AgentCenterPage } from './agentCenterPages.js';
 import { isPausedStatus, pauseActionLabel } from './pauseResume.js';
 import { TokenCostSummary } from './TokenCostSummary.js';
 import { Button } from './ui/Button.js';
 
 type ProviderFilter = 'all' | 'codex' | 'claude';
-type StatusFilter = 'all' | 'active' | 'paused' | 'waiting' | 'needs_me' | 'error';
+type StatusFilter = AgentListStatusFilter;
 type ProjectFilter = 'all' | string;
 type TeamFilter = 'all' | string;
 
@@ -46,16 +55,17 @@ interface AgentCenterSurfaceProps {
   onResumeAgent: (id: number) => void;
 }
 
-interface AgentSummary {
+interface AgentSummary extends AgentListItem {
   id: number;
   name: string;
   project: string;
   providerId: string;
   status: string;
-  statusGroup: StatusFilter;
+  statusGroup: AgentListStatusGroup;
   activity: string;
   detail?: string;
   tokens: number;
+  updatedAt?: number;
   inputTokens: number;
   outputTokens: number;
   artifactOutputTokens: number;
@@ -143,6 +153,8 @@ export function AgentCenterSurface({
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [projectFilter, setProjectFilter] = useState<ProjectFilter>('all');
   const [teamFilter, setTeamFilter] = useState<TeamFilter>('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [sortKey, setSortKey] = useState<AgentListSortKey>('attention');
   const [detailAgentId, setDetailAgentId] = useState<number | null>(selectedAgent);
 
   const summaries = useMemo(
@@ -156,12 +168,14 @@ export function AgentCenterSurface({
           agentRuntimeMetadata[id],
           hiddenAgents[id] === true,
           officeState,
+          agentTimelineEvents,
         ),
       ),
     [
       agents,
       agentRuntimeMetadata,
       agentTools,
+      agentTimelineEvents,
       agentLifecycleStatuses,
       agentStatuses,
       hiddenAgents,
@@ -176,14 +190,23 @@ export function AgentCenterSurface({
 
   const filteredAgents = useMemo(
     () =>
-      visibleSummaries.filter((agent) => {
-        const providerMatches = providerFilter === 'all' || agent.providerId === providerFilter;
-        const statusMatches = statusFilter === 'all' || agent.statusGroup === statusFilter;
-        const projectMatches = projectFilter === 'all' || agent.project === projectFilter;
-        const teamMatches = teamFilter === 'all' || agent.teamName === teamFilter;
-        return providerMatches && statusMatches && projectMatches && teamMatches;
+      filterAndSortAgentList(visibleSummaries, {
+        providerFilter,
+        statusFilter,
+        projectFilter,
+        teamFilter,
+        searchQuery,
+        sortKey,
       }),
-    [projectFilter, providerFilter, statusFilter, visibleSummaries, teamFilter],
+    [
+      projectFilter,
+      providerFilter,
+      searchQuery,
+      sortKey,
+      statusFilter,
+      teamFilter,
+      visibleSummaries,
+    ],
   );
   const projectSummaries = useMemo(() => getProjectSummaries(visibleSummaries), [visibleSummaries]);
   const teamSummaries = useMemo(() => getTeamSummaries(visibleSummaries), [visibleSummaries]);
@@ -192,10 +215,27 @@ export function AgentCenterSurface({
     [visibleSummaries],
   );
   const hiddenCount = summaries.filter((agent) => agent.hidden).length;
+  const agentStateCounts = useMemo(() => getAgentStateCounts(summaries), [summaries]);
+  const hasAgentListFilters =
+    providerFilter !== 'all' ||
+    statusFilter !== 'all' ||
+    projectFilter !== 'all' ||
+    teamFilter !== 'all' ||
+    searchQuery.trim().length > 0 ||
+    sortKey !== 'attention';
   const globalTimeline = useMemo(
     () => buildGlobalTimeline(visibleSummaries, agentTimelineEvents, agentLifecycleEvents),
     [agentLifecycleEvents, agentTimelineEvents, visibleSummaries],
   );
+
+  const clearAgentListFilters = () => {
+    setProviderFilter('all');
+    setStatusFilter('all');
+    setProjectFilter('all');
+    setTeamFilter('all');
+    setSearchQuery('');
+    setSortKey('attention');
+  };
 
   useEffect(() => {
     officeState.setMeetingTeam(teamFilter === 'all' ? null : teamFilter);
@@ -252,7 +292,41 @@ export function AgentCenterSurface({
       <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6 pr-7 pt-6">
         {activePage === 'agents' && (
           <>
-            <div className="mb-4 flex shrink-0 flex-wrap items-center justify-between gap-3">
+            <AgentStateSummary
+              counts={agentStateCounts}
+              shownCount={filteredAgents.length}
+              visibleCount={visibleSummaries.length}
+            />
+
+            <div className="mb-4 grid gap-3 border border-border bg-btn-bg p-3 xl:grid-cols-[minmax(220px,1fr)_220px]">
+              <label className="min-w-0 text-xs uppercase tracking-wide text-text-muted">
+                Search
+                <input
+                  className="mt-2 h-34 w-full border border-border bg-bg px-3 text-sm normal-case tracking-normal text-text outline-none focus:border-accent"
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.currentTarget.value)}
+                  placeholder="Agent, project, session, team, activity..."
+                  aria-label="Search agents"
+                />
+              </label>
+              <label className="min-w-0 text-xs uppercase tracking-wide text-text-muted">
+                Sort
+                <select
+                  className="mt-2 h-34 w-full border border-border bg-bg px-3 text-sm normal-case tracking-normal text-text outline-none focus:border-accent"
+                  value={sortKey}
+                  onChange={(event) => setSortKey(event.currentTarget.value as AgentListSortKey)}
+                  aria-label="Sort agents"
+                >
+                  {AGENT_LIST_SORT_OPTIONS.map((option) => (
+                    <option key={option} value={option}>
+                      {agentListSortLabel(option)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <div className="mb-3 flex shrink-0 flex-wrap items-center justify-between gap-3">
               <SegmentedButtons
                 values={['all', 'codex', 'claude']}
                 active={providerFilter}
@@ -266,11 +340,16 @@ export function AgentCenterSurface({
 
             <div className="mb-3 flex shrink-0 flex-wrap items-center gap-2">
               <SegmentedButtons
-                values={['all', 'active', 'paused', 'waiting', 'needs_me', 'error']}
+                values={['all', 'needs_me', 'error', 'active', 'paused', 'waiting', 'hidden']}
                 active={statusFilter}
                 label={statusFilterLabel}
                 onChange={setStatusFilter}
               />
+              {hasAgentListFilters && (
+                <Button variant="ghost" size="sm" className="px-4" onClick={clearAgentListFilters}>
+                  Clear filters
+                </Button>
+              )}
             </div>
 
             <ProjectDashboard
@@ -291,9 +370,15 @@ export function AgentCenterSurface({
             <div className="grid border border-border lg:grid-cols-[minmax(320px,0.92fr)_minmax(0,1.08fr)]">
               <div className="border-b border-border lg:border-b-0 lg:border-r">
                 {filteredAgents.length === 0 ? (
-                  <div className="p-8 text-center text-text-muted">
-                    No agents match these filters
-                  </div>
+                  <AgentListEmptyState
+                    hasFilters={hasAgentListFilters}
+                    hiddenCount={hiddenCount}
+                    showHiddenAgents={showHiddenAgents}
+                    totalAgents={summaries.length}
+                    visibleCount={visibleSummaries.length}
+                    onClearFilters={clearAgentListFilters}
+                    onShowHidden={() => onShowHiddenAgentsChange(true)}
+                  />
                 ) : (
                   <div className="divide-y divide-border">
                     {filteredAgents.map((agent) => (
@@ -723,6 +808,96 @@ function SegmentedButtons<T extends string>({
   );
 }
 
+interface AgentStateCounts {
+  total: number;
+  active: number;
+  paused: number;
+  waiting: number;
+  needsMe: number;
+  error: number;
+  hidden: number;
+}
+
+function AgentStateSummary({
+  counts,
+  shownCount,
+  visibleCount,
+}: {
+  counts: AgentStateCounts;
+  shownCount: number;
+  visibleCount: number;
+}) {
+  const items = [
+    { label: 'Shown', value: shownCount, tone: 'border-accent text-accent-bright' },
+    { label: 'Visible', value: visibleCount, tone: 'border-border text-text' },
+    { label: 'Needs me', value: counts.needsMe, tone: 'border-status-permission text-text' },
+    { label: 'Error', value: counts.error, tone: 'border-status-error text-text' },
+    { label: 'Active', value: counts.active, tone: 'border-status-active text-text' },
+    { label: 'Paused', value: counts.paused, tone: 'border-status-permission text-text' },
+    { label: 'Waiting', value: counts.waiting, tone: 'border-status-success text-text' },
+    { label: 'Hidden', value: counts.hidden, tone: 'border-border text-text-muted' },
+  ];
+
+  return (
+    <div className="mb-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+      {items.map((item) => (
+        <div key={item.label} className={`border bg-bg p-3 ${item.tone}`}>
+          <div className="text-xs uppercase tracking-wide text-text-muted">{item.label}</div>
+          <div className="mt-1 text-lg text-accent-bright">{item.value}</div>
+        </div>
+      ))}
+      {counts.total === 0 && (
+        <div className="border border-border bg-btn-bg p-3 text-sm text-text-muted">
+          No active agents are currently tracked.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AgentListEmptyState({
+  hasFilters,
+  hiddenCount,
+  showHiddenAgents,
+  totalAgents,
+  visibleCount,
+  onClearFilters,
+  onShowHidden,
+}: {
+  hasFilters: boolean;
+  hiddenCount: number;
+  showHiddenAgents: boolean;
+  totalAgents: number;
+  visibleCount: number;
+  onClearFilters: () => void;
+  onShowHidden: () => void;
+}) {
+  const message =
+    totalAgents === 0
+      ? 'No agents yet.'
+      : visibleCount === 0 && hiddenCount > 0 && !showHiddenAgents
+        ? 'Only hidden agents are currently available.'
+        : 'No agents match these filters.';
+
+  return (
+    <div className="p-8 text-center text-text-muted">
+      <div className="text-lg text-accent-bright">{message}</div>
+      <div className="mt-3 flex flex-wrap justify-center gap-2">
+        {hasFilters && (
+          <Button variant="default" size="sm" onClick={onClearFilters}>
+            Clear filters
+          </Button>
+        )}
+        {hiddenCount > 0 && !showHiddenAgents && (
+          <Button variant="default" size="sm" onClick={onShowHidden}>
+            Show hidden
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function AgentRow({
   agent,
   isSelected,
@@ -733,18 +908,19 @@ function AgentRow({
   onSelect: () => void;
 }) {
   return (
-    <button
-      type="button"
-      className={`grid w-full grid-cols-[minmax(0,1fr)_auto] gap-4 p-4 text-left hover:bg-btn-hover ${isSelected ? 'bg-active-bg' : 'bg-bg'}`}
-      onClick={onSelect}
-    >
+    <button type="button" className={agentRowClass(agent, isSelected)} onClick={onSelect}>
+      <div className="hidden pt-1 sm:block">
+        <span className={`block h-14 w-3 ${attentionColor(agent)}`} />
+      </div>
       <div className="min-w-0">
-        <div className="flex min-w-0 items-center gap-3">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           <ProviderBadge providerId={agent.providerId} />
+          <AttentionBadge agent={agent} />
+        </div>
+        <div className="mt-2 flex min-w-0 items-baseline gap-2">
           <span className="truncate text-lg text-accent-bright">{agent.name}</span>
           <span className="shrink-0 text-xs text-text-muted">#{agent.id}</span>
         </div>
-        <div className="mt-1 truncate text-sm text-text-muted">{agent.project}</div>
         {agent.teamName && (
           <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2 text-xs text-text-muted">
             <span className="truncate border border-border bg-btn-bg px-2 py-1">
@@ -753,17 +929,102 @@ function AgentRow({
             <span>{agent.isTeamLead ? 'Lead' : (agent.roleName ?? 'Member')}</span>
           </div>
         )}
-        <div className="mt-3 flex min-w-0 flex-wrap items-center gap-3">
+      </div>
+      <div className="min-w-0">
+        <div className="text-xs uppercase tracking-wide text-text-muted">Project</div>
+        <div className="mt-1 truncate text-sm text-text">{agent.project}</div>
+        {agent.projectDir && (
+          <div className="mt-1 truncate text-xs text-text-muted" title={agent.projectDir}>
+            {agent.projectDir}
+          </div>
+        )}
+      </div>
+      <div className="min-w-0">
+        <div className="text-xs uppercase tracking-wide text-text-muted">Activity</div>
+        <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2">
           <StatusBadge status={agent.status} />
           {agent.isPaused && <PausedMarker />}
           {agent.hidden && <HiddenMarker />}
-          <span className="max-w-full truncate text-sm text-text">{agent.activity}</span>
         </div>
+        <div className="mt-2 truncate text-sm text-text">{agent.activity}</div>
+        {agent.updatedAt !== undefined && agent.updatedAt > 0 && (
+          <div className="mt-1 text-xs text-text-muted">
+            Updated {formatRelative(agent.updatedAt)}
+          </div>
+        )}
       </div>
-      <div className="min-w-[72px] text-right text-xs text-text-muted">
-        {agent.tokens > 0 ? `${compactNumber(agent.tokens)} tok` : 'No tokens'}
+      <div className="min-w-[86px] text-left text-xs text-text-muted sm:text-right">
+        <div className="text-xs uppercase tracking-wide text-text-muted">Tokens</div>
+        <div className="mt-1 text-sm text-accent-bright">
+          {agent.tokens > 0 ? compactNumber(agent.tokens) : 'None'}
+        </div>
+        <TokenAccuracyLabel estimated={agent.tokenUsageEstimated} />
       </div>
     </button>
+  );
+}
+
+function agentRowClass(agent: AgentSummary, isSelected: boolean): string {
+  const base =
+    'grid w-full gap-3 border-l-4 p-3 text-left hover:bg-btn-hover sm:grid-cols-[18px_minmax(170px,1.15fr)_minmax(130px,0.9fr)_minmax(150px,1fr)_90px]';
+  const selected = isSelected ? 'bg-active-bg' : 'bg-bg';
+  return `${base} ${selected} ${agentRowBorder(agent)} ${agent.hidden ? 'opacity-70' : ''}`;
+}
+
+function agentRowBorder(agent: AgentSummary): string {
+  if (agent.hidden) return 'border-l-border';
+  if (agent.statusGroup === 'needs_me') return 'border-l-status-permission';
+  if (agent.statusGroup === 'error') return 'border-l-status-error';
+  if (agent.isPaused || agent.statusGroup === 'paused') return 'border-l-status-permission';
+  if (agent.statusGroup === 'active') return 'border-l-status-active';
+  return 'border-l-status-success';
+}
+
+function AttentionBadge({ agent }: { agent: AgentSummary }) {
+  return (
+    <span
+      className={`inline-flex shrink-0 items-center gap-2 border px-2 py-1 text-xs uppercase tracking-wide ${attentionBadgeClass(
+        agent,
+      )}`}
+    >
+      <span className={`h-2 w-2 shrink-0 ${attentionColor(agent)}`} />
+      <span>{attentionLabel(agent)}</span>
+    </span>
+  );
+}
+
+function attentionBadgeClass(agent: AgentSummary): string {
+  if (agent.hidden) return 'border-border bg-btn-bg text-text-muted';
+  if (agent.statusGroup === 'needs_me') return 'border-status-permission bg-btn-bg text-text';
+  if (agent.statusGroup === 'error') return 'border-status-error bg-btn-bg text-text';
+  if (agent.isPaused || agent.statusGroup === 'paused') {
+    return 'border-status-permission bg-btn-bg text-text';
+  }
+  if (agent.statusGroup === 'active') return 'border-status-active bg-btn-bg text-text';
+  return 'border-status-success bg-btn-bg text-text-muted';
+}
+
+function attentionColor(agent: AgentSummary): string {
+  if (agent.hidden) return 'bg-border';
+  if (agent.statusGroup === 'needs_me') return 'bg-status-permission';
+  if (agent.statusGroup === 'error') return 'bg-status-error';
+  if (agent.isPaused || agent.statusGroup === 'paused') return 'bg-status-permission';
+  if (agent.statusGroup === 'active') return 'bg-status-active';
+  return 'bg-status-success';
+}
+
+function attentionLabel(agent: AgentSummary): string {
+  if (agent.hidden) return 'Hidden';
+  if (agent.statusGroup === 'needs_me') return 'Needs me';
+  if (agent.statusGroup === 'error') return 'Error';
+  if (agent.isPaused || agent.statusGroup === 'paused') return 'Paused';
+  if (agent.statusGroup === 'active') return 'Active';
+  return 'Waiting';
+}
+
+function TokenAccuracyLabel({ estimated }: { estimated: boolean }) {
+  return (
+    <div className="mt-1 truncate text-xs text-text-muted">{estimated ? 'Estimated' : 'Exact'}</div>
   );
 }
 
@@ -1003,8 +1264,13 @@ function AgentDetail({
         <DetailField label="Hidden" value={agent.hidden ? 'Yes' : 'No'} />
         <DetailField label="Provider" value={providerLabel(agent.providerId)} />
         <DetailField label="Project" value={agent.project} />
+        <DetailField label="Current activity" value={agent.activity} />
         <DetailField label="Last event" value={lastEvent?.title ?? 'No recent events'} />
         <DetailField label="Zone" value={`${agent.zone} (${zoneSourceLabel(agent.zoneSource)})`} />
+        {agent.updatedAt !== undefined && agent.updatedAt > 0 && (
+          <DetailField label="Updated" value={formatRelative(agent.updatedAt)} />
+        )}
+        {agent.sessionId && <DetailField label="Session" value={agent.sessionId} />}
         {agent.teamName && <DetailField label="Team" value={agent.teamName} />}
         {agent.teamName && (
           <DetailField
@@ -1016,8 +1282,10 @@ function AgentDetail({
 
       {(agent.projectDir || agent.transcriptPath) && (
         <div className="mt-4 grid gap-3">
-          {agent.projectDir && <DetailField label="Project path" value={agent.projectDir} />}
-          {agent.transcriptPath && <DetailField label="Transcript" value={agent.transcriptPath} />}
+          {agent.projectDir && <DetailField label="Project path" value={agent.projectDir} wrap />}
+          {agent.transcriptPath && (
+            <DetailField label="Transcript" value={agent.transcriptPath} wrap />
+          )}
         </div>
       )}
 
@@ -1160,15 +1428,17 @@ function DetailField({
   label,
   value,
   badge = false,
+  wrap = false,
 }: {
   label: string;
   value: string;
   badge?: boolean;
+  wrap?: boolean;
 }) {
   return (
     <div className="min-w-0 border border-border bg-btn-bg p-3">
       <div className="text-xs uppercase tracking-wide text-text-muted">{label}</div>
-      <div className="mt-1 min-w-0 truncate text-sm text-text">
+      <div className={`mt-1 min-w-0 text-sm text-text ${wrap ? 'break-words' : 'truncate'}`}>
         {badge ? <StatusBadge status={value} /> : value}
       </div>
     </div>
@@ -1192,6 +1462,7 @@ function getAgentSummary(
   metadata: AgentRuntimeMetadata | undefined,
   hidden: boolean,
   officeState: OfficeState,
+  timelineEvents: AgentTimelineEvent[],
 ): AgentSummary {
   const ch = officeState.characters.get(id);
   const activeTool =
@@ -1211,6 +1482,17 @@ function getAgentSummary(
   const zone = ch
     ? inferAgentZone(ch, officeState.getLayout(), officeState.seats)
     : { zone: 'work' as const, source: 'default-split' as const };
+  const recentTimeline = timelineEvents.filter((event) => event.agentId === id).slice(0, 4);
+  const sessionId =
+    recentTimeline.find((event) => event.sessionId)?.sessionId ??
+    sessionIdFromTranscriptPath(metadata?.transcriptPath);
+  const recentEventText = recentTimeline
+    .map((event) =>
+      [event.title, event.summary, event.kind, event.sessionId, event.runId, event.projectName]
+        .filter(Boolean)
+        .join(' '),
+    )
+    .join(' ');
 
   return {
     id,
@@ -1221,6 +1503,7 @@ function getAgentSummary(
     statusGroup: getStatusGroup(displayStatus),
     activity,
     detail: lifecycle?.detail,
+    updatedAt: lifecycle?.updatedAt,
     tokens: inputTokens + outputTokens,
     inputTokens,
     outputTokens,
@@ -1233,6 +1516,8 @@ function getAgentSummary(
     zoneSource: zone.source,
     projectDir: metadata?.projectDir,
     transcriptPath: metadata?.transcriptPath,
+    sessionId,
+    recentEventText,
     teamName: ch?.teamName,
     roleName: ch?.agentName,
     isTeamLead: ch?.isTeamLead,
@@ -1420,7 +1705,7 @@ function providerSortOrder(providerId: string): number {
   return 2;
 }
 
-function getStatusGroup(status: string): StatusFilter {
+function getStatusGroup(status: string): AgentListStatusGroup {
   if (status === 'paused') return 'paused';
   if (status === 'error') return 'error';
   if (status === 'needs approval' || status === 'waiting_permission' || status === 'waiting_user') {
@@ -1428,6 +1713,41 @@ function getStatusGroup(status: string): StatusFilter {
   }
   if (status === 'active' || status === 'thinking' || status === 'tool_running') return 'active';
   return 'waiting';
+}
+
+function sessionIdFromTranscriptPath(transcriptPath: string | undefined): string | undefined {
+  const fileName = transcriptPath?.split(/[\\/]/).filter(Boolean).pop();
+  return fileName?.replace(/\.(jsonl|log|txt)$/i, '');
+}
+
+function getAgentStateCounts(agents: AgentSummary[]): AgentStateCounts {
+  const counts: AgentStateCounts = {
+    total: agents.length,
+    active: 0,
+    paused: 0,
+    waiting: 0,
+    needsMe: 0,
+    error: 0,
+    hidden: 0,
+  };
+  for (const agent of agents) {
+    if (agent.hidden) {
+      counts.hidden += 1;
+      continue;
+    }
+    if (agent.isPaused || agent.statusGroup === 'paused') {
+      counts.paused += 1;
+    } else if (agent.statusGroup === 'needs_me') {
+      counts.needsMe += 1;
+    } else if (agent.statusGroup === 'error') {
+      counts.error += 1;
+    } else if (agent.statusGroup === 'active') {
+      counts.active += 1;
+    } else {
+      counts.waiting += 1;
+    }
+  }
+  return counts;
 }
 
 function getProjectSummaries(agents: AgentSummary[]): ProjectSummary[] {
