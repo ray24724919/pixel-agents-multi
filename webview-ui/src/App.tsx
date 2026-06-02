@@ -1,8 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { toMajorMinor } from './changelogData.js';
-import { AgentCenter } from './components/AgentCenter.js';
+import { AgentCenterSurface } from './components/AgentCenter.js';
 import { isAgentVisibleWithHiddenToggle } from './components/agentCenterFilters.js';
+import { AgentCenterNavigation } from './components/AgentCenterNavigation.js';
+import {
+  type AgentCenterPage,
+  type AppPage,
+  DEFAULT_APP_PAGE,
+  isAgentCenterPage,
+} from './components/agentCenterPages.js';
 import { BottomToolbar } from './components/BottomToolbar.js';
 import { ChangelogModal } from './components/ChangelogModal.js';
 import { DebugView } from './components/DebugView.js';
@@ -90,9 +97,9 @@ function App() {
   const [migrationNoticeDismissed, setMigrationNoticeDismissed] = useState(false);
   const showMigrationNotice = layoutWasReset && !migrationNoticeDismissed;
 
+  const [activePage, setActivePage] = useState<AppPage>(DEFAULT_APP_PAGE);
   const [isChangelogOpen, setIsChangelogOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [isAgentCenterOpen, setIsAgentCenterOpen] = useState(false);
   const [isHooksInfoOpen, setIsHooksInfoOpen] = useState(false);
   const [hooksTooltipDismissed, setHooksTooltipDismissed] = useState(false);
   const [isDebugMode, setIsDebugMode] = useState(false);
@@ -101,6 +108,9 @@ function App() {
   const [pendingCloseAgentId, setPendingCloseAgentId] = useState<number | null>(null);
   const [pendingKillConfirm, setPendingKillConfirm] = useState(false);
   const [showHiddenAgents, setShowHiddenAgents] = useState(false);
+  const activeAgentCenterPage: AgentCenterPage = isAgentCenterPage(activePage)
+    ? activePage
+    : 'agents';
 
   const currentMajorMinor = toMajorMinor(extensionVersion);
 
@@ -237,6 +247,8 @@ function App() {
     pendingCloseAgentId === null ? undefined : officeState.characters.get(pendingCloseAgentId);
   const pendingCloseName =
     pendingCloseCharacter?.agentName ?? `Agent #${pendingCloseAgentId ?? ''}`;
+  const isOfficePage = activePage === 'office';
+  const isAgentCenterActive = isAgentCenterPage(activePage);
 
   if (!layoutReady) {
     return <div className="w-full h-full flex items-center justify-center ">Loading...</div>;
@@ -254,131 +266,165 @@ function App() {
       data-visible-agent-names={visibleAgentNames}
       data-visible-agent-providers={visibleAgentProviders}
     >
-      <OfficeCanvas
-        officeState={officeState}
-        visibleAgentIds={visibleAgentIds}
-        onClick={handleClick}
-        isEditMode={editor.isEditMode}
-        editorState={editorState}
-        onEditorTileAction={editor.handleEditorTileAction}
-        onEditorEraseAction={editor.handleEditorEraseAction}
-        onEditorSelectionChange={editor.handleEditorSelectionChange}
-        onDeleteSelected={editor.handleDeleteSelected}
-        onRotateSelected={editor.handleRotateSelected}
-        onDragMove={editor.handleDragMove}
-        editorTick={editor.editorTick}
-        zoom={editor.zoom}
-        onZoomChange={editor.handleZoomChange}
-        panRef={editor.panRef}
-      />
+      <AgentCenterNavigation activePage={activePage} onPageChange={setActivePage} />
 
-      {!isDebugMode ? (
+      {isOfficePage && (
         <>
-          <ZoomControls zoom={editor.zoom} onZoomChange={editor.handleZoomChange} />
+          <OfficeCanvas
+            officeState={officeState}
+            visibleAgentIds={visibleAgentIds}
+            onClick={handleClick}
+            isEditMode={editor.isEditMode}
+            editorState={editorState}
+            onEditorTileAction={editor.handleEditorTileAction}
+            onEditorEraseAction={editor.handleEditorEraseAction}
+            onEditorSelectionChange={editor.handleEditorSelectionChange}
+            onDeleteSelected={editor.handleDeleteSelected}
+            onRotateSelected={editor.handleRotateSelected}
+            onDragMove={editor.handleDragMove}
+            editorTick={editor.editorTick}
+            zoom={editor.zoom}
+            onZoomChange={editor.handleZoomChange}
+            panRef={editor.panRef}
+          />
 
-          {!editor.isEditMode && (
-            <RoomTokenCostSummary
-              officeState={officeState}
-              agents={agents}
-              containerRef={containerRef}
-              zoom={editor.zoom}
-              panRef={editor.panRef}
-            />
-          )}
-
-          {editor.isEditMode && (
+          {!isDebugMode ? (
             <>
-              <RoomZoneOverlay
+              <ZoomControls zoom={editor.zoom} onZoomChange={editor.handleZoomChange} />
+
+              {!editor.isEditMode && (
+                <RoomTokenCostSummary
+                  officeState={officeState}
+                  agents={agents}
+                  containerRef={containerRef}
+                  zoom={editor.zoom}
+                  panRef={editor.panRef}
+                />
+              )}
+
+              {editor.isEditMode && (
+                <>
+                  <RoomZoneOverlay
+                    officeState={officeState}
+                    containerRef={containerRef}
+                    zoom={editor.zoom}
+                    panRef={editor.panRef}
+                  />
+                  <RoomZoneStatus officeState={officeState} />
+                </>
+              )}
+
+              {/* Vignette overlay */}
+              <div
+                className="absolute inset-0 pointer-events-none"
+                style={{ background: 'var(--vignette)' }}
+              />
+
+              {editor.isEditMode && editor.isDirty && (
+                <EditActionBar editor={editor} editorState={editorState} />
+              )}
+
+              {showRotateHint && (
+                <div
+                  className="absolute left-1/2 -translate-x-1/2 z-11 bg-accent-bright text-white text-sm py-3 px-8 rounded-none border-2 border-accent shadow-pixel pointer-events-none whitespace-nowrap"
+                  style={{ top: editor.isDirty ? 64 : 8 }}
+                >
+                  Rotate (R)
+                </div>
+              )}
+
+              {editor.isEditMode &&
+                (() => {
+                  const selUid = editorState.selectedFurnitureUid;
+                  const selColor = selUid
+                    ? (officeState.getLayout().furniture.find((f) => f.uid === selUid)?.color ??
+                      null)
+                    : null;
+                  return (
+                    <EditorToolbar
+                      activeTool={editorState.activeTool}
+                      selectedTileType={editorState.selectedTileType}
+                      selectedFurnitureType={editorState.selectedFurnitureType}
+                      selectedZone={editorState.selectedZone}
+                      selectedFurnitureUid={selUid}
+                      selectedFurnitureColor={selColor}
+                      floorColor={editorState.floorColor}
+                      wallColor={editorState.wallColor}
+                      selectedWallSet={editorState.selectedWallSet}
+                      onToolChange={editor.handleToolChange}
+                      onTileTypeChange={editor.handleTileTypeChange}
+                      onFloorColorChange={editor.handleFloorColorChange}
+                      onWallColorChange={editor.handleWallColorChange}
+                      onWallSetChange={editor.handleWallSetChange}
+                      onSelectedFurnitureColorChange={editor.handleSelectedFurnitureColorChange}
+                      onFurnitureTypeChange={editor.handleFurnitureTypeChange}
+                      onZoneChange={editor.handleZoneChange}
+                      loadedAssets={loadedAssets}
+                    />
+                  );
+                })()}
+
+              <ToolOverlay
                 officeState={officeState}
+                agents={visibleAgents}
+                agentTools={agentTools}
+                agentLifecycleStatuses={agentLifecycleStatuses}
+                agentRuntimeMetadata={agentRuntimeMetadata}
+                subagentCharacters={visibleSubagentCharacters}
                 containerRef={containerRef}
                 zoom={editor.zoom}
                 panRef={editor.panRef}
+                onCloseAgent={handleCloseAgent}
+                alwaysShowOverlay={alwaysShowOverlay}
               />
-              <RoomZoneStatus officeState={officeState} />
             </>
+          ) : (
+            <DebugView
+              agents={visibleAgents}
+              selectedAgent={selectedAgent}
+              agentTools={agentTools}
+              agentStatuses={agentStatuses}
+              agentLifecycleStatuses={agentLifecycleStatuses}
+              agentLifecycleEvents={agentLifecycleEvents}
+              agentEventTrace={agentEventTrace}
+              subagentTools={subagentTools}
+              officeState={officeState}
+              onSelectAgent={handleSelectAgent}
+              onCloseAgent={handleCloseAgent}
+            />
           )}
-
-          {/* Vignette overlay */}
-          <div
-            className="absolute inset-0 pointer-events-none"
-            style={{ background: 'var(--vignette)' }}
-          />
-
-          {editor.isEditMode && editor.isDirty && (
-            <EditActionBar editor={editor} editorState={editorState} />
-          )}
-
-          {showRotateHint && (
-            <div
-              className="absolute left-1/2 -translate-x-1/2 z-11 bg-accent-bright text-white text-sm py-3 px-8 rounded-none border-2 border-accent shadow-pixel pointer-events-none whitespace-nowrap"
-              style={{ top: editor.isDirty ? 64 : 8 }}
-            >
-              Rotate (R)
-            </div>
-          )}
-
-          {editor.isEditMode &&
-            (() => {
-              const selUid = editorState.selectedFurnitureUid;
-              const selColor = selUid
-                ? (officeState.getLayout().furniture.find((f) => f.uid === selUid)?.color ?? null)
-                : null;
-              return (
-                <EditorToolbar
-                  activeTool={editorState.activeTool}
-                  selectedTileType={editorState.selectedTileType}
-                  selectedFurnitureType={editorState.selectedFurnitureType}
-                  selectedZone={editorState.selectedZone}
-                  selectedFurnitureUid={selUid}
-                  selectedFurnitureColor={selColor}
-                  floorColor={editorState.floorColor}
-                  wallColor={editorState.wallColor}
-                  selectedWallSet={editorState.selectedWallSet}
-                  onToolChange={editor.handleToolChange}
-                  onTileTypeChange={editor.handleTileTypeChange}
-                  onFloorColorChange={editor.handleFloorColorChange}
-                  onWallColorChange={editor.handleWallColorChange}
-                  onWallSetChange={editor.handleWallSetChange}
-                  onSelectedFurnitureColorChange={editor.handleSelectedFurnitureColorChange}
-                  onFurnitureTypeChange={editor.handleFurnitureTypeChange}
-                  onZoneChange={editor.handleZoneChange}
-                  loadedAssets={loadedAssets}
-                />
-              );
-            })()}
-
-          <ToolOverlay
-            officeState={officeState}
-            agents={visibleAgents}
-            agentTools={agentTools}
-            agentLifecycleStatuses={agentLifecycleStatuses}
-            agentRuntimeMetadata={agentRuntimeMetadata}
-            subagentCharacters={visibleSubagentCharacters}
-            containerRef={containerRef}
-            zoom={editor.zoom}
-            panRef={editor.panRef}
-            onCloseAgent={handleCloseAgent}
-            alwaysShowOverlay={alwaysShowOverlay}
-          />
         </>
-      ) : (
-        <DebugView
-          agents={visibleAgents}
+      )}
+
+      <div
+        className={`absolute inset-0 z-10 bg-bg-dark px-10 pb-120 pt-74 ${
+          isAgentCenterActive ? 'block' : 'hidden'
+        }`}
+        aria-hidden={!isAgentCenterActive}
+      >
+        <AgentCenterSurface
+          activePage={activeAgentCenterPage}
+          isActive={isAgentCenterActive}
+          agents={agents}
           selectedAgent={selectedAgent}
           agentTools={agentTools}
           agentStatuses={agentStatuses}
           agentLifecycleStatuses={agentLifecycleStatuses}
           agentLifecycleEvents={agentLifecycleEvents}
-          agentEventTrace={agentEventTrace}
-          subagentTools={subagentTools}
+          agentTimelineEvents={agentTimelineEvents}
+          agentRuntimeMetadata={agentRuntimeMetadata}
+          hiddenAgents={hiddenAgents}
+          showHiddenAgents={showHiddenAgents}
+          onShowHiddenAgentsChange={setShowHiddenAgents}
           officeState={officeState}
-          onSelectAgent={handleSelectAgent}
           onCloseAgent={handleCloseAgent}
+          onPauseAgent={(id) => vscode.postMessage(buildPauseResumeMessage(id, false))}
+          onResumeAgent={(id) => vscode.postMessage(buildPauseResumeMessage(id, true))}
         />
-      )}
+      </div>
 
       {/* Hooks first-run tooltip */}
-      {!hooksInfoShown && !hooksTooltipDismissed && (
+      {isOfficePage && !hooksInfoShown && !hooksTooltipDismissed && (
         <Tooltip
           title="Instant Detection Active"
           position="top-right"
@@ -439,7 +485,8 @@ function App() {
         isEditMode={editor.isEditMode}
         onOpenAgent={editor.handleOpenAgent}
         onToggleEditMode={editor.handleToggleEditMode}
-        onToggleAgentCenter={() => setIsAgentCenterOpen((v) => !v)}
+        activePage={activePage}
+        onPageChange={setActivePage}
         isSettingsOpen={isSettingsOpen}
         onToggleSettings={() => setIsSettingsOpen((v) => !v)}
         workspaceFolders={workspaceFolders}
@@ -459,26 +506,6 @@ function App() {
         isOpen={isChangelogOpen}
         onClose={() => setIsChangelogOpen(false)}
         currentVersion={extensionVersion}
-      />
-
-      <AgentCenter
-        isOpen={isAgentCenterOpen}
-        onClose={() => setIsAgentCenterOpen(false)}
-        agents={agents}
-        selectedAgent={selectedAgent}
-        agentTools={agentTools}
-        agentStatuses={agentStatuses}
-        agentLifecycleStatuses={agentLifecycleStatuses}
-        agentLifecycleEvents={agentLifecycleEvents}
-        agentTimelineEvents={agentTimelineEvents}
-        agentRuntimeMetadata={agentRuntimeMetadata}
-        hiddenAgents={hiddenAgents}
-        showHiddenAgents={showHiddenAgents}
-        onShowHiddenAgentsChange={setShowHiddenAgents}
-        officeState={officeState}
-        onCloseAgent={handleCloseAgent}
-        onPauseAgent={(id) => vscode.postMessage(buildPauseResumeMessage(id, false))}
-        onResumeAgent={(id) => vscode.postMessage(buildPauseResumeMessage(id, true))}
       />
 
       <Modal

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 import type { WorkspaceFolder } from '../hooks/useExtensionMessages.js';
 import { vscode } from '../vscodeApi.js';
+import { type AppPage, shouldShowOfficeCanvasControls } from './agentCenterPages.js';
 import { Button } from './ui/Button.js';
 import { Modal } from './ui/Modal.js';
 
@@ -9,7 +10,8 @@ interface BottomToolbarProps {
   isEditMode: boolean;
   onOpenAgent: () => void;
   onToggleEditMode: () => void;
-  onToggleAgentCenter: () => void;
+  activePage: AppPage;
+  onPageChange: (page: AppPage) => void;
   isSettingsOpen: boolean;
   onToggleSettings: () => void;
   workspaceFolders: WorkspaceFolder[];
@@ -29,7 +31,8 @@ const TASK_PLACEHOLDER = '描述這個 agent 要完成的工作，或點下方�
 export function BottomToolbar({
   isEditMode,
   onToggleEditMode,
-  onToggleAgentCenter,
+  activePage,
+  onPageChange,
   isSettingsOpen,
   onToggleSettings,
   workspaceFolders,
@@ -37,6 +40,7 @@ export function BottomToolbar({
   agentProviderFilter,
   onAgentProviderFilterChange,
 }: BottomToolbarProps) {
+  const showOfficeControls = shouldShowOfficeCanvasControls(activePage);
   const projectChoices = useMemo(() => {
     const byPath = new Map<string, WorkspaceFolder>();
     for (const folder of [...workspaceFolders, ...codexProjects]) {
@@ -99,27 +103,35 @@ export function BottomToolbar({
         >
           Refresh
         </Button>
-        <div className="flex items-center gap-1 border-2 border-border bg-bg p-1">
-          {(['all', 'codex', 'claude'] as const).map((filter) => (
-            <Button
-              key={filter}
-              variant={agentProviderFilter === filter ? 'active' : 'ghost'}
-              size="sm"
-              onClick={() => onAgentProviderFilterChange(filter)}
-              title={`Show ${filter} agents`}
-            >
-              {filter === 'all' ? 'All' : filter === 'codex' ? 'Codex' : 'Claude'}
-            </Button>
-          ))}
-        </div>
+        {showOfficeControls && (
+          <div className="flex items-center gap-1 border-2 border-border bg-bg p-1">
+            {(['all', 'codex', 'claude'] as const).map((filter) => (
+              <Button
+                key={filter}
+                variant={agentProviderFilter === filter ? 'active' : 'ghost'}
+                size="sm"
+                onClick={() => onAgentProviderFilterChange(filter)}
+                title={`Show ${filter} agents`}
+              >
+                {filter === 'all' ? 'All' : filter === 'codex' ? 'Codex' : 'Claude'}
+              </Button>
+            ))}
+          </div>
+        )}
+        {showOfficeControls && (
+          <Button
+            variant={isEditMode ? 'active' : 'default'}
+            onClick={onToggleEditMode}
+            title="Edit office layout"
+          >
+            Layout
+          </Button>
+        )}
         <Button
-          variant={isEditMode ? 'active' : 'default'}
-          onClick={onToggleEditMode}
-          title="Edit office layout"
+          variant={activePage === 'agents' ? 'active' : 'default'}
+          onClick={() => onPageChange('agents')}
+          title="Open Agents page"
         >
-          Layout
-        </Button>
-        <Button variant="default" onClick={onToggleAgentCenter} title="Open agent center">
           Agents
         </Button>
         <Button

@@ -16,20 +16,19 @@ import {
 } from '../office/zoneUtils.js';
 import { vscode } from '../vscodeApi.js';
 import { isAgentVisibleWithHiddenToggle } from './agentCenterFilters.js';
+import type { AgentCenterPage } from './agentCenterPages.js';
 import { isPausedStatus, pauseActionLabel } from './pauseResume.js';
 import { TokenCostSummary } from './TokenCostSummary.js';
 import { Button } from './ui/Button.js';
-import { Modal } from './ui/Modal.js';
 
 type ProviderFilter = 'all' | 'codex' | 'claude';
 type StatusFilter = 'all' | 'active' | 'paused' | 'waiting' | 'needs_me' | 'error';
 type ProjectFilter = 'all' | string;
 type TeamFilter = 'all' | string;
-type AgentCenterTab = 'agents' | 'usage' | 'timeline';
 
-interface AgentCenterProps {
-  isOpen: boolean;
-  onClose: () => void;
+interface AgentCenterSurfaceProps {
+  activePage: AgentCenterPage;
+  isActive: boolean;
   agents: number[];
   selectedAgent: number | null;
   agentTools: Record<number, ToolActivity[]>;
@@ -121,9 +120,9 @@ interface ProjectUsageSummary extends UsageTotals {
   projectDir?: string;
 }
 
-export function AgentCenter({
-  isOpen,
-  onClose,
+export function AgentCenterSurface({
+  activePage,
+  isActive,
   agents,
   selectedAgent,
   agentTools,
@@ -139,13 +138,12 @@ export function AgentCenter({
   onCloseAgent,
   onPauseAgent,
   onResumeAgent,
-}: AgentCenterProps) {
+}: AgentCenterSurfaceProps) {
   const [providerFilter, setProviderFilter] = useState<ProviderFilter>('all');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [projectFilter, setProjectFilter] = useState<ProjectFilter>('all');
   const [teamFilter, setTeamFilter] = useState<TeamFilter>('all');
   const [detailAgentId, setDetailAgentId] = useState<number | null>(selectedAgent);
-  const [activeTab, setActiveTab] = useState<AgentCenterTab>('agents');
 
   const summaries = useMemo(
     () =>
@@ -194,7 +192,6 @@ export function AgentCenter({
     [visibleSummaries],
   );
   const hiddenCount = summaries.filter((agent) => agent.hidden).length;
-  const usageTotals = useMemo(() => getUsageTotals(visibleSummaries), [visibleSummaries]);
   const globalTimeline = useMemo(
     () => buildGlobalTimeline(visibleSummaries, agentTimelineEvents, agentLifecycleEvents),
     [agentLifecycleEvents, agentTimelineEvents, visibleSummaries],
@@ -205,7 +202,7 @@ export function AgentCenter({
   }, [officeState, teamFilter]);
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isActive || activePage !== 'agents') return;
     if (detailAgentId !== null && filteredAgents.some((agent) => agent.id === detailAgentId)) {
       return;
     }
@@ -214,7 +211,7 @@ export function AgentCenter({
       return;
     }
     setDetailAgentId(filteredAgents[0]?.id ?? null);
-  }, [detailAgentId, filteredAgents, isOpen, selectedAgent]);
+  }, [activePage, detailAgentId, filteredAgents, isActive, selectedAgent]);
 
   const selectedSummary =
     filteredAgents.find((agent) => agent.id === detailAgentId) ?? filteredAgents[0];
@@ -225,20 +222,14 @@ export function AgentCenter({
     ? visibleSummaries.filter((agent) => agent.teamName === selectedSummary.teamName)
     : [];
   return (
-    <Modal
-      isOpen={isOpen}
-      onClose={onClose}
-      title="Agent Center"
-      className="flex h-[min(86vh,760px)] w-[min(96vw,1120px)] flex-col overflow-hidden"
-    >
-      <div className="mb-4 flex shrink-0 flex-wrap items-center justify-between gap-3 px-6 pr-7">
-        <AgentCenterTabs
-          active={activeTab}
-          onChange={setActiveTab}
-          agentsCount={visibleSummaries.length}
-          usageLabel={compactNumber(usageTotals.totalTokens)}
-          timelineCount={globalTimeline.length}
-        />
+    <div className="flex h-full min-h-0 flex-col overflow-hidden border-2 border-border bg-bg shadow-pixel">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border bg-btn-bg px-6 py-4 pr-7">
+        <div className="min-w-0">
+          <div className="text-xs uppercase tracking-wide text-text-muted">Agent Center</div>
+          <div className="mt-1 truncate text-2xl text-accent-bright">
+            {agentCenterPageTitle(activePage)}
+          </div>
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           <label className="flex items-center gap-2 border border-border bg-btn-bg px-3 py-2 text-xs text-text-muted">
             <input
@@ -258,8 +249,8 @@ export function AgentCenter({
           </Button>
         </div>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6 pr-7">
-        {activeTab === 'agents' && (
+      <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6 pr-7 pt-6">
+        {activePage === 'agents' && (
           <>
             <div className="mb-4 flex shrink-0 flex-wrap items-center justify-between gap-3">
               <SegmentedButtons
@@ -329,7 +320,7 @@ export function AgentCenter({
           </>
         )}
 
-        {activeTab === 'usage' && (
+        {activePage === 'usage' && (
           <UsageErrorBoundary>
             <UsageDashboard
               agents={visibleSummaries}
@@ -339,11 +330,11 @@ export function AgentCenter({
           </UsageErrorBoundary>
         )}
 
-        {activeTab === 'timeline' && (
+        {activePage === 'timeline' && (
           <TimelineDashboard agents={visibleSummaries} timeline={globalTimeline} />
         )}
       </div>
-    </Modal>
+    </div>
   );
 }
 
@@ -381,43 +372,10 @@ class UsageErrorBoundary extends Component<
   }
 }
 
-function AgentCenterTabs({
-  active,
-  onChange,
-  agentsCount,
-  usageLabel,
-  timelineCount,
-}: {
-  active: AgentCenterTab;
-  onChange: (tab: AgentCenterTab) => void;
-  agentsCount: number;
-  usageLabel: string;
-  timelineCount: number;
-}) {
-  const tabs: Array<{ id: AgentCenterTab; label: string; meta: string }> = [
-    { id: 'agents', label: 'Agents', meta: `${agentsCount} visible` },
-    { id: 'usage', label: 'Usage', meta: `${usageLabel} tokens` },
-    { id: 'timeline', label: 'Timeline', meta: `${timelineCount} events` },
-  ];
-
-  return (
-    <div className="flex min-w-0 flex-wrap gap-1 border border-border bg-bg p-1">
-      {tabs.map((tab) => (
-        <Button
-          key={tab.id}
-          variant={active === tab.id ? 'active' : 'default'}
-          size="sm"
-          className="min-w-[116px] px-4 text-left"
-          onClick={() => onChange(tab.id)}
-        >
-          <span className="block truncate text-sm">{tab.label}</span>
-          <span className="block truncate text-[10px] uppercase tracking-wide text-text-muted">
-            {tab.meta}
-          </span>
-        </Button>
-      ))}
-    </div>
-  );
+function agentCenterPageTitle(page: AgentCenterPage): string {
+  if (page === 'agents') return 'Agents';
+  if (page === 'usage') return 'Usage';
+  return 'Timeline';
 }
 
 function UsageDashboard({
