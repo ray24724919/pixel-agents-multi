@@ -40,6 +40,7 @@ import {
   type TokenUsageSummary,
 } from './tokenUsage.js';
 import type { AgentState } from './types.js';
+import { extractUsageOccurredAtMs, ingestAgentUsageSnapshot } from './usageIngestion.js';
 
 const PERMISSION_EXEMPT_TOOLS = new Set(['Task', 'Agent', 'AskUserQuestion']);
 
@@ -226,6 +227,23 @@ export function processTranscriptLine(
         artifactOutputTokens: agent.artifactOutputTokens ?? 0,
         estimated: usageDelta?.estimated ?? usage?.estimated ?? true,
         details: agent.tokenUsageDetails,
+      });
+      ingestAgentUsageSnapshot({
+        agent,
+        details:
+          usage && agent.tokenUsageDetails
+            ? {
+                ...agent.tokenUsageDetails,
+                artifactEstimate: 0,
+                estimated: usageDelta?.estimated ?? usage.estimated,
+              }
+            : undefined,
+        artifactOutputTokens: agent.artifactOutputTokens ?? 0,
+        estimated: usageDelta?.estimated ?? usage?.estimated ?? true,
+        occurredAtMs: extractUsageOccurredAtMs(record),
+        evidence: usage?.usageKey
+          ? `source=transcriptParser; event=claude_usage; usageKey=${usage.usageKey}`
+          : 'source=transcriptParser; event=claude_artifact_estimate',
       });
     }
 
@@ -600,6 +618,13 @@ function processCodexTranscriptLine(
       lastTokenUsage: agent.codexLastTokenUsage,
       rateLimits: agent.codexRateLimits,
     });
+    ingestAgentUsageSnapshot({
+      agent,
+      artifactOutputTokens: agent.artifactOutputTokens,
+      estimated: false,
+      occurredAtMs: extractUsageOccurredAtMs(record),
+      evidence: 'source=transcriptParser; event=codex_artifact_estimate',
+    });
   }
   const event = parseCodexTranscriptLine(line);
   if (!event) return;
@@ -697,6 +722,16 @@ function processCodexTranscriptLine(
           details: agent.tokenUsageDetails,
           lastTokenUsage: agent.codexLastTokenUsage,
           rateLimits: agent.codexRateLimits,
+        });
+        ingestAgentUsageSnapshot({
+          agent,
+          details: event.details,
+          artifactOutputTokens: agent.artifactOutputTokens ?? 0,
+          estimated: false,
+          rateLimits: event.rateLimits,
+          occurredAtMs: extractUsageOccurredAtMs(record),
+          evidence: 'source=transcriptParser; event=codex_token_count',
+          isDeltaFromSnapshot: true,
         });
       }
       break;

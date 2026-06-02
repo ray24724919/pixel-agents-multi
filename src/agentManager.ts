@@ -29,6 +29,7 @@ import { getExtensionConfigValue } from './settings.js';
 import { cancelPermissionTimer, cancelWaitingTimer } from './timerManager.js';
 import { readTokenUsageFromTranscript } from './tokenUsage.js';
 import type { AgentState, PersistedAgent } from './types.js';
+import { ingestAgentUsageSnapshot } from './usageIngestion.js';
 
 export const CLAUDE_CLI_MISSING_MESSAGE =
   'Claude Code CLI was not found. The Claude VS Code extension alone is not enough for Pixel Agents. Install the Claude CLI or configure the command path.';
@@ -530,6 +531,19 @@ export function startCodexCwdPoll(
           agent.codexLastTokenUsage = transcriptUsage.lastTokenUsage;
           agent.codexRateLimits = transcriptUsage.rateLimits;
         }
+        ingestAgentUsageSnapshot({
+          agent,
+          details: transcriptUsage?.details,
+          inputTokens: threadInputTokens,
+          outputTokens: threadOutputTokens,
+          artifactOutputTokens: agent.artifactOutputTokens ?? 0,
+          estimated: transcriptUsage?.estimated ?? false,
+          rateLimits: agent.codexRateLimits,
+          evidence: transcriptUsage
+            ? 'source=agentManager; event=codex_transcript_adoption'
+            : 'source=agentManager; event=codex_thread_tokens_used',
+          isDeltaFromSnapshot: true,
+        });
         clearCodexTransientState(agent);
         cancelWaitingTimer(agentId, waitingTimers);
         cancelPermissionTimer(agentId, permissionTimers);
@@ -1145,6 +1159,15 @@ function scheduleTokenUsageRefresh(agent: AgentState, webview: vscode.Webview): 
     agent.tokenUsageDetails = transcriptUsage.details;
     agent.codexLastTokenUsage = transcriptUsage.lastTokenUsage;
     agent.codexRateLimits = transcriptUsage.rateLimits;
+    ingestAgentUsageSnapshot({
+      agent,
+      details: transcriptUsage.details,
+      artifactOutputTokens: agent.artifactOutputTokens ?? 0,
+      estimated: transcriptUsage.estimated,
+      rateLimits: agent.codexRateLimits,
+      evidence: 'source=agentManager; event=transcript_usage_refresh',
+      isDeltaFromSnapshot: true,
+    });
     webview.postMessage({
       type: 'agentTokenUsage',
       id: agent.id,
