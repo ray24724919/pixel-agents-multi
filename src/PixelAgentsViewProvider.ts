@@ -90,6 +90,7 @@ import {
   setHookProvider,
 } from './transcriptParser.js';
 import type { AgentState, ArchivedAgentRecord } from './types.js';
+import { ingestAgentUsageSnapshot } from './usageIngestion.js';
 
 export function getLiveCodexThreadIdsForSpawnedAgentCwds(
   agents: Map<number, AgentState>,
@@ -513,6 +514,19 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     this.agents.set(id, agent);
     this.knownJsonlFiles.add(thread.rolloutPath);
     this.persistAgents();
+    ingestAgentUsageSnapshot({
+      agent,
+      details: transcriptUsage?.details,
+      inputTokens: transcriptUsage?.inputTokens ?? thread.tokensUsed,
+      outputTokens: transcriptUsage?.outputTokens ?? 0,
+      artifactOutputTokens: agent.artifactOutputTokens ?? 0,
+      estimated: transcriptUsage?.estimated ?? false,
+      rateLimits: agent.codexRateLimits,
+      evidence: transcriptUsage
+        ? 'source=PixelAgentsViewProvider; event=codex_external_adoption'
+        : 'source=PixelAgentsViewProvider; event=codex_external_tokens_used',
+      isDeltaFromSnapshot: true,
+    });
     this.webview?.postMessage({
       type: 'agentCreated',
       id,
