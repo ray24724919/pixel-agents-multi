@@ -23,16 +23,20 @@ existing token update paths.
 
 - Added `ingestAgentUsageSnapshot()` to normalize cumulative/current agent token snapshots into
   `usage_delta`, `artifact_estimate`, and `rate_limit_snapshot` records.
-- Dedupe state is module-local and keyed by provider, agent id, session id, and transcript path, so
-  repeated identical snapshots produce no records.
+- Dedupe state is keyed by stable provider/session/thread/transcript-hash identity, falling back to
+  local agent id only when no durable session or transcript identity exists.
+- First use of a stable ingestion key seeds prior provider, artifact, and rate-limit state from the
+  existing append-only usage store, so repeated cumulative snapshots do not duplicate across
+  extension reloads or re-adoption.
 - Provider usage writes only positive deltas. Codex cumulative `token_count` and transcript refresh
   snapshots are marked `isDeltaFromSnapshot=true`.
 - Artifact estimates are written as separate `artifact_estimate` records and are not included in
   provider totals or API proxy estimates.
 - Rate-limit snapshots are signature-deduped and append only when a first or changed snapshot is
   observed.
-- Store append failures are caught and logged per record; ingestion never blocks status updates or
-  webview token messages.
+- Store append failures are caught and logged per record; failed records do not advance the relevant
+  dedupe state, so future snapshots can retry. Ingestion never blocks status updates or webview
+  token messages.
 - Records pass project and transcript paths through the W6-A usage store helpers, so raw paths stay
   redacted by default.
 - Evidence strings are limited to source/event names and stable usage keys; no prompt/output text is
@@ -56,10 +60,13 @@ Added `server/__tests__/usageIngestion.test.ts` covering:
 
 - First positive provider delta.
 - Repeated snapshot no-op.
+- Repeated cumulative snapshot after simulated module reload/store seeding no-op.
+- Same provider/session/transcript deduped across different local agent ids.
 - Later positive delta only.
+- Later positive delta after seeding previous totals from the store.
 - Artifact estimates separated from provider usage.
 - Rate-limit snapshot de-dupe and changed-snapshot append.
-- Append failure swallowed after record construction.
+- Append failure swallowed without poisoning future retry.
 
 ## Validation
 
@@ -76,11 +83,11 @@ npm run test:server
 Results:
 
 - `npm run check-types`: passed.
-- Focused ingestion tests: 6 passed.
+- Focused ingestion tests: 9 passed.
 - `npm run build`: passed.
 - `npm run test:webview`: 37 passed.
-- `npm run test:server`: 216 passed.
-- Combined required test count: 253.
+- `npm run test:server`: 219 passed.
+- Combined required test count: 256.
 
 ## Notes and Risks
 

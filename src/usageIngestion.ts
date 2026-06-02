@@ -7,7 +7,10 @@ import {
   createArtifactEstimateRecord,
   createRateLimitSnapshotRecord,
   createUsageDeltaRecord,
+  hashUsagePath,
+  readUsageRecords,
   type UsageRecordBaseInput,
+  UsageRecordKind,
   type UsageRecordV1,
   type UsageStoreOptions,
   UsageTokenSource,
@@ -63,72 +66,94 @@ interface UsageIngestionState {
   rateLimitSignature?: string;
 }
 
+interface UsageSnapshotIdentity {
+  providerId: string;
+  sessionId?: string;
+  threadId?: string;
+  transcriptPathHash?: string;
+  fallbackAgentId: number;
+}
+
+interface RateLimitForSignature {
+  name: 'primary' | 'secondary';
+  usedPercent?: number;
+  remainingPercent?: number;
+  resetAtMs?: number;
+  resetAfterSeconds?: number;
+}
+
 const usageIngestionStates = new Map<string, UsageIngestionState>();
 
 export function ingestAgentUsageSnapshot(
   input: UsageIngestionSnapshotInput,
 ): UsageIngestionSnapshotResult {
-  const key = usageSnapshotKey(input.agent);
-  const previous = usageIngestionStates.get(key);
+  const key = usageSnapshotKey(usageSnapshotIdentityFromAgent(input.agent));
+  const previous =
+    usageIngestionStates.get(key) ?? seedUsageIngestionState(key, input.storeOptions);
   const currentProviderCounts = providerCountsFromSnapshot(input);
   const currentProviderTotal = providerTotal(currentProviderCounts);
   const currentArtifactTokens = tokenCount(input.artifactOutputTokens);
   const records: UsageRecordV1[] = [];
+  const nextState = previous ? cloneUsageIngestionState(previous) : emptyUsageIngestionState();
+  const appendRecord = input.appendRecord ?? appendUsageRecord;
 
   const providerDelta = providerDeltaCounts(currentProviderCounts, currentProviderTotal, previous);
   if (providerDelta && providerTotal(providerDelta) > 0) {
-    records.push(
-      createUsageDeltaRecord({
-        ...recordBaseInput(input),
-        usage: providerDelta,
-        tokenSource:
-          input.estimated === true || input.details?.estimated === true
-            ? UsageTokenSource.ESTIMATED_TRANSCRIPT
-            : UsageTokenSource.EXACT_PROVIDER,
-        isDeltaFromSnapshot: input.isDeltaFromSnapshot === true,
-      }),
-    );
+    const record = createUsageDeltaRecord({
+      ...recordBaseInput(input),
+      usage: providerDelta,
+      tokenSource:
+        input.estimated === true || input.details?.estimated === true
+          ? UsageTokenSource.ESTIMATED_TRANSCRIPT
+          : UsageTokenSource.EXACT_PROVIDER,
+      isDeltaFromSnapshot: input.isDeltaFromSnapshot === true,
+    });
+    records.push(record);
+    if (appendUsageRecordBestEffort(record, appendRecord, input.storeOptions)) {
+      nextState.providerCounts = currentProviderCounts;
+      nextState.providerTotal = currentProviderTotal;
+    }
+  } else if (currentProviderTotal >= nextState.providerTotal) {
+    nextState.providerCounts = currentProviderCounts;
+    nextState.providerTotal = Math.max(nextState.providerTotal, currentProviderTotal);
   }
 
   const previousArtifactTokens = previous?.artifactOutputTokens ?? 0;
   const artifactDelta = Math.max(0, currentArtifactTokens - previousArtifactTokens);
   if (artifactDelta > 0) {
-    records.push(
-      createArtifactEstimateRecord({
-        ...recordBaseInput(input),
-        artifactOutputTokens: artifactDelta,
-      }),
+    const record = createArtifactEstimateRecord({
+      ...recordBaseInput(input),
+      artifactOutputTokens: artifactDelta,
+    });
+    records.push(record);
+    if (appendUsageRecordBestEffort(record, appendRecord, input.storeOptions)) {
+      nextState.artifactOutputTokens = Math.max(
+        nextState.artifactOutputTokens,
+        currentArtifactTokens,
+      );
+    }
+  } else {
+    nextState.artifactOutputTokens = Math.max(
+      nextState.artifactOutputTokens,
+      currentArtifactTokens,
     );
   }
 
   const rateLimitSignature = rateLimitsSignature(input.rateLimits);
   if (rateLimitSignature && rateLimitSignature !== previous?.rateLimitSignature) {
-    records.push(
-      createRateLimitSnapshotRecord({
-        ...recordBaseInput(input),
-        rateLimits: input.rateLimits ?? [],
-      }),
-    );
+    const record = createRateLimitSnapshotRecord({
+      ...recordBaseInput(input),
+      rateLimits: input.rateLimits ?? [],
+    });
+    records.push(record);
+    if (appendUsageRecordBestEffort(record, appendRecord, input.storeOptions)) {
+      nextState.rateLimitSignature = rateLimitSignature;
+    }
+  } else {
+    nextState.rateLimitSignature = previous?.rateLimitSignature ?? rateLimitSignature;
   }
 
-  usageIngestionStates.set(
-    key,
-    nextUsageIngestionState(previous, {
-      providerCounts: currentProviderCounts,
-      providerTotal: currentProviderTotal,
-      artifactOutputTokens: currentArtifactTokens,
-      rateLimitSignature: rateLimitSignature ?? previous?.rateLimitSignature,
-    }),
-  );
-
-  for (const record of records) {
-    appendUsageRecordBestEffort(
-      record,
-      input.appendRecord ?? appendUsageRecord,
-      input.storeOptions,
-    );
-  }
-
+  usageIngestionStates.set(key, nextState);
   return { records };
 }
 
@@ -141,6 +166,43 @@ export function extractUsageOccurredAtMs(
 
 export function resetUsageIngestionStateForTests(): void {
   usageIngestionStates.clear();
+}
+
+function seedUsageIngestionState(
+  key: string,
+  storeOptions: UsageStoreOptions | undefined,
+): UsageIngestionState | undefined {
+  let records: UsageRecordV1[];
+  try {
+    records = readUsageRecords(storeOptions);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[Pixel Agents] Usage ingestion: failed to read usage store: ${message}`);
+    return undefined;
+  }
+
+  let matched = false;
+  const seeded = emptyUsageIngestionState();
+  for (const record of records) {
+    if (usageSnapshotKeyFromRecord(record) !== key) continue;
+    matched = true;
+    if (record.recordKind === UsageRecordKind.USAGE_DELTA) {
+      seeded.providerCounts = addProviderCounts(seeded.providerCounts, {
+        inputTokens: tokenCount(record.usage.inputTokens),
+        outputTokens: tokenCount(record.usage.outputTokens),
+        cacheReadTokens: tokenCount(record.usage.cacheReadTokens),
+        cacheWriteTokens: tokenCount(record.usage.cacheWriteTokens),
+        reasoningOutputTokens: tokenCount(record.usage.reasoningOutputTokens),
+      });
+      seeded.providerTotal = providerTotal(seeded.providerCounts);
+    } else if (record.recordKind === UsageRecordKind.ARTIFACT_ESTIMATE) {
+      seeded.artifactOutputTokens += tokenCount(record.usage.artifactOutputTokens);
+    } else if (record.recordKind === UsageRecordKind.RATE_LIMIT_SNAPSHOT) {
+      seeded.rateLimitSignature = rateLimitsSignature(record.rateLimits);
+    }
+  }
+
+  return matched ? seeded : undefined;
 }
 
 function recordBaseInput(input: UsageIngestionSnapshotInput): UsageRecordBaseInput {
@@ -244,22 +306,36 @@ function capProviderDelta(delta: ProviderCounts, totalDelta: number): ProviderCo
   return capped;
 }
 
-function nextUsageIngestionState(
-  previous: UsageIngestionState | undefined,
-  current: UsageIngestionState,
-): UsageIngestionState {
-  const previousProviderTotal = previous?.providerTotal ?? 0;
+function emptyUsageIngestionState(): UsageIngestionState {
   return {
-    providerCounts:
-      current.providerTotal >= previousProviderTotal
-        ? current.providerCounts
-        : (previous?.providerCounts ?? current.providerCounts),
-    providerTotal: Math.max(previousProviderTotal, current.providerTotal),
-    artifactOutputTokens: Math.max(
-      previous?.artifactOutputTokens ?? 0,
-      current.artifactOutputTokens,
-    ),
-    rateLimitSignature: current.rateLimitSignature,
+    providerCounts: {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      reasoningOutputTokens: 0,
+    },
+    providerTotal: 0,
+    artifactOutputTokens: 0,
+  };
+}
+
+function cloneUsageIngestionState(state: UsageIngestionState): UsageIngestionState {
+  return {
+    providerCounts: { ...state.providerCounts },
+    providerTotal: state.providerTotal,
+    artifactOutputTokens: state.artifactOutputTokens,
+    rateLimitSignature: state.rateLimitSignature,
+  };
+}
+
+function addProviderCounts(a: ProviderCounts, b: ProviderCounts): ProviderCounts {
+  return {
+    inputTokens: a.inputTokens + b.inputTokens,
+    outputTokens: a.outputTokens + b.outputTokens,
+    cacheReadTokens: a.cacheReadTokens + b.cacheReadTokens,
+    cacheWriteTokens: a.cacheWriteTokens + b.cacheWriteTokens,
+    reasoningOutputTokens: a.reasoningOutputTokens + b.reasoningOutputTokens,
   };
 }
 
@@ -273,7 +349,7 @@ function providerTotal(counts: ProviderCounts): number {
   );
 }
 
-function rateLimitsSignature(rateLimits: TokenRateLimitSnapshot[] | undefined): string | undefined {
+function rateLimitsSignature(rateLimits: RateLimitForSignature[] | undefined): string | undefined {
   if (!rateLimits || rateLimits.length === 0) return undefined;
   return JSON.stringify(
     [...rateLimits]
@@ -292,29 +368,68 @@ function appendUsageRecordBestEffort(
   record: UsageRecordV1,
   appendRecord: UsageRecordAppender,
   storeOptions: UsageStoreOptions | undefined,
-): void {
+): boolean {
   try {
     appendRecord(record, storeOptions);
+    return true;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.warn(
       `[Pixel Agents] Usage ingestion: failed to append ${record.recordKind} for agent ${record.agent.id}: ${message}`,
     );
+    return false;
   }
 }
 
-function usageSnapshotKey(agent: UsageIngestionSnapshotInput['agent']): string {
-  return [
-    agent.providerId ?? 'claude',
-    agent.id,
-    agent.sessionId ?? '',
-    normalizeKeyPath(agent.jsonlFile),
-  ].join('|');
+function usageSnapshotIdentityFromAgent(
+  agent: UsageIngestionSnapshotInput['agent'],
+): UsageSnapshotIdentity {
+  const providerId = agent.providerId ?? 'claude';
+  return {
+    providerId,
+    sessionId: cleanIdentityPart(agent.sessionId),
+    threadId: providerId === 'codex' ? cleanIdentityPart(agent.sessionId) : undefined,
+    transcriptPathHash: hashUsagePath(agent.jsonlFile),
+    fallbackAgentId: agent.id,
+  };
 }
 
-function normalizeKeyPath(value: string | undefined): string {
-  if (!value) return '';
-  return path.normalize(value).toLowerCase();
+function usageSnapshotKeyFromRecord(record: UsageRecordV1): string {
+  return usageSnapshotKey({
+    providerId: record.provider.id,
+    sessionId: cleanIdentityPart(record.session.id),
+    threadId: cleanIdentityPart(record.session.threadId),
+    transcriptPathHash:
+      cleanIdentityPart(record.session.transcriptPathHash) ??
+      hashUsagePath(record.session.transcriptPath),
+    fallbackAgentId: record.agent.id,
+  });
+}
+
+function usageSnapshotKey(identity: UsageSnapshotIdentity): string {
+  const stableParts = uniqueStrings([
+    identity.sessionId ? `session:${identity.sessionId}` : undefined,
+    identity.threadId ? `thread:${identity.threadId}` : undefined,
+    identity.transcriptPathHash ? `transcript:${identity.transcriptPathHash}` : undefined,
+  ]);
+  if (stableParts.length > 0) {
+    return [identity.providerId, ...stableParts].join('|');
+  }
+  return [identity.providerId, `agent:${identity.fallbackAgentId}`].join('|');
+}
+
+function uniqueStrings(values: Array<string | undefined>): string[] {
+  const out: string[] = [];
+  for (const value of values) {
+    if (!value || out.includes(value)) continue;
+    out.push(value);
+  }
+  return out;
+}
+
+function cleanIdentityPart(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed || undefined;
 }
 
 function tokenCount(value: number | undefined): number {

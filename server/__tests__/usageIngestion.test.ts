@@ -4,6 +4,7 @@ import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { TokenUsageDetails } from '../../src/tokenUsage.js';
+import type { UsageIngestionSnapshotInput } from '../../src/usageIngestion.js';
 
 const { ingestAgentUsageSnapshot, resetUsageIngestionStateForTests } =
   await import('../../src/usageIngestion.js');
@@ -86,6 +87,49 @@ describe('usage ingestion', () => {
     expect(readUsageRecords({ homeDir: tmpDir })).toHaveLength(1);
   });
 
+  it('does not append a duplicate cumulative snapshot after module reload when the store already has it', () => {
+    const snapshot = {
+      agent: makeAgent({ sessionId: 's1' }),
+      details: usageDetails({ input: 10, output: 5 }),
+      estimated: false,
+      evidence: 'source=test; event=reload',
+      isDeltaFromSnapshot: true,
+      storeOptions: { homeDir: tmpDir },
+    };
+
+    ingestAgentUsageSnapshot(snapshot);
+    resetUsageIngestionStateForTests();
+    const repeated = ingestAgentUsageSnapshot(snapshot);
+
+    expect(repeated.records).toHaveLength(0);
+    expect(readUsageRecords({ homeDir: tmpDir })).toHaveLength(1);
+  });
+
+  it('deduplicates the same provider session and transcript across different local agent ids', () => {
+    const transcriptPath = 'C:\\Users\\User\\.codex\\projects\\repo\\stable-session.jsonl';
+    ingestAgentUsageSnapshot({
+      agent: makeAgent({ id: 1, sessionId: 'stable-session', jsonlFile: transcriptPath }),
+      details: usageDetails({ input: 10, output: 5 }),
+      estimated: false,
+      evidence: 'source=test; event=first-agent',
+      isDeltaFromSnapshot: true,
+      storeOptions: { homeDir: tmpDir },
+    });
+
+    resetUsageIngestionStateForTests();
+    const repeated = ingestAgentUsageSnapshot({
+      agent: makeAgent({ id: 99, sessionId: 'stable-session', jsonlFile: transcriptPath }),
+      details: usageDetails({ input: 10, output: 5 }),
+      estimated: false,
+      evidence: 'source=test; event=second-agent',
+      isDeltaFromSnapshot: true,
+      storeOptions: { homeDir: tmpDir },
+    });
+
+    expect(repeated.records).toHaveLength(0);
+    expect(readUsageRecords({ homeDir: tmpDir })).toHaveLength(1);
+  });
+
   it('appends only later positive provider deltas', () => {
     const agent = makeAgent();
     ingestAgentUsageSnapshot({
@@ -114,6 +158,37 @@ describe('usage ingestion', () => {
       cacheReadTokens: 0,
       cacheWriteTokens: 0,
       reasoningOutputTokens: 3,
+      artifactOutputTokens: 0,
+    });
+  });
+
+  it('appends only a positive delta after seeding previous totals from the store', () => {
+    const agent = makeAgent({ sessionId: 'seeded-delta' });
+    ingestAgentUsageSnapshot({
+      agent,
+      details: usageDetails({ input: 10, output: 5 }),
+      estimated: false,
+      evidence: 'source=test; event=seed-first',
+      isDeltaFromSnapshot: true,
+      storeOptions: { homeDir: tmpDir },
+    });
+
+    resetUsageIngestionStateForTests();
+    const later = ingestAgentUsageSnapshot({
+      agent,
+      details: usageDetails({ input: 13, output: 7 }),
+      estimated: false,
+      evidence: 'source=test; event=seed-later',
+      isDeltaFromSnapshot: true,
+      storeOptions: { homeDir: tmpDir },
+    });
+
+    const records = readUsageRecords({ homeDir: tmpDir });
+    expect(later.records).toHaveLength(1);
+    expect(records).toHaveLength(2);
+    expect(records[1]?.usage).toMatchObject({
+      inputTokens: 3,
+      outputTokens: 2,
       artifactOutputTokens: 0,
     });
   });
@@ -179,14 +254,18 @@ describe('usage ingestion', () => {
     expect(records[1]?.rateLimits?.[0]).toMatchObject({ name: 'primary', usedPercent: 75 });
   });
 
-  it('swallows append failures after building records', () => {
+  it('swallows append failures without poisoning future retry', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-
-    const result = ingestAgentUsageSnapshot({
-      agent: makeAgent(),
+    const snapshot = {
+      agent: makeAgent({ sessionId: 'retry-session' }),
       details: usageDetails({ input: 1 }),
       estimated: false,
       evidence: 'source=test; event=append_failure',
+      storeOptions: { homeDir: tmpDir },
+    };
+
+    const result = ingestAgentUsageSnapshot({
+      ...snapshot,
       appendRecord: () => {
         throw new Error('append failed');
       },
@@ -196,10 +275,18 @@ describe('usage ingestion', () => {
     expect(warn).toHaveBeenCalledWith(
       expect.stringContaining('Usage ingestion: failed to append usage_delta'),
     );
+    expect(readUsageRecords({ homeDir: tmpDir })).toHaveLength(0);
+
+    const retry = ingestAgentUsageSnapshot(snapshot);
+
+    expect(retry.records).toHaveLength(1);
+    expect(readUsageRecords({ homeDir: tmpDir })).toHaveLength(1);
   });
 });
 
-function makeAgent() {
+function makeAgent(
+  overrides: Partial<UsageIngestionSnapshotInput['agent']> = {},
+): UsageIngestionSnapshotInput['agent'] {
   return {
     id: 7,
     providerId: 'codex',
@@ -212,6 +299,7 @@ function makeAgent() {
     teamName: 'Codex',
     leadAgentId: 1,
     hidden: false,
+    ...overrides,
   };
 }
 
