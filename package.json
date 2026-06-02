@@ -91,6 +91,10 @@
     "test:webview": "cd webview-ui && npm test",
     "test:server": "cd server && npm test",
     "test": "npm run test:webview && npm run test:server",
+    "verify:identity": "node scripts/verify-release-identity.mjs",
+    "verify:vsix": "node scripts/verify-vsix-contents.mjs",
+    "verify:installed": "node scripts/verify-installed-extension.mjs",
+    "verify:release": "npm run verify:identity && npm run verify:vsix && npm run verify:installed",
     "e2e": "playwright test --config e2e/playwright.config.ts",
     "e2e:debug": "playwright test --config e2e/playwright.config.ts --debug",
     "knip": "knip"

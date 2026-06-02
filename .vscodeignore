@@ -13,6 +13,7 @@ logs/**
 e2e/**
 eslint-rules/**
 playwright-report/**
+test-results/**
 docs/roadmap/**
 server/**
 .env
