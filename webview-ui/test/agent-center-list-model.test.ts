@@ -110,7 +110,7 @@ test('agent list filters combine provider, status, project, team, search, and hi
   );
 });
 
-test('attention sort orders needs-me, error, active, paused, waiting, then hidden', () => {
+test('attention sort orders needs-me, error, waiting, active, paused, then hidden', () => {
   const items = [
     agent({ id: 1, statusGroup: 'waiting', updatedAt: 50 }),
     agent({ id: 2, statusGroup: 'active', updatedAt: 50 }),
@@ -122,7 +122,7 @@ test('attention sort orders needs-me, error, active, paused, waiting, then hidde
 
   assert.deepEqual(
     filterAndSortAgentList(items, filters({ sortKey: 'attention' })).map((item) => item.id),
-    [4, 3, 2, 5, 1, 6],
+    [4, 3, 1, 2, 5, 6],
   );
 });
 

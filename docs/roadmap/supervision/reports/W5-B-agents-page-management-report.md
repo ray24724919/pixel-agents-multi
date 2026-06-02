@@ -44,7 +44,7 @@ sorting. Supported sort keys are:
 - token total,
 - status.
 
-Default attention sorting orders needs-me, error, active, paused, waiting, then hidden agents, with
+Default attention sorting orders needs-me, error, waiting, active, paused, then hidden agents, with
 recent update time and name as stable fallbacks.
 
 ## Visual State Improvements

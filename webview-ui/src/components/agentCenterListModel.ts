@@ -122,9 +122,10 @@ export function attentionRank(agent: AgentListItem): number {
   if (agent.hidden) return 5;
   if (agent.statusGroup === 'needs_me') return 0;
   if (agent.statusGroup === 'error') return 1;
-  if (agent.isPaused || agent.statusGroup === 'paused') return 3;
-  if (agent.statusGroup === 'active') return 2;
-  return 4;
+  if (agent.statusGroup === 'waiting') return 2;
+  if (agent.statusGroup === 'active') return 3;
+  if (agent.isPaused || agent.statusGroup === 'paused') return 4;
+  return 5;
 }
 
 function compareAttention(a: AgentListItem, b: AgentListItem): number {
