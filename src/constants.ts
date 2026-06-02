@@ -13,6 +13,14 @@ export const CONFIG_FILE_NAME = 'config.json';
 export const LAYOUT_FILE_POLL_INTERVAL_MS = 2000;
 export const LAYOUT_REVISION_KEY = 'layoutRevision';
 
+// Usage Intelligence persistence
+export const USAGE_STORE_FILE_DIR = '.pixel-agents';
+export const USAGE_STORE_SUBDIR = 'usage';
+export const USAGE_STORE_FILE_NAME = 'usage-v1.jsonl';
+export const USAGE_RECORD_SCHEMA_VERSION = 1;
+export const USAGE_PATH_HASH_PREFIX = 'sha256:';
+export const USAGE_PATH_HASH_LENGTH = 16;
+
 // ── Settings Persistence (VS Code globalState keys) ─────────
 export const GLOBAL_KEY_SOUND_ENABLED = `${EXTENSION_NAME}.soundEnabled`;
 export const GLOBAL_KEY_LAST_SEEN_VERSION = `${EXTENSION_NAME}.lastSeenVersion`;
