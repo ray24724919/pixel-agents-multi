@@ -1007,6 +1007,36 @@ function refreshCodexAgentMetadata(agent: AgentState): boolean {
   return changed;
 }
 
+function postAgentMetadata(webview: vscode.Webview, agentId: number, agent: AgentState): void {
+  webview.postMessage({
+    type: 'agentMetadata',
+    id: agentId,
+    folderName: agent.projectName ?? agent.folderName,
+    agentName: agent.agentName,
+    providerId: agent.providerId,
+    projectDir: agent.projectDir,
+    transcriptPath: agent.jsonlFile,
+  });
+}
+
+export function syncCodexAgentMetadata(
+  agents: Map<number, AgentState>,
+  webview: vscode.Webview | undefined,
+  persist?: () => void,
+): void {
+  let changed = false;
+  for (const [agentId, agent] of agents) {
+    if (!refreshCodexAgentMetadata(agent)) continue;
+    changed = true;
+    if (webview) {
+      postAgentMetadata(webview, agentId, agent);
+    }
+  }
+  if (changed) {
+    persist?.();
+  }
+}
+
 const ACTIVE_FILE_MTIME_WINDOW_MS = 30_000;
 
 export function sendCurrentAgentStatuses(
@@ -1016,15 +1046,7 @@ export function sendCurrentAgentStatuses(
   if (!webview) return;
   for (const [agentId, agent] of agents) {
     if (refreshCodexAgentMetadata(agent)) {
-      webview.postMessage({
-        type: 'agentMetadata',
-        id: agentId,
-        folderName: agent.projectName ?? agent.folderName,
-        agentName: agent.agentName,
-        providerId: agent.providerId,
-        projectDir: agent.projectDir,
-        transcriptPath: agent.jsonlFile,
-      });
+      postAgentMetadata(webview, agentId, agent);
     }
     // Re-send active tools
     for (const [toolId, status] of agent.activeToolStatuses) {

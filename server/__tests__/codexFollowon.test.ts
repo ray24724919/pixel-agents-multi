@@ -519,6 +519,54 @@ describe('Codex thread follow-on', () => {
     ).toHaveLength(3);
   });
 
+  it('syncs renamed Codex thread titles for tracked agents during workspace scans', () => {
+    const provider = createProviderHarness();
+    const threadPath = path.join(tmpDir, 'main-supervisor.jsonl');
+    writeCodexTokenFile(threadPath, 1, 0);
+    const renamedThread = {
+      ...codexThread('thread-main-supervisor', threadPath, '/workspace/project'),
+      title: 'Main Supervisor',
+    };
+    provider.agents.set(
+      1,
+      makeAgent(1, {
+        sessionId: renamedThread.id,
+        isExternal: true,
+        projectDir: '/workspace/project',
+        jsonlFile: threadPath,
+        folderName: 'project',
+        projectName: 'project',
+        agentName: 'Old title',
+      }),
+    );
+    provider.knownJsonlFiles.add(threadPath);
+    findRecentCodexThreadsMock.mockReturnValue([renamedThread]);
+    findCodexThreadByIdMock.mockImplementation((id: string) =>
+      id === renamedThread.id ? renamedThread : null,
+    );
+
+    scanCodex(provider);
+
+    expect(provider.agents.get(1)?.agentName).toBe('Main Supervisor');
+    expect(provider.webviewView?.webview.postMessage).toHaveBeenCalledWith({
+      type: 'agentMetadata',
+      id: 1,
+      folderName: 'project',
+      agentName: 'Main Supervisor',
+      providerId: 'codex',
+      projectDir: '/workspace/project',
+      transcriptPath: threadPath,
+    });
+    expect(
+      (provider.webviewView?.webview.postMessage as ReturnType<typeof vi.fn>).mock.calls.filter(
+        ([message]) => message.type === 'agentCreated',
+      ),
+    ).toHaveLength(0);
+    expect(
+      (provider as unknown as { persistAgents: ReturnType<typeof vi.fn> }).persistAgents,
+    ).toHaveBeenCalled();
+  });
+
   it('falls back to all cwd adoption with no workspace, no spawned agents, and default discoverAllCwds', () => {
     workspaceFoldersMock.splice(0, workspaceFoldersMock.length);
     setDiscoverAllCwds(undefined);

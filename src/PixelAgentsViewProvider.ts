@@ -30,6 +30,7 @@ import {
   sendExistingAgents,
   sendLayout,
   setAgentPaused,
+  syncCodexAgentMetadata,
 } from './agentManager.js';
 import type { LoadedAssets, LoadedCharacterSprites } from './assetLoader.js';
 import {
@@ -449,6 +450,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 
     const topLevelThreadIds = getLiveCodexThreadIdsForAgentCwds(this.agents, threads);
     this.removeStaleCodexAgents(topLevelThreadIds);
+    syncCodexAgentMetadata(this.agents, this.webview, this.persistAgents);
     this.webview?.postMessage({
       type: 'codexProjects',
       projects: this.getRecentCodexProjects(threads),
