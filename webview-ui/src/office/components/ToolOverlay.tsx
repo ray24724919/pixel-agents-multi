@@ -186,6 +186,9 @@ export function ToolOverlay({
         const isTeamAgent = !!ch.teamName;
         const conversationTitle = !isSub && !isTeamAgent ? ch.agentName || null : null;
         const teamRoleLabel = isTeamAgent ? (ch.isTeamLead ? 'LEAD' : ch.agentName || null) : null;
+        const projectProviderLine = projectProviderDisplayName(ch.folderName, ch.providerId);
+        const agentNameLine =
+          conversationTitle ?? teamRoleLabel ?? (isSub ? 'Sub-agent' : `Agent #${id}`);
         const delegationLine =
           !isSub && ch.delegation && !ch.delegation.isActive
             ? `${delegationVisualStatusLabel(ch.delegation)} / ${delegationVisualWorkerLabel(
@@ -194,13 +197,11 @@ export function ToolOverlay({
             : null;
         const totalTokens = ch.inputTokens + ch.outputTokens;
         const tokenRatio = totalTokens / MAX_CONTEXT_TOKENS;
-        const providerLabel = providerDisplayName(ch.providerId);
         const hasExtraLines = !!(
-          ch.folderName ||
-          conversationTitle ||
-          teamRoleLabel ||
+          projectProviderLine ||
+          agentNameLine ||
           delegationLine ||
-          providerLabel
+          lifecycle?.detail
         );
         const metadata = agentRuntimeMetadata[id];
         const canOpenProject = !!metadata?.projectDir;
@@ -220,25 +221,13 @@ export function ToolOverlay({
             }}
           >
             <div className="flex items-center border-border px-8 pt-2 pb-4 gap-5 pixel-panel whitespace-nowrap max-w-xs">
-              {dotColor && (
-                <span
-                  className={`w-6 h-6 rounded-full shrink-0 ${shouldPulse ? 'pixel-pulse' : ''}`}
-                  style={{ background: dotColor }}
-                />
-              )}
               <div className="flex flex-col gap-0 overflow-hidden">
-                {conversationTitle && (
-                  <span
-                    className="overflow-hidden text-ellipsis block leading-none"
-                    style={{
-                      fontSize: '18px',
-                      color: TEAM_ROLE_COLOR,
-                    }}
-                  >
-                    {conversationTitle}
+                {projectProviderLine && (
+                  <span className="text-2xs leading-none overflow-hidden text-ellipsis block">
+                    {projectProviderLine}
                   </span>
                 )}
-                {teamRoleLabel && (
+                {agentNameLine && (
                   <span
                     className="overflow-hidden text-ellipsis block leading-none"
                     style={{
@@ -247,23 +236,28 @@ export function ToolOverlay({
                       fontWeight: ch.isTeamLead ? 'bold' : undefined,
                     }}
                   >
-                    {teamRoleLabel}
+                    {agentNameLine}
                   </span>
                 )}
-                <span
-                  className="overflow-hidden text-ellipsis block leading-none"
-                  style={{
-                    fontSize: isSub ? '20px' : '22px',
-                    fontStyle: isSub ? 'italic' : undefined,
-                  }}
-                >
-                  {activityText}
-                </span>
-                {(providerLabel || ch.folderName) && (
-                  <span className="text-2xs leading-none overflow-hidden text-ellipsis block">
-                    {[providerLabel, ch.folderName].filter(Boolean).join(' · ')}
+                <div className="flex min-w-0 items-center gap-4">
+                  {dotColor && (
+                    <span
+                      className={`w-6 h-6 rounded-full shrink-0 ${
+                        shouldPulse ? 'pixel-pulse' : ''
+                      }`}
+                      style={{ background: dotColor }}
+                    />
+                  )}
+                  <span
+                    className="overflow-hidden text-ellipsis block leading-none"
+                    style={{
+                      fontSize: isSub ? '20px' : '22px',
+                      fontStyle: isSub ? 'italic' : undefined,
+                    }}
+                  >
+                    {activityText}
                   </span>
-                )}
+                </div>
                 {delegationLine && (
                   <span className="text-2xs leading-none overflow-hidden text-ellipsis block opacity-90">
                     {delegationLine}
@@ -350,8 +344,8 @@ export function ToolOverlay({
   );
 }
 
-function providerDisplayName(providerId?: string): string {
-  if (providerId === 'codex') return 'Codex';
-  if (providerId === 'claude' || !providerId) return 'Claude';
-  return providerId;
+function projectProviderDisplayName(folderName?: string, providerId?: string): string {
+  const provider = (providerId ?? 'claude').trim().toLowerCase();
+  const project = folderName?.trim();
+  return project ? `${project}.${provider}` : provider;
 }
