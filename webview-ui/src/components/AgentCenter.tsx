@@ -41,6 +41,20 @@ import {
 import { TokenCostSummary } from './TokenCostSummary.js';
 import { Button } from './ui/Button.js';
 import {
+  usageHistoryAccuracyLabel,
+  type UsageHistoryRateLimitSnapshot,
+} from './usageHistoryModel.js';
+import {
+  buildUsageHistoryPageModel,
+  DEFAULT_USAGE_HISTORY_PAGE_FILTERS,
+  type UsageHistoryPageFilters,
+  type UsageHistoryPageModel,
+  type UsageHistoryPageOption,
+  type UsageHistoryTimeFilter,
+  usageHistoryTimeFilterLabel,
+  usageHistoryUnavailableMessage,
+} from './usageHistoryPageModel.js';
+import {
   buildUsageIntelligenceDashboard,
   type UsageAccuracy,
   usageAccuracyLabel,
@@ -52,6 +66,7 @@ type ProviderFilter = 'all' | 'codex' | 'claude';
 type StatusFilter = AgentListStatusFilter;
 type ProjectFilter = 'all' | string;
 type TeamFilter = 'all' | string;
+type UsagePane = 'live' | 'history';
 
 interface AgentCenterSurfaceProps {
   activePage: AgentCenterPage;
@@ -516,11 +531,45 @@ function UsageDashboard({
   officeState: OfficeState;
   usageHistory: UsageHistoryState;
 }) {
+  const [usagePane, setUsagePane] = useState<UsagePane>('live');
+  const [historyProviderFilter, setHistoryProviderFilter] = useState<'all' | string>(
+    DEFAULT_USAGE_HISTORY_PAGE_FILTERS.providerId,
+  );
+  const [historyProjectFilter, setHistoryProjectFilter] = useState<'all' | string>(
+    DEFAULT_USAGE_HISTORY_PAGE_FILTERS.projectKey,
+  );
+  const [historyTimeFilter, setHistoryTimeFilter] = useState<UsageHistoryTimeFilter>(
+    DEFAULT_USAGE_HISTORY_PAGE_FILTERS.timeWindow,
+  );
+  const [historyCopyStatus, setHistoryCopyStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
   const dashboard = buildUsageIntelligenceDashboard(agents);
   const { totals } = dashboard;
   const activeRows = dashboard.ledgerRows.filter((agent) => agent.displayTokens > 0);
   const hasAgents = totals.agentCount > 0;
   const usageHistoryStatus = usageHistoryStatusText(usageHistory);
+  const historyFilters = useMemo<UsageHistoryPageFilters>(
+    () => ({
+      providerId: historyProviderFilter,
+      projectKey: historyProjectFilter,
+      timeWindow: historyTimeFilter,
+    }),
+    [historyProjectFilter, historyProviderFilter, historyTimeFilter],
+  );
+  const historyPageModel = useMemo(
+    () => buildUsageHistoryPageModel(usageHistory.records, historyFilters),
+    [historyFilters, usageHistory.records],
+  );
+  const clearHistoryFilters = () => {
+    setHistoryProviderFilter(DEFAULT_USAGE_HISTORY_PAGE_FILTERS.providerId);
+    setHistoryProjectFilter(DEFAULT_USAGE_HISTORY_PAGE_FILTERS.projectKey);
+    setHistoryTimeFilter(DEFAULT_USAGE_HISTORY_PAGE_FILTERS.timeWindow);
+  };
+  const copyHistoryCsv = () => {
+    if (historyPageModel.exportRowCount === 0) return;
+    void copyTextToClipboard(historyPageModel.exportCsv)
+      .then(() => setHistoryCopyStatus('copied'))
+      .catch(() => setHistoryCopyStatus('failed'));
+  };
 
   return (
     <div className="grid gap-4">
@@ -537,7 +586,9 @@ function UsageDashboard({
             </div>
           </div>
           <div className="flex flex-wrap gap-2 text-xs uppercase tracking-wide text-text-muted">
-            <span className="border border-border bg-btn-bg px-2 py-1">Live scope</span>
+            <span className="border border-border bg-btn-bg px-2 py-1">
+              {usagePane === 'live' ? 'Live session usage' : 'Persisted local history'}
+            </span>
             <span className="border border-border bg-btn-bg px-2 py-1">Local only</span>
             <span className="border border-border bg-btn-bg px-2 py-1" title={usageHistory.error}>
               {usageHistoryStatus}
@@ -547,205 +598,664 @@ function UsageDashboard({
         </div>
       </section>
 
-      {!hasAgents && (
-        <section className="border border-border bg-btn-bg p-8 text-center">
-          <div className="text-lg text-accent-bright">No usage to show yet</div>
-          <div className="mt-2 text-sm text-text-muted">
-            Start or restore an agent, enable Show hidden if needed, then press Refresh.
-          </div>
-        </section>
-      )}
-
-      <TokenCostSummary agents={visibleAgentIds} officeState={officeState} />
-
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <UsageMetric
-          label="Provider tokens"
-          value={compactNumber(totals.providerTokens)}
-          detail={`${compactNumber(totals.inputTokens)} in / ${compactNumber(
-            totals.outputTokens,
-          )} out`}
+      <section className="flex flex-wrap items-center justify-between gap-3 border border-border bg-btn-bg p-3">
+        <SegmentedButtons
+          values={['live', 'history'] as const}
+          active={usagePane}
+          label={(value) => (value === 'live' ? 'Live' : 'History')}
+          onChange={setUsagePane}
         />
-        <UsageMetric
-          label="Accuracy"
-          value={usageAccuracyShort(totals.accuracy)}
-          detail={`${totals.exactCount} exact / ${totals.estimatedCount} estimated`}
-        />
-        <UsageMetric
-          label="Reasoning"
-          value={compactNumber(totals.reasoningTokens)}
-          detail={`${compactNumber(totals.cacheTokens)} cache detail`}
-        />
-        <UsageMetric
-          label="Artifact est."
-          value={compactNumber(totals.artifactOutputTokens)}
-          detail="separate from proxy total"
-        />
-      </div>
-
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-        <UsageCategoryPanel categories={dashboard.categories} />
-        <UsageInsightPanel insights={dashboard.insights} />
-      </div>
-
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-        <section className="border border-border bg-bg">
-          <SectionHeader title="Provider Usage" subtitle="Token mix and quota signals" />
-          <div className="divide-y divide-border">
-            {dashboard.providers.map((provider) => (
-              <div key={provider.providerId} className="p-4">
-                <div className="mb-3 flex min-w-0 flex-wrap items-center justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="flex min-w-0 items-center gap-2">
-                      <ProviderBadge providerId={provider.providerId} />
-                      <span className="truncate text-sm text-text">{provider.label}</span>
-                    </div>
-                    <div className="mt-1 text-xs text-text-muted">
-                      {provider.agentCount} agents / {compactNumber(provider.providerTokens)} tokens
-                    </div>
-                  </div>
-                  <UsageAccuracyPill accuracy={provider.accuracy} />
-                </div>
-                <UsageBar
-                  label="Input"
-                  value={provider.inputTokens}
-                  total={Math.max(provider.providerTokens, 1)}
-                />
-                <UsageBar
-                  label="Output"
-                  value={provider.outputTokens}
-                  total={Math.max(provider.providerTokens, 1)}
-                />
-                {provider.cacheTokens > 0 && (
-                  <UsageBar
-                    label="Cache"
-                    value={provider.cacheTokens}
-                    total={Math.max(provider.inputTokens + provider.cacheTokens, 1)}
-                  />
-                )}
-                {provider.reasoningTokens > 0 && (
-                  <UsageBar
-                    label="Reasoning"
-                    value={provider.reasoningTokens}
-                    total={Math.max(provider.outputTokens, provider.reasoningTokens, 1)}
-                  />
-                )}
-                {provider.artifactOutputTokens > 0 && (
-                  <UsageBar
-                    label="Artifact est."
-                    value={provider.artifactOutputTokens}
-                    total={Math.max(provider.displayTokens, 1)}
-                  />
-                )}
-                {provider.codexRateLimit && (
-                  <div className="mt-3 text-xs text-text-muted">
-                    {formatRateLimit(provider.codexRateLimit)}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section className="border border-border bg-bg">
-          <SectionHeader
-            title="Project Usage"
-            subtitle="Where current agents are spending tokens"
-          />
-          <div className="divide-y divide-border">
-            {dashboard.projects.length === 0 ? (
-              <div className="p-4 text-sm text-text-muted">No token usage yet</div>
-            ) : (
-              dashboard.projects.slice(0, 8).map((project) => (
-                <div key={project.project} className="p-4">
-                  <div className="mb-2 flex min-w-0 flex-wrap items-center justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="truncate text-sm text-accent-bright">{project.project}</div>
-                      <div className="mt-1 text-xs text-text-muted">
-                        {project.agentCount} agents / {compactNumber(project.providerTokens)} tokens
-                      </div>
-                    </div>
-                    <UsageAccuracyPill accuracy={project.accuracy} />
-                  </div>
-                  <div className="mb-2 flex min-w-0 flex-wrap gap-2 text-xs text-text-muted">
-                    {project.providerIds.map((providerId) => (
-                      <ProviderBadge key={providerId} providerId={providerId} />
-                    ))}
-                    {project.topAgentName && (
-                      <span className="truncate">
-                        Top: {project.topAgentName} / {compactNumber(project.topAgentTokens)}
-                      </span>
-                    )}
-                    {project.updatedAt !== undefined && project.updatedAt > 0 && (
-                      <span>Updated {formatRelative(project.updatedAt)}</span>
-                    )}
-                  </div>
-                  <UsageBar
-                    label="Share"
-                    value={project.providerTokens}
-                    total={Math.max(totals.providerTokens, 1)}
-                  />
-                  {project.projectDir && (
-                    <Button
-                      variant="default"
-                      size="sm"
-                      className="mt-3 px-5"
-                      onClick={() =>
-                        vscode.postMessage({
-                          type: 'openProjectPath',
-                          projectDir: project.projectDir,
-                        })
-                      }
-                      title={project.projectDir}
-                    >
-                      Open Project
-                    </Button>
-                  )}
-                </div>
-              ))
-            )}
-          </div>
-        </section>
-      </div>
-
-      <section className="border border-border bg-bg">
-        <SectionHeader title="Agent Usage Ledger" subtitle="Highest usage agents first" />
-        <div className="divide-y divide-border">
-          {activeRows.length === 0 ? (
-            <div className="p-4 text-sm text-text-muted">No token usage has been recorded yet</div>
-          ) : (
-            activeRows.slice(0, 24).map((agent) => (
-              <div
-                key={agent.id}
-                className="grid gap-3 p-4 md:grid-cols-[minmax(0,1fr)_repeat(6,minmax(68px,auto))_auto]"
-              >
-                <div className="min-w-0">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <ProviderBadge providerId={agent.providerId} />
-                    <span className="truncate text-sm text-text">{agent.name}</span>
-                    <span className="shrink-0 text-xs text-text-muted">#{agent.id}</span>
-                  </div>
-                  <div className="mt-1 flex min-w-0 flex-wrap gap-2 text-xs text-text-muted">
-                    <span className="truncate">{agent.project}</span>
-                    {agent.teamName && <span className="truncate">{agent.teamName}</span>}
-                    {agent.sessionId && <span className="truncate">{agent.sessionId}</span>}
-                  </div>
-                </div>
-                <LedgerValue label="Input" value={agent.inputTokens} />
-                <LedgerValue label="Output" value={agent.outputTokens} />
-                <LedgerValue label="Cache" value={agent.cacheTokens} />
-                <LedgerValue label="Reason" value={agent.reasoningTokens} />
-                <LedgerValue label="Artifact" value={agent.artifactOutputTokens} />
-                <LedgerValue label="Provider" value={agent.providerTokens} highlight />
-                <div className="flex items-start justify-start md:justify-end">
-                  <UsageAccuracyPill accuracy={agent.accuracy} />
-                </div>
-              </div>
-            ))
-          )}
+        <div className="text-xs uppercase tracking-wide text-text-muted">
+          {usagePane === 'live'
+            ? 'Current visible agents'
+            : 'Persisted local records / redacted export'}
         </div>
       </section>
+
+      {usagePane === 'live' ? (
+        <>
+          {!hasAgents && (
+            <section className="border border-border bg-btn-bg p-8 text-center">
+              <div className="text-lg text-accent-bright">No usage to show yet</div>
+              <div className="mt-2 text-sm text-text-muted">
+                Start or restore an agent, enable Show hidden if needed, then press Refresh.
+              </div>
+            </section>
+          )}
+
+          <TokenCostSummary agents={visibleAgentIds} officeState={officeState} />
+
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <UsageMetric
+              label="Provider tokens"
+              value={compactNumber(totals.providerTokens)}
+              detail={`${compactNumber(totals.inputTokens)} in / ${compactNumber(
+                totals.outputTokens,
+              )} out`}
+            />
+            <UsageMetric
+              label="Accuracy"
+              value={usageAccuracyShort(totals.accuracy)}
+              detail={`${totals.exactCount} exact / ${totals.estimatedCount} estimated`}
+            />
+            <UsageMetric
+              label="Reasoning"
+              value={compactNumber(totals.reasoningTokens)}
+              detail={`${compactNumber(totals.cacheTokens)} cache detail`}
+            />
+            <UsageMetric
+              label="Artifact est."
+              value={compactNumber(totals.artifactOutputTokens)}
+              detail="separate from proxy total"
+            />
+          </div>
+
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+            <UsageCategoryPanel categories={dashboard.categories} />
+            <UsageInsightPanel insights={dashboard.insights} />
+          </div>
+
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+            <section className="border border-border bg-bg">
+              <SectionHeader title="Provider Usage" subtitle="Token mix and quota signals" />
+              <div className="divide-y divide-border">
+                {dashboard.providers.map((provider) => (
+                  <div key={provider.providerId} className="p-4">
+                    <div className="mb-3 flex min-w-0 flex-wrap items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <ProviderBadge providerId={provider.providerId} />
+                          <span className="truncate text-sm text-text">{provider.label}</span>
+                        </div>
+                        <div className="mt-1 text-xs text-text-muted">
+                          {provider.agentCount} agents / {compactNumber(provider.providerTokens)}{' '}
+                          tokens
+                        </div>
+                      </div>
+                      <UsageAccuracyPill accuracy={provider.accuracy} />
+                    </div>
+                    <UsageBar
+                      label="Input"
+                      value={provider.inputTokens}
+                      total={Math.max(provider.providerTokens, 1)}
+                    />
+                    <UsageBar
+                      label="Output"
+                      value={provider.outputTokens}
+                      total={Math.max(provider.providerTokens, 1)}
+                    />
+                    {provider.cacheTokens > 0 && (
+                      <UsageBar
+                        label="Cache"
+                        value={provider.cacheTokens}
+                        total={Math.max(provider.inputTokens + provider.cacheTokens, 1)}
+                      />
+                    )}
+                    {provider.reasoningTokens > 0 && (
+                      <UsageBar
+                        label="Reasoning"
+                        value={provider.reasoningTokens}
+                        total={Math.max(provider.outputTokens, provider.reasoningTokens, 1)}
+                      />
+                    )}
+                    {provider.artifactOutputTokens > 0 && (
+                      <UsageBar
+                        label="Artifact est."
+                        value={provider.artifactOutputTokens}
+                        total={Math.max(provider.displayTokens, 1)}
+                      />
+                    )}
+                    {provider.codexRateLimit && (
+                      <div className="mt-3 text-xs text-text-muted">
+                        {formatRateLimit(provider.codexRateLimit)}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <section className="border border-border bg-bg">
+              <SectionHeader
+                title="Project Usage"
+                subtitle="Where current agents are spending tokens"
+              />
+              <div className="divide-y divide-border">
+                {dashboard.projects.length === 0 ? (
+                  <div className="p-4 text-sm text-text-muted">No token usage yet</div>
+                ) : (
+                  dashboard.projects.slice(0, 8).map((project) => (
+                    <div key={project.project} className="p-4">
+                      <div className="mb-2 flex min-w-0 flex-wrap items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="truncate text-sm text-accent-bright">
+                            {project.project}
+                          </div>
+                          <div className="mt-1 text-xs text-text-muted">
+                            {project.agentCount} agents / {compactNumber(project.providerTokens)}{' '}
+                            tokens
+                          </div>
+                        </div>
+                        <UsageAccuracyPill accuracy={project.accuracy} />
+                      </div>
+                      <div className="mb-2 flex min-w-0 flex-wrap gap-2 text-xs text-text-muted">
+                        {project.providerIds.map((providerId) => (
+                          <ProviderBadge key={providerId} providerId={providerId} />
+                        ))}
+                        {project.topAgentName && (
+                          <span className="truncate">
+                            Top: {project.topAgentName} / {compactNumber(project.topAgentTokens)}
+                          </span>
+                        )}
+                        {project.updatedAt !== undefined && project.updatedAt > 0 && (
+                          <span>Updated {formatRelative(project.updatedAt)}</span>
+                        )}
+                      </div>
+                      <UsageBar
+                        label="Share"
+                        value={project.providerTokens}
+                        total={Math.max(totals.providerTokens, 1)}
+                      />
+                      {project.projectDir && (
+                        <Button
+                          variant="default"
+                          size="sm"
+                          className="mt-3 px-5"
+                          onClick={() =>
+                            vscode.postMessage({
+                              type: 'openProjectPath',
+                              projectDir: project.projectDir,
+                            })
+                          }
+                          title={project.projectDir}
+                        >
+                          Open Project
+                        </Button>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+            </section>
+          </div>
+
+          <section className="border border-border bg-bg">
+            <SectionHeader title="Agent Usage Ledger" subtitle="Highest usage agents first" />
+            <div className="divide-y divide-border">
+              {activeRows.length === 0 ? (
+                <div className="p-4 text-sm text-text-muted">
+                  No token usage has been recorded yet
+                </div>
+              ) : (
+                activeRows.slice(0, 24).map((agent) => (
+                  <div
+                    key={agent.id}
+                    className="grid gap-3 p-4 md:grid-cols-[minmax(0,1fr)_repeat(6,minmax(68px,auto))_auto]"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <ProviderBadge providerId={agent.providerId} />
+                        <span className="truncate text-sm text-text">{agent.name}</span>
+                        <span className="shrink-0 text-xs text-text-muted">#{agent.id}</span>
+                      </div>
+                      <div className="mt-1 flex min-w-0 flex-wrap gap-2 text-xs text-text-muted">
+                        <span className="truncate">{agent.project}</span>
+                        {agent.teamName && <span className="truncate">{agent.teamName}</span>}
+                        {agent.sessionId && <span className="truncate">{agent.sessionId}</span>}
+                      </div>
+                    </div>
+                    <LedgerValue label="Input" value={agent.inputTokens} />
+                    <LedgerValue label="Output" value={agent.outputTokens} />
+                    <LedgerValue label="Cache" value={agent.cacheTokens} />
+                    <LedgerValue label="Reason" value={agent.reasoningTokens} />
+                    <LedgerValue label="Artifact" value={agent.artifactOutputTokens} />
+                    <LedgerValue label="Provider" value={agent.providerTokens} highlight />
+                    <div className="flex items-start justify-start md:justify-end">
+                      <UsageAccuracyPill accuracy={agent.accuracy} />
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </section>
+        </>
+      ) : (
+        <UsageHistoryDashboard
+          usageHistory={usageHistory}
+          pageModel={historyPageModel}
+          filters={historyFilters}
+          onProviderChange={setHistoryProviderFilter}
+          onProjectChange={setHistoryProjectFilter}
+          onTimeWindowChange={setHistoryTimeFilter}
+          onClearFilters={clearHistoryFilters}
+          onCopyCsv={copyHistoryCsv}
+          copyStatus={historyCopyStatus}
+        />
+      )}
     </div>
+  );
+}
+
+function UsageHistoryDashboard({
+  usageHistory,
+  pageModel,
+  filters,
+  onProviderChange,
+  onProjectChange,
+  onTimeWindowChange,
+  onClearFilters,
+  onCopyCsv,
+  copyStatus,
+}: {
+  usageHistory: UsageHistoryState;
+  pageModel: UsageHistoryPageModel;
+  filters: UsageHistoryPageFilters;
+  onProviderChange: (value: 'all' | string) => void;
+  onProjectChange: (value: 'all' | string) => void;
+  onTimeWindowChange: (value: UsageHistoryTimeFilter) => void;
+  onClearFilters: () => void;
+  onCopyCsv: () => void;
+  copyStatus: 'idle' | 'copied' | 'failed';
+}) {
+  const model = pageModel.filtered;
+  const totals = model.totals;
+  const hasExportRows = pageModel.exportRowCount > 0 && !usageHistory.unavailable;
+  const unavailableMessage = usageHistoryUnavailableMessage(
+    usageHistory.unavailable,
+    usageHistory.error,
+  );
+
+  return (
+    <div className="grid gap-4">
+      <section className="border border-border bg-bg p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-sm uppercase tracking-wide text-accent-bright">
+              Persisted Usage History
+            </div>
+            <div className="mt-1 text-xs text-text-muted">
+              Local records from ~/.pixel-agents-multi/usage/usage-v1.jsonl
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2 text-xs uppercase tracking-wide text-text-muted">
+            <span className="border border-border bg-btn-bg px-2 py-1">
+              API proxy estimate only
+            </span>
+            <span className="border border-border bg-btn-bg px-2 py-1">
+              Not actual subscription billing
+            </span>
+          </div>
+        </div>
+      </section>
+
+      <section className="grid gap-3 border border-border bg-btn-bg p-3 xl:grid-cols-[180px_minmax(180px,1fr)_minmax(220px,1fr)_auto_auto]">
+        <UsageHistoryFilterSelect
+          label="Window"
+          value={filters.timeWindow}
+          allLabel="All history"
+          options={[
+            { value: 'today', label: usageHistoryTimeFilterLabel('today') },
+            { value: 'last_7_days', label: usageHistoryTimeFilterLabel('last_7_days') },
+          ]}
+          onChange={(value) => onTimeWindowChange(value as UsageHistoryTimeFilter)}
+          ariaLabel="Filter usage history time window"
+        />
+        <UsageHistoryFilterSelect
+          label="Provider"
+          value={filters.providerId}
+          allLabel="All providers"
+          options={pageModel.providerOptions}
+          onChange={onProviderChange}
+          ariaLabel="Filter usage history provider"
+        />
+        <UsageHistoryFilterSelect
+          label="Project"
+          value={filters.projectKey}
+          allLabel="All projects"
+          options={pageModel.projectOptions}
+          onChange={onProjectChange}
+          ariaLabel="Filter usage history project"
+        />
+        <div className="flex items-end">
+          {pageModel.hasFilters && (
+            <Button variant="ghost" size="sm" className="h-34 px-4" onClick={onClearFilters}>
+              Clear filters
+            </Button>
+          )}
+        </div>
+        <div className="flex min-w-[160px] flex-col items-start justify-end gap-1">
+          <Button
+            variant={hasExportRows ? 'default' : 'disabled'}
+            size="sm"
+            className="h-34 px-4"
+            disabled={!hasExportRows}
+            onClick={onCopyCsv}
+          >
+            Copy CSV
+          </Button>
+          <div className="text-xs text-text-muted">{usageHistoryCopyLabel(copyStatus)}</div>
+        </div>
+      </section>
+
+      {unavailableMessage ? (
+        <UsageHistoryEmptyPanel
+          title={unavailableMessage.title}
+          detail={unavailableMessage.detail}
+        />
+      ) : (
+        <>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+            <UsageMetric
+              label="Records"
+              value={`${model.filteredRecordCount.toLocaleString()} / ${model.sourceRecordCount.toLocaleString()}`}
+              detail="shown / stored"
+            />
+            <UsageMetric
+              label="Usage records"
+              value={totals.usageRecordCount.toLocaleString()}
+              detail={`${totals.rateLimitRecordCount} quota snapshots`}
+            />
+            <UsageMetric
+              label="Provider tokens"
+              value={compactNumber(totals.providerTokens)}
+              detail={`${compactNumber(totals.providerInputTokens)} in / ${compactNumber(
+                totals.providerOutputTokens,
+              )} out`}
+            />
+            <UsageMetric
+              label="Artifact est."
+              value={compactNumber(totals.artifactOutputTokens)}
+              detail="outside proxy total"
+            />
+            <UsageMetric
+              label="Proxy est."
+              value={formatProxyUsd(totals.apiProxyEstimateUsd)}
+              detail="API proxy estimate only"
+            />
+            <UsageMetric
+              label="Accuracy"
+              value={usageAccuracyShort(totals.accuracy)}
+              detail={usageHistoryAccuracyLabel(totals.accuracy)}
+            />
+          </div>
+
+          {model.emptyState ? (
+            <UsageHistoryEmptyPanel
+              title={model.emptyState.title}
+              detail={model.emptyState.detail}
+              activeFilters={model.emptyState.activeFilters}
+              onClearFilters={pageModel.hasFilters ? onClearFilters : undefined}
+            />
+          ) : (
+            <>
+              <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                <UsageHistoryProviderPanel pageModel={pageModel} />
+                <UsageHistoryProjectPanel pageModel={pageModel} />
+              </div>
+
+              <div className="grid gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+                <UsageHistoryModelPanel pageModel={pageModel} />
+                <UsageHistoryRateLimitPanel snapshots={model.latestRateLimits} />
+              </div>
+
+              <UsageHistoryLedgerPanel pageModel={pageModel} />
+            </>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function UsageHistoryFilterSelect({
+  label,
+  value,
+  allLabel,
+  options,
+  onChange,
+  ariaLabel,
+}: {
+  label: string;
+  value: string;
+  allLabel: string;
+  options: UsageHistoryPageOption[];
+  onChange: (value: string) => void;
+  ariaLabel: string;
+}) {
+  return (
+    <label className="min-w-0 text-xs uppercase tracking-wide text-text-muted">
+      {label}
+      <select
+        className="mt-2 h-34 w-full border border-border bg-bg px-3 text-sm normal-case tracking-normal text-text outline-none focus:border-accent"
+        value={value}
+        onChange={(event) => onChange(event.currentTarget.value)}
+        aria-label={ariaLabel}
+      >
+        <option value="all">{allLabel}</option>
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.detail ? `${option.label} (${option.detail})` : option.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function UsageHistoryProviderPanel({ pageModel }: { pageModel: UsageHistoryPageModel }) {
+  const totals = pageModel.filtered.totals;
+  return (
+    <section className="border border-border bg-bg">
+      <SectionHeader title="Historical Providers" subtitle="Persisted provider totals" />
+      <div className="divide-y divide-border">
+        {pageModel.filtered.providers.slice(0, 8).map((provider) => (
+          <div key={provider.providerId} className="p-4">
+            <div className="mb-3 flex min-w-0 flex-wrap items-center justify-between gap-2">
+              <div className="min-w-0">
+                <div className="flex min-w-0 items-center gap-2">
+                  <ProviderBadge providerId={provider.providerId} />
+                  <span className="truncate text-sm text-text">{provider.label}</span>
+                </div>
+                <div className="mt-1 text-xs text-text-muted">
+                  {provider.recordCount} records / {compactNumber(provider.providerTokens)} tokens
+                </div>
+              </div>
+              <UsageAccuracyPill accuracy={provider.accuracy} />
+            </div>
+            <UsageBar
+              label="Share"
+              value={provider.providerTokens}
+              total={Math.max(totals.providerTokens, 1)}
+            />
+            {provider.apiProxyEstimateUsd > 0 && (
+              <div className="mt-2 text-xs text-text-muted">
+                {formatProxyUsd(provider.apiProxyEstimateUsd)} / API proxy estimate only
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function UsageHistoryProjectPanel({ pageModel }: { pageModel: UsageHistoryPageModel }) {
+  const totals = pageModel.filtered.totals;
+  return (
+    <section className="border border-border bg-bg">
+      <SectionHeader title="Historical Projects" subtitle="Redacted local project groups" />
+      <div className="divide-y divide-border">
+        {pageModel.filtered.projects.slice(0, 8).map((project) => (
+          <div key={project.projectKey} className="p-4">
+            <div className="mb-2 flex min-w-0 flex-wrap items-center justify-between gap-2">
+              <div className="min-w-0">
+                <div className="truncate text-sm text-accent-bright">{project.projectName}</div>
+                <div className="mt-1 text-xs text-text-muted">
+                  {project.recordCount} records / {compactNumber(project.providerTokens)} tokens
+                </div>
+              </div>
+              <UsageAccuracyPill accuracy={project.accuracy} />
+            </div>
+            <div className="mb-2 flex min-w-0 flex-wrap gap-2 text-xs text-text-muted">
+              {project.providerIds.map((providerId) => (
+                <ProviderBadge key={providerId} providerId={providerId} />
+              ))}
+              {project.projectDirHash && <span className="truncate">{project.projectDirHash}</span>}
+              {project.topAgentName && (
+                <span className="truncate">
+                  Top: {project.topAgentName} / {compactNumber(project.topAgentTokens)}
+                </span>
+              )}
+            </div>
+            <UsageBar
+              label="Share"
+              value={project.providerTokens}
+              total={Math.max(totals.providerTokens, 1)}
+            />
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function UsageHistoryModelPanel({ pageModel }: { pageModel: UsageHistoryPageModel }) {
+  return (
+    <section className="border border-border bg-bg">
+      <SectionHeader
+        title="Historical Models"
+        subtitle="Model ids when provider data includes them"
+      />
+      <div className="divide-y divide-border">
+        {pageModel.filtered.models.length === 0 ? (
+          <div className="p-4 text-sm text-text-muted">No model metadata in this history scope</div>
+        ) : (
+          pageModel.filtered.models.slice(0, 8).map((model) => (
+            <div key={`${model.providerIds.join('|')}:${model.modelId}`} className="p-4">
+              <div className="mb-2 flex min-w-0 flex-wrap items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="truncate text-sm text-text">{model.label}</div>
+                  <div className="mt-1 text-xs text-text-muted">
+                    {model.source} / {model.recordCount} records /{' '}
+                    {compactNumber(model.providerTokens)} tokens
+                  </div>
+                </div>
+                <UsageAccuracyPill accuracy={model.accuracy} />
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {model.providerIds.map((providerId) => (
+                  <ProviderBadge key={providerId} providerId={providerId} />
+                ))}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </section>
+  );
+}
+
+function UsageHistoryRateLimitPanel({ snapshots }: { snapshots: UsageHistoryRateLimitSnapshot[] }) {
+  return (
+    <section className="border border-border bg-bg">
+      <SectionHeader
+        title="Latest Quota Snapshots"
+        subtitle="Persisted provider rate-limit signals"
+      />
+      <div className="divide-y divide-border">
+        {snapshots.length === 0 ? (
+          <div className="p-4 text-sm text-text-muted">No persisted rate-limit snapshots yet</div>
+        ) : (
+          snapshots.map((snapshot) => (
+            <div key={`${snapshot.providerId}:${snapshot.name}`} className="p-4">
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <ProviderBadge providerId={snapshot.providerId} />
+                <span className="text-sm text-text">{snapshot.name}</span>
+                <span className="text-xs text-text-muted">
+                  {formatRelative(snapshot.capturedAtMs)}
+                </span>
+              </div>
+              <div className="text-xs text-text-muted">{formatUsageHistoryRateLimit(snapshot)}</div>
+            </div>
+          ))
+        )}
+      </div>
+    </section>
+  );
+}
+
+function UsageHistoryLedgerPanel({ pageModel }: { pageModel: UsageHistoryPageModel }) {
+  return (
+    <section className="border border-border bg-bg">
+      <SectionHeader
+        title="Historical Agent Ledger"
+        subtitle="Agent/session rows from stored records"
+      />
+      <div className="divide-y divide-border">
+        {pageModel.filtered.ledgerRows.length === 0 ? (
+          <div className="p-4 text-sm text-text-muted">No historical ledger rows in this scope</div>
+        ) : (
+          pageModel.filtered.ledgerRows.slice(0, 24).map((row) => (
+            <div
+              key={row.ledgerKey}
+              className="grid gap-3 p-4 md:grid-cols-[minmax(0,1fr)_repeat(5,minmax(72px,auto))_auto]"
+            >
+              <div className="min-w-0">
+                <div className="flex min-w-0 items-center gap-2">
+                  <ProviderBadge providerId={row.providerId} />
+                  <span className="truncate text-sm text-text">{row.agentName}</span>
+                  <span className="shrink-0 text-xs text-text-muted">#{row.agentId}</span>
+                </div>
+                <div className="mt-1 flex min-w-0 flex-wrap gap-2 text-xs text-text-muted">
+                  <span className="truncate">{row.projectName}</span>
+                  <span className="truncate">{row.modelLabel}</span>
+                  {row.sessionId && <span className="truncate">{row.sessionId}</span>}
+                  {row.threadId && <span className="truncate">{row.threadId}</span>}
+                  {row.projectDirHash && <span className="truncate">{row.projectDirHash}</span>}
+                </div>
+              </div>
+              <LedgerValue label="Input" value={row.providerInputTokens} />
+              <LedgerValue label="Output" value={row.providerOutputTokens} />
+              <LedgerValue label="Cache" value={row.cacheTokens} />
+              <LedgerValue label="Artifact" value={row.artifactOutputTokens} />
+              <LedgerValue label="Provider" value={row.providerTokens} />
+              <div className="flex items-start justify-start md:justify-end">
+                <UsageAccuracyPill accuracy={row.accuracy} />
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </section>
+  );
+}
+
+function UsageHistoryEmptyPanel({
+  title,
+  detail,
+  activeFilters,
+  onClearFilters,
+}: {
+  title: string;
+  detail: string;
+  activeFilters?: string[];
+  onClearFilters?: () => void;
+}) {
+  return (
+    <section className="border border-border bg-btn-bg p-8 text-center">
+      <div className="text-lg text-accent-bright">{title}</div>
+      <div className="mt-2 text-sm text-text-muted">{detail}</div>
+      {activeFilters && activeFilters.length > 0 && (
+        <div className="mt-3 text-xs text-text-muted">{activeFilters.join(' / ')}</div>
+      )}
+      {onClearFilters && (
+        <div className="mt-4">
+          <Button variant="default" size="sm" onClick={onClearFilters}>
+            Clear filters
+          </Button>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -1108,6 +1618,48 @@ function usageHistoryStatusText(usageHistory: UsageHistoryState): string {
   if (usageHistory.unavailable) return 'History unavailable';
   if (usageHistory.loadedAtMs === undefined) return 'History loading';
   return `${usageHistory.records.length.toLocaleString()} history records`;
+}
+
+function usageHistoryCopyLabel(status: 'idle' | 'copied' | 'failed'): string {
+  if (status === 'copied') return 'CSV copied';
+  if (status === 'failed') return 'Copy failed';
+  return 'Redacted paths';
+}
+
+function formatProxyUsd(value: number): string {
+  if (value <= 0) return '$0.0000';
+  if (value < 0.01) return `$${value.toFixed(4)}`;
+  return `$${value.toFixed(2)}`;
+}
+
+function formatUsageHistoryRateLimit(limit: UsageHistoryRateLimitSnapshot): string {
+  const percent =
+    limit.usedPercent !== undefined
+      ? `${Math.round(limit.usedPercent)}% quota used`
+      : limit.remainingPercent !== undefined
+        ? `${Math.round(limit.remainingPercent)}% quota remaining`
+        : 'quota snapshot available';
+  const reset = rateLimitResetText(limit);
+  return reset
+    ? `${limit.providerLabel} ${percent}; resets ${reset}.`
+    : `${limit.providerLabel} ${percent}.`;
+}
+
+async function copyTextToClipboard(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.style.position = 'fixed';
+  textarea.style.left = '-9999px';
+  document.body.append(textarea);
+  textarea.focus();
+  textarea.select();
+  const copied = document.execCommand('copy');
+  textarea.remove();
+  if (!copied) throw new Error('Clipboard copy failed');
 }
 
 function UsageBar({ label, value, total }: { label: string; value: number; total: number }) {
