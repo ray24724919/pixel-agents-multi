@@ -92,6 +92,8 @@ export function createCharacter(
     tokenUsageEstimated: false,
     tokenUsageDetails: undefined,
     codexRateLimit: undefined,
+    delegation: undefined,
+    delegationDrivesActive: false,
   };
 }
 

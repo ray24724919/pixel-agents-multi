@@ -25,6 +25,7 @@ import { findPath, getWalkableTiles, isWalkable } from '../layout/tileMap.js';
 import { getLoadedCharacterCount } from '../sprites/spriteData.js';
 import type {
   Character,
+  DelegationVisualState,
   FurnitureInstance,
   OfficeLayout,
   PlacedFurniture,
@@ -855,6 +856,17 @@ export class OfficeState {
   setAgentActive(id: number, active: boolean): void {
     const ch = this.characters.get(id);
     if (!ch) return;
+    if (!active && !ch.isSubagent && ch.delegation?.isActive) {
+      ch.isActive = true;
+      ch.delegationDrivesActive = true;
+      ch.currentTool = ch.currentTool ?? 'Delegation';
+      ch.seatTimer = 0;
+      this.repairSeatingAssignments('active');
+      return;
+    }
+    if (active && !ch.isSubagent) {
+      ch.delegationDrivesActive = false;
+    }
     ch.isActive = active;
     if (ch.isSubagent) {
       if (active && ch.state === CharacterState.IDLE) {
@@ -881,6 +893,46 @@ export class OfficeState {
     } else {
       ch.seatTimer = 0;
       this.repairSeatingAssignments('active');
+    }
+  }
+
+  setAgentDelegation(id: number, delegation: DelegationVisualState | undefined): void {
+    const ch = this.characters.get(id);
+    if (!ch || ch.isSubagent) return;
+    const wasDelegationDriven = ch.delegationDrivesActive;
+    const wasActiveDelegation = ch.delegation?.isActive === true;
+    ch.delegation = delegation;
+
+    if (delegation?.isActive) {
+      if (!ch.isActive) {
+        ch.delegationDrivesActive = true;
+      }
+      ch.isActive = true;
+      ch.currentTool = ch.currentTool ?? 'Delegation';
+      ch.seatTimer = 0;
+      this.repairSeatingAssignments('active');
+      return;
+    }
+
+    if (ch.currentTool === 'Delegation') {
+      ch.currentTool = null;
+    }
+    ch.delegationDrivesActive = false;
+    if (wasDelegationDriven) {
+      ch.isActive = false;
+      ch.path = [];
+      ch.moveProgress = 0;
+      ch.state = CharacterState.IDLE;
+      ch.frame = 0;
+      ch.frameTimer = 0;
+      ch.seatTimer = 0;
+      ch.wanderTimer = 0;
+      ch.wanderLimit = this.randomShortIdleWanderLimit();
+      this.repairSeatingAssignments('idle');
+    } else if (wasActiveDelegation) {
+      this.repairSeatingAssignments(ch.isActive ? 'active' : 'idle');
+    } else {
+      this.rebuildFurnitureInstances();
     }
   }
 

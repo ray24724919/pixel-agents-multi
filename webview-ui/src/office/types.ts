@@ -206,6 +206,10 @@ export interface Character {
   leadAgentId?: number;
   /** True when lead spawns teammates via tmux (run_in_background Agent calls) */
   teamUsesTmux?: boolean;
+  /** Provider-agnostic supervisor delegation marker shown in office/canvas surfaces */
+  delegation?: DelegationVisualState;
+  /** Whether delegation temporarily promoted this otherwise-idle character to active. */
+  delegationDrivesActive: boolean;
   /** Cumulative input tokens consumed */
   inputTokens: number;
   /** Cumulative output tokens consumed */
@@ -234,4 +238,24 @@ export interface TokenRateLimitSnapshot {
   remainingPercent?: number;
   resetAtMs?: number;
   resetAfterSeconds?: number;
+}
+
+export type DelegationVisualStatus = 'delegating' | 'waiting_for_delegate' | 'delegate_error';
+export type DelegationVisualSource =
+  | 'terminal'
+  | 'hook'
+  | 'codex_app_worker'
+  | 'claude_worker'
+  | 'unknown';
+
+export interface DelegationVisualState {
+  status: DelegationVisualStatus;
+  activeDelegateCount: number;
+  completedDelegateCount: number;
+  failedDelegateCount: number;
+  totalDelegateCount: number;
+  delegateSource: DelegationVisualSource;
+  teamName?: string;
+  /** True while at least one delegated worker is still active. */
+  isActive: boolean;
 }

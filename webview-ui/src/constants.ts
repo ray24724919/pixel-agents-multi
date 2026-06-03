@@ -52,6 +52,14 @@ export const BUTTON_LINE_WIDTH_ZOOM_FACTOR = 0.5;
 export const BUBBLE_FADE_DURATION_SEC = 0.5;
 export const BUBBLE_SITTING_OFFSET_PX = 10;
 export const BUBBLE_VERTICAL_OFFSET_PX = 24;
+export const DELEGATION_MARKER_OFFSET_X_PX = 9;
+export const DELEGATION_MARKER_VERTICAL_OFFSET_PX = 23;
+export const DELEGATION_MARKER_MIN_WIDTH_PX = 14;
+export const DELEGATION_MARKER_HEIGHT_PX = 7;
+export const DELEGATION_MARKER_PADDING_X_PX = 3;
+export const DELEGATION_MARKER_FONT_PX = 5;
+export const DELEGATION_MARKER_DOT_SIZE_PX = 2;
+export const DELEGATION_MARKER_BORDER_WIDTH_PX = 1;
 export const FALLBACK_FLOOR_COLOR = '#808080';
 
 // ── Rendering - Overlay Colors (canvas, not CSS) ─────────────
@@ -70,6 +78,12 @@ export const SELECTION_HIGHLIGHT_COLOR = '#007fd4';
 export const DELETE_BUTTON_BG = 'rgba(200, 50, 50, 0.85)';
 export const ROTATE_BUTTON_BG = 'rgba(50, 120, 200, 0.85)';
 export const BUTTON_ICON_COLOR = '#fff';
+export const DELEGATION_MARKER_BG = 'rgba(20, 20, 34, 0.92)';
+export const DELEGATION_MARKER_BORDER = '#ffd700';
+export const DELEGATION_MARKER_TEXT = '#ffffff';
+export const DELEGATION_MARKER_ACTIVE_DOT = '#66aaff';
+export const DELEGATION_MARKER_ERROR_DOT = '#ff665c';
+export const DELEGATION_MARKER_DONE_DOT = '#66d28f';
 export const CANVAS_FALLBACK_TILE_COLOR = '#444';
 export const CANVAS_ERROR_TILE_COLOR = '#FF00FF';
 export const WALL_COLOR = '#3A3A5C';

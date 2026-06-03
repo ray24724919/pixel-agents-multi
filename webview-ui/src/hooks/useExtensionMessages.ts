@@ -11,6 +11,7 @@ import {
   type DelegationTimelineTransitionHint,
 } from '../components/delegationTimelineModel.js';
 import { playDoneSound, playPermissionSound, setSoundEnabled } from '../notificationSound.js';
+import { buildDelegationVisualState } from '../office/delegationVisual.js';
 import type { OfficeState } from '../office/engine/officeState.js';
 import { setFloorSprites } from '../office/floorTiles.js';
 import { buildDynamicCatalog } from '../office/layout/furnitureCatalog.js';
@@ -345,6 +346,9 @@ export function useExtensionMessages(
       os,
       agentRuntimeMetadata,
     );
+    for (const agentId of agents) {
+      os.setAgentDelegation(agentId, buildDelegationVisualState(currentSummaries.get(agentId)));
+    }
     for (const agent of currentTimelineAgents) {
       delegationTimelineAgentsRef.current.set(agent.id, agent);
     }

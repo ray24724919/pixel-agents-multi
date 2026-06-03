@@ -24,6 +24,7 @@ import type {
   SubagentCharacter,
 } from '../../hooks/useExtensionMessages.js';
 import { vscode } from '../../vscodeApi.js';
+import { delegationVisualStatusLabel, delegationVisualWorkerLabel } from '../delegationVisual.js';
 import { isCharacterSeated } from '../engine/characters.js';
 import type { OfficeState } from '../engine/officeState.js';
 import type { ToolActivity } from '../types.js';
@@ -154,8 +155,11 @@ export function ToolOverlay({
             activityText = sub ? sub.label : 'Subtask';
           }
         } else {
-          activityText =
-            agentLifecycleStatuses[id]?.label ?? getActivityText(id, agentTools, ch.isActive);
+          activityText = ch.delegation?.isActive
+            ? `${delegationVisualStatusLabel(ch.delegation)} / ${delegationVisualWorkerLabel(
+                ch.delegation,
+              )}`
+            : (agentLifecycleStatuses[id]?.label ?? getActivityText(id, agentTools, ch.isActive));
         }
 
         // Determine dot color
@@ -170,8 +174,11 @@ export function ToolOverlay({
           dotColor = 'var(--color-status-permission)';
         } else if (!dotColor && isActive && hasActiveTools) {
           dotColor = 'var(--color-status-active)';
+        } else if (!dotColor && ch.delegation?.isActive) {
+          dotColor = 'var(--color-status-active)';
         }
         const shouldPulse =
+          ch.delegation?.isActive ||
           (isActive && !hasPermission && lifecycle?.status !== 'completed') ||
           lifecycle?.status === 'thinking' ||
           lifecycle?.status === 'tool_running';
@@ -179,6 +186,12 @@ export function ToolOverlay({
         const isTeamAgent = !!ch.teamName;
         const conversationTitle = !isSub && !isTeamAgent ? ch.agentName || null : null;
         const teamRoleLabel = isTeamAgent ? (ch.isTeamLead ? 'LEAD' : ch.agentName || null) : null;
+        const delegationLine =
+          !isSub && ch.delegation && !ch.delegation.isActive
+            ? `${delegationVisualStatusLabel(ch.delegation)} / ${delegationVisualWorkerLabel(
+                ch.delegation,
+              )}`
+            : null;
         const totalTokens = ch.inputTokens + ch.outputTokens;
         const tokenRatio = totalTokens / MAX_CONTEXT_TOKENS;
         const providerLabel = providerDisplayName(ch.providerId);
@@ -186,6 +199,7 @@ export function ToolOverlay({
           ch.folderName ||
           conversationTitle ||
           teamRoleLabel ||
+          delegationLine ||
           providerLabel
         );
         const metadata = agentRuntimeMetadata[id];
@@ -248,6 +262,11 @@ export function ToolOverlay({
                 {(providerLabel || ch.folderName) && (
                   <span className="text-2xs leading-none overflow-hidden text-ellipsis block">
                     {[providerLabel, ch.folderName].filter(Boolean).join(' · ')}
+                  </span>
+                )}
+                {delegationLine && (
+                  <span className="text-2xs leading-none overflow-hidden text-ellipsis block opacity-90">
+                    {delegationLine}
                   </span>
                 )}
                 {lifecycle?.detail && (

@@ -11,6 +11,20 @@ import {
   BUTTON_RADIUS_ZOOM_FACTOR,
   CHARACTER_SITTING_OFFSET_PX,
   CHARACTER_Z_SORT_OFFSET,
+  DELEGATION_MARKER_ACTIVE_DOT,
+  DELEGATION_MARKER_BG,
+  DELEGATION_MARKER_BORDER,
+  DELEGATION_MARKER_BORDER_WIDTH_PX,
+  DELEGATION_MARKER_DONE_DOT,
+  DELEGATION_MARKER_DOT_SIZE_PX,
+  DELEGATION_MARKER_ERROR_DOT,
+  DELEGATION_MARKER_FONT_PX,
+  DELEGATION_MARKER_HEIGHT_PX,
+  DELEGATION_MARKER_MIN_WIDTH_PX,
+  DELEGATION_MARKER_OFFSET_X_PX,
+  DELEGATION_MARKER_PADDING_X_PX,
+  DELEGATION_MARKER_TEXT,
+  DELEGATION_MARKER_VERTICAL_OFFSET_PX,
   DELETE_BUTTON_BG,
   FALLBACK_FLOOR_COLOR,
   GHOST_BORDER_HOVER_FILL,
@@ -33,6 +47,7 @@ import {
   VOID_TILE_DASH_PATTERN,
   VOID_TILE_OUTLINE_COLOR,
 } from '../../constants.js';
+import { delegationVisualMarkerText } from '../delegationVisual.js';
 import { getColorizedFloorSprite, hasFloorSprites, WALL_COLOR } from '../floorTiles.js';
 import { getCachedSprite, getOutlineSprite } from '../sprites/spriteCache.js';
 import {
@@ -522,6 +537,66 @@ function renderBubbles(
   }
 }
 
+function renderDelegationMarkers(
+  ctx: CanvasRenderingContext2D,
+  characters: Character[],
+  offsetX: number,
+  offsetY: number,
+  zoom: number,
+): void {
+  for (const ch of characters) {
+    const delegation = ch.delegation;
+    if (!delegation) continue;
+
+    const label = delegationVisualMarkerText(delegation);
+    const sittingOff = isCharacterSeated(ch) ? BUBBLE_SITTING_OFFSET_PX : 0;
+    const markerHeight = DELEGATION_MARKER_HEIGHT_PX * zoom;
+    const markerPadding = DELEGATION_MARKER_PADDING_X_PX * zoom;
+    const dotSize = Math.max(DELEGATION_MARKER_DOT_SIZE_PX * zoom, 1);
+    const fontSize = Math.max(DELEGATION_MARKER_FONT_PX * zoom, DELEGATION_MARKER_FONT_PX);
+
+    ctx.save();
+    ctx.font = `${fontSize}px "FS Pixel Sans", monospace`;
+    ctx.textBaseline = 'middle';
+    const textWidth = ctx.measureText(label).width;
+    const markerWidth = Math.max(
+      DELEGATION_MARKER_MIN_WIDTH_PX * zoom,
+      textWidth + markerPadding * 2 + dotSize + markerPadding,
+    );
+    const markerX = Math.round(offsetX + ch.x * zoom + DELEGATION_MARKER_OFFSET_X_PX * zoom);
+    const markerY = Math.round(
+      offsetY + (ch.y + sittingOff - DELEGATION_MARKER_VERTICAL_OFFSET_PX) * zoom - markerHeight,
+    );
+
+    ctx.fillStyle = DELEGATION_MARKER_BG;
+    ctx.fillRect(markerX, markerY, markerWidth, markerHeight);
+    ctx.strokeStyle = DELEGATION_MARKER_BORDER;
+    ctx.lineWidth = Math.max(DELEGATION_MARKER_BORDER_WIDTH_PX, zoom);
+    ctx.strokeRect(markerX, markerY, markerWidth, markerHeight);
+
+    ctx.fillStyle =
+      delegation.failedDelegateCount > 0
+        ? DELEGATION_MARKER_ERROR_DOT
+        : delegation.isActive
+          ? DELEGATION_MARKER_ACTIVE_DOT
+          : DELEGATION_MARKER_DONE_DOT;
+    ctx.fillRect(
+      markerX + markerPadding,
+      markerY + Math.floor((markerHeight - dotSize) / 2),
+      dotSize,
+      dotSize,
+    );
+
+    ctx.fillStyle = DELEGATION_MARKER_TEXT;
+    ctx.fillText(
+      label,
+      markerX + markerPadding + dotSize + markerPadding,
+      markerY + markerHeight / 2,
+    );
+    ctx.restore();
+  }
+}
+
 export interface ButtonBounds {
   /** Center X in device pixels */
   cx: number;
@@ -624,6 +699,9 @@ export function renderFrame(
 
   // Speech bubbles (always on top of characters)
   renderBubbles(ctx, characters, offsetX, offsetY, zoom);
+
+  // Delegation markers sit with the character overlays and never create full agents.
+  renderDelegationMarkers(ctx, characters, offsetX, offsetY, zoom);
 
   // Editor overlays
   if (editor) {
