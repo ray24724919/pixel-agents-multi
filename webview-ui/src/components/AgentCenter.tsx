@@ -5,6 +5,7 @@ import type {
   AgentLifecycleState,
   AgentRuntimeMetadata,
   AgentTimelineEvent,
+  UsageHistoryState,
 } from '../hooks/useExtensionMessages.js';
 import type { OfficeState } from '../office/engine/officeState.js';
 import type { TokenRateLimitSnapshot, TokenUsageDetails, ToolActivity } from '../office/types.js';
@@ -70,6 +71,7 @@ interface AgentCenterSurfaceProps {
   onCloseAgent: (id: number) => void;
   onPauseAgent: (id: number) => void;
   onResumeAgent: (id: number) => void;
+  usageHistory: UsageHistoryState;
 }
 
 interface AgentSummary extends AgentListItem {
@@ -142,6 +144,7 @@ export function AgentCenterSurface({
   onCloseAgent,
   onPauseAgent,
   onResumeAgent,
+  usageHistory,
 }: AgentCenterSurfaceProps) {
   const [providerFilter, setProviderFilter] = useState<ProviderFilter>('all');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
@@ -265,6 +268,11 @@ export function AgentCenterSurface({
     setTimelineSearchQuery('');
   };
 
+  const refreshAgentCenter = () => {
+    vscode.postMessage({ type: 'refreshAgents' });
+    vscode.postMessage({ type: 'refreshUsageHistory' });
+  };
+
   useEffect(() => {
     officeState.setMeetingTeam(teamFilter === 'all' ? null : teamFilter);
   }, [officeState, teamFilter]);
@@ -308,11 +316,7 @@ export function AgentCenterSurface({
             <span>Show hidden</span>
             {hiddenCount > 0 && <span>({hiddenCount})</span>}
           </label>
-          <Button
-            variant="default"
-            size="sm"
-            onClick={() => vscode.postMessage({ type: 'refreshAgents' })}
-          >
+          <Button variant="default" size="sm" onClick={refreshAgentCenter}>
             Refresh
           </Button>
         </div>
@@ -439,6 +443,7 @@ export function AgentCenterSurface({
               agents={visibleSummaries}
               visibleAgentIds={visibleAgentIds}
               officeState={officeState}
+              usageHistory={usageHistory}
             />
           </UsageErrorBoundary>
         )}
@@ -505,15 +510,18 @@ function UsageDashboard({
   agents,
   visibleAgentIds,
   officeState,
+  usageHistory,
 }: {
   agents: AgentSummary[];
   visibleAgentIds: number[];
   officeState: OfficeState;
+  usageHistory: UsageHistoryState;
 }) {
   const dashboard = buildUsageIntelligenceDashboard(agents);
   const { totals } = dashboard;
   const activeRows = dashboard.ledgerRows.filter((agent) => agent.displayTokens > 0);
   const hasAgents = totals.agentCount > 0;
+  const usageHistoryStatus = usageHistoryStatusText(usageHistory);
 
   return (
     <div className="grid gap-4">
@@ -532,6 +540,9 @@ function UsageDashboard({
           <div className="flex flex-wrap gap-2 text-xs uppercase tracking-wide text-text-muted">
             <span className="border border-border bg-btn-bg px-2 py-1">Live scope</span>
             <span className="border border-border bg-btn-bg px-2 py-1">Local only</span>
+            <span className="border border-border bg-btn-bg px-2 py-1" title={usageHistory.error}>
+              {usageHistoryStatus}
+            </span>
             <span className="border border-border bg-btn-bg px-2 py-1">Proxy estimate only</span>
           </div>
         </div>
@@ -1092,6 +1103,12 @@ function UsageAccuracyPill({ accuracy }: { accuracy: UsageAccuracy }) {
       {usageAccuracyShort(accuracy)}
     </span>
   );
+}
+
+function usageHistoryStatusText(usageHistory: UsageHistoryState): string {
+  if (usageHistory.unavailable) return 'History unavailable';
+  if (usageHistory.loadedAtMs === undefined) return 'History loading';
+  return `${usageHistory.records.length.toLocaleString()} history records`;
 }
 
 function UsageBar({ label, value, total }: { label: string; value: number; total: number }) {
