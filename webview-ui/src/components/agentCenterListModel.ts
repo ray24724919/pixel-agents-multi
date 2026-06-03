@@ -1,4 +1,12 @@
-export type AgentListStatusGroup = 'active' | 'paused' | 'waiting' | 'needs_me' | 'error';
+import type { DelegationSummary } from './delegationModel.js';
+
+export type AgentListStatusGroup =
+  | 'active'
+  | 'paused'
+  | 'waiting'
+  | 'needs_me'
+  | 'error'
+  | 'delegating';
 export type AgentListStatusFilter = 'all' | AgentListStatusGroup | 'hidden';
 export type AgentListSortKey =
   | 'attention'
@@ -28,6 +36,7 @@ export interface AgentListItem {
   isTeamLead?: boolean;
   isPaused: boolean;
   hidden: boolean;
+  delegation?: DelegationSummary;
   recentEventText?: string;
 }
 
@@ -119,13 +128,14 @@ export function agentListSortLabel(sortKey: AgentListSortKey): string {
 }
 
 export function attentionRank(agent: AgentListItem): number {
-  if (agent.hidden) return 5;
+  if (agent.hidden) return 6;
   if (agent.statusGroup === 'needs_me') return 0;
   if (agent.statusGroup === 'error') return 1;
-  if (agent.statusGroup === 'waiting') return 2;
-  if (agent.statusGroup === 'active') return 3;
-  if (agent.isPaused || agent.statusGroup === 'paused') return 4;
-  return 5;
+  if (agent.statusGroup === 'delegating') return 2;
+  if (agent.statusGroup === 'waiting') return 3;
+  if (agent.statusGroup === 'active') return 4;
+  if (agent.isPaused || agent.statusGroup === 'paused') return 5;
+  return 6;
 }
 
 function compareAttention(a: AgentListItem, b: AgentListItem): number {
@@ -171,6 +181,7 @@ function buildAgentSearchText(agent: AgentListItem): string {
     agent.statusGroup,
     agent.activity,
     agent.detail,
+    delegationSearchText(agent.delegation),
     agent.recentEventText,
     agent.hidden ? 'hidden' : undefined,
     agent.isPaused ? 'paused' : undefined,
@@ -191,4 +202,26 @@ function normalizeSearchText(value: string): string {
     .replace(/[_-]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function delegationSearchText(delegation: DelegationSummary | undefined): string {
+  if (!delegation) return '';
+  const total =
+    delegation.activeDelegateCount +
+    delegation.completedDelegateCount +
+    delegation.failedDelegateCount;
+  return [
+    'delegation',
+    'delegate',
+    'delegating',
+    'supervising',
+    `${total} workers`,
+    `${total} worker`,
+    delegation.status,
+    delegation.delegateSource,
+    delegation.teamName,
+    ...delegation.delegateLabels,
+  ]
+    .filter(Boolean)
+    .join(' ');
 }

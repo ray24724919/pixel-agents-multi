@@ -5,6 +5,7 @@ import type {
   AgentLifecycleState,
   AgentRuntimeMetadata,
   AgentTimelineEvent,
+  SubagentCharacter,
   UsageHistoryState,
 } from '../hooks/useExtensionMessages.js';
 import type { OfficeState } from '../office/engine/officeState.js';
@@ -27,6 +28,13 @@ import {
   filterAndSortAgentList,
 } from './agentCenterListModel.js';
 import type { AgentCenterPage } from './agentCenterPages.js';
+import {
+  buildDelegationSummaries,
+  delegationStatusLabel,
+  type DelegationSummary,
+  delegationTotalCount,
+  delegationWorkerLabel,
+} from './delegationModel.js';
 import { isPausedStatus, pauseActionLabel } from './pauseResume.js';
 import {
   buildTimelinePageItems,
@@ -79,6 +87,8 @@ interface AgentCenterSurfaceProps {
   agentLifecycleEvents: AgentLifecycleEvent[];
   agentTimelineEvents: AgentTimelineEvent[];
   agentRuntimeMetadata: Record<number, AgentRuntimeMetadata>;
+  subagentTools: Record<number, Record<string, ToolActivity[]>>;
+  subagentCharacters: SubagentCharacter[];
   hiddenAgents: Record<number, boolean>;
   showHiddenAgents: boolean;
   onShowHiddenAgentsChange: (show: boolean) => void;
@@ -106,6 +116,7 @@ interface AgentSummary extends AgentListItem {
   tokenUsageEstimated: boolean;
   tokenUsageDetails?: TokenUsageDetails;
   codexRateLimit?: TokenRateLimitSnapshot;
+  delegation?: DelegationSummary;
   zone: AgentZone;
   zoneSource: AgentZoneSource;
   projectDir?: string;
@@ -152,6 +163,8 @@ export function AgentCenterSurface({
   agentLifecycleEvents,
   agentTimelineEvents,
   agentRuntimeMetadata,
+  subagentTools,
+  subagentCharacters,
   hiddenAgents,
   showHiddenAgents,
   onShowHiddenAgentsChange,
@@ -175,7 +188,7 @@ export function AgentCenterSurface({
   const [timelineAgentFilter, setTimelineAgentFilter] = useState<'all' | string>('all');
   const [detailAgentId, setDetailAgentId] = useState<number | null>(selectedAgent);
 
-  const summaries = useMemo(
+  const baseSummaries = useMemo(
     () =>
       agents.map((id) =>
         getAgentSummary(
@@ -199,6 +212,22 @@ export function AgentCenterSurface({
       hiddenAgents,
       officeState,
     ],
+  );
+  const delegationSummaries = useMemo(
+    () =>
+      buildDelegationSummaries({
+        agents: baseSummaries,
+        subagentCharacters,
+        subagentTools,
+      }),
+    [baseSummaries, subagentCharacters, subagentTools],
+  );
+  const summaries = useMemo(
+    () =>
+      baseSummaries.map((agent) =>
+        applyDelegationSummary(agent, delegationSummaries.get(agent.id)),
+      ),
+    [baseSummaries, delegationSummaries],
   );
   const visibleSummaries = useMemo(
     () =>
@@ -386,7 +415,16 @@ export function AgentCenterSurface({
 
             <div className="mb-3 flex shrink-0 flex-wrap items-center gap-2">
               <SegmentedButtons
-                values={['all', 'needs_me', 'error', 'active', 'paused', 'waiting', 'hidden']}
+                values={[
+                  'all',
+                  'needs_me',
+                  'error',
+                  'delegating',
+                  'active',
+                  'paused',
+                  'waiting',
+                  'hidden',
+                ]}
                 active={statusFilter}
                 label={statusFilterLabel}
                 onChange={setStatusFilter}
@@ -1491,7 +1529,7 @@ function TimelineEventRow({ event }: { event: TimelinePageItem }) {
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <span className={`h-2 w-2 shrink-0 rounded-full ${severityDot(event.severity)}`} />
           <TimelineSeverityPill severity={event.severity} />
-          {event.isActionLike && <TimelineActionPill />}
+          {event.isActionLike && <TimelineHistoryPill event={event} />}
           <span className="min-w-[120px] max-w-full truncate text-sm text-text">{event.title}</span>
         </div>
         {event.summary && (
@@ -1528,10 +1566,10 @@ function TimelineSeverityPill({ severity }: { severity: TimelineSeverity }) {
   );
 }
 
-function TimelineActionPill() {
+function TimelineHistoryPill({ event }: { event: TimelinePageItem }) {
   return (
     <span className="shrink-0 border border-accent bg-btn-bg px-2 py-1 text-xs uppercase tracking-wide text-accent-bright">
-      Action
+      {event.isDelegationLike ? 'Delegation' : 'Action'}
     </span>
   );
 }
@@ -1728,6 +1766,7 @@ function SegmentedButtons<T extends string>({
 interface AgentStateCounts {
   total: number;
   active: number;
+  delegating: number;
   paused: number;
   waiting: number;
   needsMe: number;
@@ -1749,6 +1788,7 @@ function AgentStateSummary({
     { label: 'Visible', value: visibleCount, tone: 'border-border text-text' },
     { label: 'Needs me', value: counts.needsMe, tone: 'border-status-permission text-text' },
     { label: 'Error', value: counts.error, tone: 'border-status-error text-text' },
+    { label: 'Delegating', value: counts.delegating, tone: 'border-accent text-text' },
     { label: 'Active', value: counts.active, tone: 'border-status-active text-text' },
     { label: 'Paused', value: counts.paused, tone: 'border-status-permission text-text' },
     { label: 'Waiting', value: counts.waiting, tone: 'border-status-success text-text' },
@@ -1833,6 +1873,7 @@ function AgentRow({
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <ProviderBadge providerId={agent.providerId} />
           <AttentionBadge agent={agent} />
+          {agent.delegation && <DelegationBadge delegation={agent.delegation} />}
         </div>
         <div className="mt-2 flex min-w-0 items-baseline gap-2">
           <span className="truncate text-lg text-accent-bright">{agent.name}</span>
@@ -1864,6 +1905,12 @@ function AgentRow({
           {agent.hidden && <HiddenMarker />}
         </div>
         <div className="mt-2 truncate text-sm text-text">{agent.activity}</div>
+        {agent.delegation && (
+          <div className="mt-1 truncate text-xs text-text-muted">
+            {delegationStatusLabel(agent.delegation.status)} /{' '}
+            {delegationWorkerLabel(agent.delegation)}
+          </div>
+        )}
         {agent.updatedAt !== undefined && agent.updatedAt > 0 && (
           <div className="mt-1 text-xs text-text-muted">
             Updated {formatRelative(agent.updatedAt)}
@@ -1892,6 +1939,7 @@ function agentRowBorder(agent: AgentSummary): string {
   if (agent.hidden) return 'border-l-border';
   if (agent.statusGroup === 'needs_me') return 'border-l-status-permission';
   if (agent.statusGroup === 'error') return 'border-l-status-error';
+  if (agent.statusGroup === 'delegating') return 'border-l-accent';
   if (agent.isPaused || agent.statusGroup === 'paused') return 'border-l-status-permission';
   if (agent.statusGroup === 'active') return 'border-l-status-active';
   return 'border-l-status-success';
@@ -1914,6 +1962,7 @@ function attentionBadgeClass(agent: AgentSummary): string {
   if (agent.hidden) return 'border-border bg-btn-bg text-text-muted';
   if (agent.statusGroup === 'needs_me') return 'border-status-permission bg-btn-bg text-text';
   if (agent.statusGroup === 'error') return 'border-status-error bg-btn-bg text-text';
+  if (agent.statusGroup === 'delegating') return 'border-accent bg-btn-bg text-text';
   if (agent.isPaused || agent.statusGroup === 'paused') {
     return 'border-status-permission bg-btn-bg text-text';
   }
@@ -1925,6 +1974,7 @@ function attentionColor(agent: AgentSummary): string {
   if (agent.hidden) return 'bg-border';
   if (agent.statusGroup === 'needs_me') return 'bg-status-permission';
   if (agent.statusGroup === 'error') return 'bg-status-error';
+  if (agent.statusGroup === 'delegating') return 'bg-accent';
   if (agent.isPaused || agent.statusGroup === 'paused') return 'bg-status-permission';
   if (agent.statusGroup === 'active') return 'bg-status-active';
   return 'bg-status-success';
@@ -1934,9 +1984,18 @@ function attentionLabel(agent: AgentSummary): string {
   if (agent.hidden) return 'Hidden';
   if (agent.statusGroup === 'needs_me') return 'Needs me';
   if (agent.statusGroup === 'error') return 'Error';
+  if (agent.statusGroup === 'delegating') return 'Supervising';
   if (agent.isPaused || agent.statusGroup === 'paused') return 'Paused';
   if (agent.statusGroup === 'active') return 'Active';
   return 'Waiting';
+}
+
+function DelegationBadge({ delegation }: { delegation: DelegationSummary }) {
+  return (
+    <span className="inline-flex shrink-0 items-center gap-2 border border-accent bg-btn-bg px-2 py-1 text-xs uppercase tracking-wide text-accent-bright">
+      <span>{delegationWorkerLabel(delegation)}</span>
+    </span>
+  );
 }
 
 function TokenAccuracyLabel({ estimated }: { estimated: boolean }) {
@@ -2195,6 +2254,14 @@ function AgentDetail({
             value={agent.isTeamLead ? 'Lead' : (agent.roleName ?? 'Member')}
           />
         )}
+        {agent.delegation && (
+          <DetailField
+            label="Delegation"
+            value={`${delegationStatusLabel(agent.delegation.status)} / ${delegationWorkerLabel(
+              agent.delegation,
+            )}`}
+          />
+        )}
       </div>
 
       {(agent.projectDir || agent.transcriptPath) && (
@@ -2210,6 +2277,27 @@ function AgentDetail({
         <div className="mt-4 border border-border bg-btn-bg p-3 text-sm text-text-muted">
           <div className="text-xs uppercase tracking-wide">Detail</div>
           <div className="mt-1 break-words text-text">{agent.detail}</div>
+        </div>
+      )}
+
+      {agent.delegation && (
+        <div className="mt-4 border border-border bg-btn-bg p-3 text-sm text-text-muted">
+          <div className="text-xs uppercase tracking-wide">Delegated workers</div>
+          <div className="mt-1 flex flex-wrap gap-2 text-text">
+            <span>{agent.delegation.activeDelegateCount} active</span>
+            <span>{agent.delegation.completedDelegateCount} completed</span>
+            <span>{agent.delegation.failedDelegateCount} failed</span>
+            <span>{agent.delegation.delegateSource}</span>
+          </div>
+          {agent.delegation.delegateLabels.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {agent.delegation.delegateLabels.slice(0, 8).map((label) => (
+                <span key={label} className="border border-border bg-bg px-2 py-1 text-xs">
+                  {label}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -2444,6 +2532,31 @@ function getAgentSummary(
   };
 }
 
+function applyDelegationSummary(
+  agent: AgentSummary,
+  delegation: DelegationSummary | undefined,
+): AgentSummary {
+  if (!delegation || delegation.status === 'none' || delegationTotalCount(delegation) === 0) {
+    return agent;
+  }
+  const delegationLabel = `${delegationStatusLabel(delegation.status)} / ${delegationWorkerLabel(
+    delegation,
+  )}`;
+  const currentDetail = agent.detail ?? agent.activity;
+  return {
+    ...agent,
+    status: 'supervising',
+    statusGroup:
+      agent.hidden || agent.isPaused || agent.statusGroup === 'paused'
+        ? agent.statusGroup
+        : 'delegating',
+    activity: delegationLabel,
+    detail: currentDetail ? `${delegationLabel} / ${currentDetail}` : delegationLabel,
+    updatedAt: Math.max(agent.updatedAt ?? 0, delegation.updatedAt),
+    delegation,
+  };
+}
+
 interface TimelineItem {
   id: string;
   timestamp: number;
@@ -2502,6 +2615,7 @@ function getAgentStateCounts(agents: AgentSummary[]): AgentStateCounts {
   const counts: AgentStateCounts = {
     total: agents.length,
     active: 0,
+    delegating: 0,
     paused: 0,
     waiting: 0,
     needsMe: 0,
@@ -2519,6 +2633,8 @@ function getAgentStateCounts(agents: AgentSummary[]): AgentStateCounts {
       counts.needsMe += 1;
     } else if (agent.statusGroup === 'error') {
       counts.error += 1;
+    } else if (agent.statusGroup === 'delegating') {
+      counts.delegating += 1;
     } else if (agent.statusGroup === 'active') {
       counts.active += 1;
     } else {
@@ -2544,7 +2660,7 @@ function getProjectSummaries(agents: AgentSummary[]): ProjectSummary[] {
     project.agentCount += 1;
     project.tokens += agent.tokens;
     if (!project.projectDir && agent.projectDir) project.projectDir = agent.projectDir;
-    if (agent.statusGroup === 'active') project.activeCount += 1;
+    if (isWorkingStatusGroup(agent.statusGroup)) project.activeCount += 1;
     if (agent.statusGroup === 'waiting') project.waitingCount += 1;
     if (agent.statusGroup === 'needs_me') project.needsMeCount += 1;
     if (agent.statusGroup === 'error') project.errorCount += 1;
@@ -2582,7 +2698,7 @@ function getTeamSummaries(agents: AgentSummary[]): TeamSummary[] {
       if (leadId !== undefined) team.leadAgentId = leadId;
       if (agent.isTeamLead) team.leadName = agent.name;
     }
-    if (agent.statusGroup === 'active') team.activeCount += 1;
+    if (isWorkingStatusGroup(agent.statusGroup)) team.activeCount += 1;
     if (agent.statusGroup === 'needs_me') team.needsMeCount += 1;
     if (agent.statusGroup === 'error') team.errorCount += 1;
     teams.set(agent.teamName, team);
@@ -2603,13 +2719,18 @@ function compareTeamMembers(a: AgentSummary, b: AgentSummary): number {
   if (!a.isTeamLead && b.isTeamLead) return 1;
   if (a.statusGroup === 'needs_me' && b.statusGroup !== 'needs_me') return -1;
   if (a.statusGroup !== 'needs_me' && b.statusGroup === 'needs_me') return 1;
-  if (a.statusGroup === 'active' && b.statusGroup !== 'active') return -1;
-  if (a.statusGroup !== 'active' && b.statusGroup === 'active') return 1;
+  if (isWorkingStatusGroup(a.statusGroup) && !isWorkingStatusGroup(b.statusGroup)) return -1;
+  if (!isWorkingStatusGroup(a.statusGroup) && isWorkingStatusGroup(b.statusGroup)) return 1;
   return a.name.localeCompare(b.name);
+}
+
+function isWorkingStatusGroup(statusGroup: AgentListStatusGroup): boolean {
+  return statusGroup === 'active' || statusGroup === 'delegating';
 }
 
 function statusFilterLabel(filter: StatusFilter): string {
   if (filter === 'needs_me') return 'Needs me';
+  if (filter === 'delegating') return 'Delegating';
   return filter[0].toUpperCase() + filter.slice(1);
 }
 
@@ -2654,7 +2775,10 @@ function StatusBadge({ status }: { status: string }) {
   const color =
     status === 'needs approval' || status === 'waiting_permission' || status === 'waiting_user'
       ? 'bg-status-permission'
-      : status === 'active' || status === 'thinking' || status === 'tool_running'
+      : status === 'active' ||
+          status === 'thinking' ||
+          status === 'tool_running' ||
+          status === 'supervising'
         ? 'bg-status-active'
         : status === 'paused'
           ? 'bg-status-permission'

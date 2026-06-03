@@ -414,6 +414,8 @@ function App() {
           agentLifecycleEvents={agentLifecycleEvents}
           agentTimelineEvents={agentTimelineEvents}
           agentRuntimeMetadata={agentRuntimeMetadata}
+          subagentTools={subagentTools}
+          subagentCharacters={subagentCharacters}
           hiddenAgents={hiddenAgents}
           showHiddenAgents={showHiddenAgents}
           onShowHiddenAgentsChange={setShowHiddenAgents}

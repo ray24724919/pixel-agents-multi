@@ -77,6 +77,44 @@ test('timeline page keeps action history for agents that are no longer visible',
   assert.equal(items[0]?.isActionLike, true);
 });
 
+test('timeline page keeps delegation history for supervisors that are no longer visible', () => {
+  const items = buildTimelinePageItems(
+    [],
+    [
+      event({
+        id: 'delegation-1',
+        agentId: 42,
+        providerId: 'claude',
+        projectName: 'docs-project',
+        runId: 'wp-7a',
+        timestamp: 400,
+        kind: 'delegation.started',
+        title: 'Delegation started',
+        summary: 'Supervisor started 2 workers for W7-A',
+        severity: 'info',
+        source: 'agent',
+      }),
+      event({
+        id: 'tool-42',
+        agentId: 42,
+        timestamp: 350,
+        kind: 'tool.started',
+        title: 'Hidden tool event',
+      }),
+    ],
+    [],
+  );
+
+  assert.equal(items.length, 1);
+  assert.equal(items[0]?.id, 'timeline-delegation-1');
+  assert.equal(items[0]?.agentName, 'Agent #42');
+  assert.equal(items[0]?.providerId, 'claude');
+  assert.equal(items[0]?.project, 'docs-project');
+  assert.equal(items[0]?.runId, 'wp-7a');
+  assert.equal(items[0]?.isActionLike, true);
+  assert.equal(items[0]?.isDelegationLike, true);
+});
+
 test('timeline page search spans event, agent, provider, and project text', () => {
   const items = buildTimelinePageItems(
     [
@@ -114,6 +152,47 @@ test('timeline page search spans event, agent, provider, and project text', () =
     model.events.map((item) => item.id),
     ['timeline-build-1'],
   );
+});
+
+test('timeline page search and filters include delegation event metadata', () => {
+  const items = buildTimelinePageItems(
+    [agent({ id: 1, name: 'Claude Supervisor', providerId: 'claude', project: 'pixel-agents' })],
+    [
+      event({
+        id: 'delegation-progress',
+        agentId: 1,
+        providerId: 'claude',
+        projectName: 'pixel-agents',
+        runId: 'W7-A',
+        timestamp: 500,
+        kind: 'delegation.progress',
+        title: 'Delegation progress',
+        summary: '2 workers running W7-A tests',
+        severity: 'info',
+      }),
+      event({
+        id: 'ordinary-tool',
+        agentId: 1,
+        timestamp: 400,
+        kind: 'tool.started',
+        title: 'Tool started',
+      }),
+    ],
+    [],
+  );
+  const model = buildTimelinePageModel(items, {
+    ...defaultFilters,
+    providerFilter: 'claude',
+    projectFilter: 'pixel-agents',
+    agentFilter: '1',
+    searchQuery: 'delegation workers w7 a supervisor',
+  });
+
+  assert.deepEqual(
+    model.events.map((item) => item.id),
+    ['timeline-delegation-progress'],
+  );
+  assert.equal(model.counts.actionLike, 1);
 });
 
 test('timeline page applies provider severity project and agent filters together', () => {

@@ -50,12 +50,25 @@ test('agent search matches identity, paths, session metadata, team, and activity
     roleName: 'Reviewer',
     activity: 'Running Bash tests',
     recentEventText: 'Permission approved for session-abc',
+    delegation: {
+      supervisorAgentId: 7,
+      providerId: 'codex',
+      status: 'delegating',
+      activeDelegateCount: 2,
+      completedDelegateCount: 0,
+      failedDelegateCount: 0,
+      delegateSource: 'hook',
+      teamName: 'Infra',
+      delegateLabels: ['worker one', 'worker two'],
+      updatedAt: 100,
+    },
   });
 
   assert.equal(agentMatchesSearch(item, '#7 codex'), true);
   assert.equal(agentMatchesSearch(item, 'users/user/documents/raychen'), true);
   assert.equal(agentMatchesSearch(item, 'infra bash'), true);
   assert.equal(agentMatchesSearch(item, 'session abc reviewer'), true);
+  assert.equal(agentMatchesSearch(item, 'supervising 2 workers worker one'), true);
   assert.equal(agentMatchesSearch(item, 'missing needle'), false);
 });
 
@@ -110,7 +123,7 @@ test('agent list filters combine provider, status, project, team, search, and hi
   );
 });
 
-test('attention sort orders needs-me, error, waiting, active, paused, then hidden', () => {
+test('attention sort orders needs-me, error, delegating, waiting, active, paused, then hidden', () => {
   const items = [
     agent({ id: 1, statusGroup: 'waiting', updatedAt: 50 }),
     agent({ id: 2, statusGroup: 'active', updatedAt: 50 }),
@@ -118,11 +131,33 @@ test('attention sort orders needs-me, error, waiting, active, paused, then hidde
     agent({ id: 4, statusGroup: 'needs_me', updatedAt: 50 }),
     agent({ id: 5, statusGroup: 'paused', isPaused: true, updatedAt: 50 }),
     agent({ id: 6, statusGroup: 'active', hidden: true, updatedAt: 1000 }),
+    agent({ id: 7, statusGroup: 'delegating', status: 'supervising', updatedAt: 50 }),
   ];
 
   assert.deepEqual(
     filterAndSortAgentList(items, filters({ sortKey: 'attention' })).map((item) => item.id),
-    [4, 3, 1, 2, 5, 6],
+    [4, 3, 7, 1, 2, 5, 6],
+  );
+});
+
+test('agent list can filter delegating supervisors', () => {
+  const items = [
+    agent({ id: 1, statusGroup: 'waiting', status: 'waiting' }),
+    agent({
+      id: 2,
+      name: 'Supervisor',
+      status: 'supervising',
+      statusGroup: 'delegating',
+      activity: 'Supervising / 2 workers',
+    }),
+  ];
+
+  assert.deepEqual(
+    filterAndSortAgentList(
+      items,
+      filters({ statusFilter: 'delegating', searchQuery: 'supervising workers' }),
+    ).map((item) => item.id),
+    [2],
   );
 });
 

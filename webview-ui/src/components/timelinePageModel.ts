@@ -47,6 +47,7 @@ export interface TimelinePageItem {
   sessionId?: string;
   runId?: string;
   isActionLike: boolean;
+  isDelegationLike: boolean;
 }
 
 export interface TimelinePageFilters {
@@ -92,6 +93,7 @@ export function buildTimelinePageItems(
   for (const event of timelineEvents) {
     const agent = agentsById.get(event.agentId);
     const isActionLike = isActionLikeTimelineKind(event.kind);
+    const isDelegationLike = isDelegationTimelineKind(event.kind);
     if (!agent && !isActionLike) continue;
     items.push({
       id: `timeline-${event.id}`,
@@ -108,6 +110,7 @@ export function buildTimelinePageItems(
       sessionId: event.sessionId,
       runId: event.runId,
       isActionLike,
+      isDelegationLike,
     });
   }
 
@@ -128,6 +131,7 @@ export function buildTimelinePageItems(
       kind,
       source: 'system',
       isActionLike: false,
+      isDelegationLike: false,
     });
   });
 
@@ -193,7 +197,11 @@ export function timelineSeverityLabel(severity: TimelineSeverityFilter): string 
 }
 
 export function isActionLikeTimelineKind(kind: string): boolean {
-  return kind.startsWith('action.');
+  return kind.startsWith('action.') || isDelegationTimelineKind(kind);
+}
+
+export function isDelegationTimelineKind(kind: string): boolean {
+  return kind.startsWith('delegation.');
 }
 
 function getTimelinePageCounts(
@@ -263,6 +271,7 @@ function buildTimelineSearchText(event: TimelinePageItem): string {
     event.sessionId,
     event.runId,
     event.isActionLike ? 'action' : undefined,
+    event.isDelegationLike ? 'delegation delegate worker supervising' : undefined,
   ]
     .map((value) => normalizeSearchText(value ?? ''))
     .filter(Boolean)
