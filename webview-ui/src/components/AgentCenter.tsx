@@ -54,7 +54,10 @@ import {
 } from './timelinePageModel.js';
 import {
   buildTimelineReplaySessions,
-  getTimelineReplayState,
+  findTimelineReplayFrameByEventId,
+  getTimelineReplayFrameMarker,
+  resolveTimelineReplaySelection,
+  type TimelineReplayFrameMarker,
   type TimelineReplaySession,
   type TimelineReplayState,
 } from './timelineReplayModel.js';
@@ -1374,42 +1377,45 @@ function TimelineDashboard({
   const [replayCursor, setReplayCursor] = useState(0);
   const [isReplayPlaying, setIsReplayPlaying] = useState(false);
   const [replaySpeed, setReplaySpeed] = useState<number>(1);
-  const selectedReplaySession =
-    replaySessions.find((session) => session.id === replaySessionId) ?? replaySessions[0];
   const replayState = useMemo(
-    () => getTimelineReplayState(selectedReplaySession, replayCursor),
-    [replayCursor, selectedReplaySession],
+    () => resolveTimelineReplaySelection(replaySessions, replaySessionId, replayCursor),
+    [replayCursor, replaySessionId, replaySessions],
   );
 
   useEffect(() => {
-    if (!selectedReplaySession) {
+    if (replaySessions.length === 0) {
       if (replaySessionId !== '') setReplaySessionId('');
       if (replayCursor !== 0) setReplayCursor(0);
       if (isReplayPlaying) setIsReplayPlaying(false);
       return;
     }
-    if (replaySessionId !== selectedReplaySession.id) {
-      setReplaySessionId(selectedReplaySession.id);
+    const firstReplaySession = replaySessions[0];
+    if (!replaySessionId && firstReplaySession) {
+      setReplaySessionId(firstReplaySession.id);
       setReplayCursor(0);
       setIsReplayPlaying(false);
       return;
     }
-    if (replayCursor >= selectedReplaySession.frameCount) {
-      setReplayCursor(Math.max(0, selectedReplaySession.frameCount - 1));
+    if (replayState.unavailableReason === 'session-filtered-out') {
+      if (isReplayPlaying) setIsReplayPlaying(false);
+      return;
     }
-  }, [isReplayPlaying, replayCursor, replaySessionId, selectedReplaySession]);
+    if (replayState.session && replayCursor >= replayState.session.frameCount) {
+      setReplayCursor(Math.max(0, replayState.session.frameCount - 1));
+    }
+  }, [isReplayPlaying, replayCursor, replaySessionId, replaySessions, replayState]);
 
   useEffect(() => {
-    if (!isReplayPlaying || !selectedReplaySession) return;
+    if (!isReplayPlaying || !replayState.session) return;
     if (!replayState.hasNext) {
       setIsReplayPlaying(false);
       return;
     }
     const timeout = window.setTimeout(() => {
-      setReplayCursor((cursor) => Math.min(cursor + 1, selectedReplaySession.frameCount - 1));
+      setReplayCursor((cursor) => Math.min(cursor + 1, replayState.session!.frameCount - 1));
     }, TIMELINE_REPLAY_BASE_INTERVAL_MS / replaySpeed);
     return () => window.clearTimeout(timeout);
-  }, [isReplayPlaying, replaySpeed, replayState.hasNext, selectedReplaySession]);
+  }, [isReplayPlaying, replaySpeed, replayState]);
 
   const goToPreviousReplayFrame = () => {
     setIsReplayPlaying(false);
@@ -1418,8 +1424,15 @@ function TimelineDashboard({
   const goToNextReplayFrame = () => {
     setIsReplayPlaying(false);
     setReplayCursor((cursor) =>
-      selectedReplaySession ? Math.min(cursor + 1, selectedReplaySession.frameCount - 1) : 0,
+      replayState.session ? Math.min(cursor + 1, replayState.session.frameCount - 1) : 0,
     );
+  };
+  const selectReplayEvent = (event: TimelinePageItem) => {
+    const location = findTimelineReplayFrameByEventId(replaySessions, event.id);
+    if (!location) return;
+    setReplaySessionId(location.sessionId);
+    setReplayCursor(location.cursorIndex);
+    setIsReplayPlaying(false);
   };
 
   return (
@@ -1485,7 +1498,7 @@ function TimelineDashboard({
 
       <TimelineReplayPanel
         sessions={replaySessions}
-        selectedSessionId={selectedReplaySession?.id ?? ''}
+        selectedSessionId={replaySessionId}
         state={replayState}
         isPlaying={isReplayPlaying}
         speed={replaySpeed}
@@ -1630,7 +1643,14 @@ function TimelineDashboard({
           ) : (
             model.events
               .slice(0, 120)
-              .map((event) => <TimelineEventRow key={event.id} event={event} />)
+              .map((event) => (
+                <TimelineEventRow
+                  key={event.id}
+                  event={event}
+                  replayMarker={getTimelineReplayFrameMarker(event, replayState)}
+                  onSelectReplay={() => selectReplayEvent(event)}
+                />
+              ))
           )}
         </div>
       </section>
@@ -1662,6 +1682,9 @@ function TimelineReplayPanel({
   onSpeedChange: (speed: number) => void;
 }) {
   const frame = state.currentFrame;
+  const selectedSessionMissing =
+    state.unavailableReason === 'session-filtered-out' && selectedSessionId !== '';
+  const replayHint = timelineReplayHintText(state);
   return (
     <section className="border border-border bg-bg">
       <SectionHeader
@@ -1681,13 +1704,23 @@ function TimelineReplayPanel({
             {sessions.length === 0 ? (
               <option value="">No replay sessions</option>
             ) : (
-              sessions.map((session) => (
-                <option key={session.id} value={session.id}>
-                  {session.label} ({session.frameCount})
-                </option>
-              ))
+              <>
+                {selectedSessionMissing && (
+                  <option value={selectedSessionId}>Selected replay scope hidden by filters</option>
+                )}
+                {sessions.map((session) => (
+                  <option key={session.id} value={session.id}>
+                    {session.label} ({session.frameCount})
+                  </option>
+                ))}
+              </>
             )}
           </select>
+          {selectedSessionMissing && (
+            <div className="mt-2 text-xs normal-case tracking-normal text-status-permission">
+              The selected replay scope is outside the current filters.
+            </div>
+          )}
         </label>
 
         <div className="flex flex-wrap items-end gap-2">
@@ -1751,12 +1784,13 @@ function TimelineReplayPanel({
               {frame ? frame.event.title : 'No replay frame selected'}
             </div>
             <div className="mt-1 break-words text-xs text-text-muted">
-              {frame?.event.summary ?? 'Choose a replay scope with timeline events.'}
+              {frame?.event.summary ?? replayHint}
             </div>
             <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2 text-xs text-text-muted">
               {state.kind && <span className="truncate">{state.kind}</span>}
               {state.category && <span>{timelineCategoryLabel(state.category)}</span>}
               {frame && <span>{formatRelative(frame.timestamp)}</span>}
+              {state.isSingleFrame && <span>Single-frame replay</span>}
             </div>
           </div>
         </div>
@@ -1800,6 +1834,19 @@ function TimelineFilterSelect({
   );
 }
 
+function timelineReplayHintText(state: TimelineReplayState): string {
+  if (state.unavailableReason === 'session-filtered-out') {
+    return 'The selected replay scope is hidden by the current Timeline filters. Choose another scope or clear filters.';
+  }
+  if (state.unavailableReason === 'no-sessions') {
+    return 'No replay sessions are available in the current Timeline filters.';
+  }
+  if (state.isSingleFrame) {
+    return 'This replay has one frame, so previous and next controls stay disabled.';
+  }
+  return 'Choose a replay scope with timeline events.';
+}
+
 function TimelineEmptyState({
   hasEvents,
   hasFilters,
@@ -1830,15 +1877,31 @@ function TimelineEmptyState({
   );
 }
 
-function TimelineEventRow({ event }: { event: TimelinePageItem }) {
+function TimelineEventRow({
+  event,
+  replayMarker,
+  onSelectReplay,
+}: {
+  event: TimelinePageItem;
+  replayMarker: TimelineReplayFrameMarker;
+  onSelectReplay: () => void;
+}) {
   return (
-    <div className="grid gap-3 p-4 md:grid-cols-[98px_minmax(0,1.2fr)_minmax(180px,0.8fr)]">
+    <button
+      type="button"
+      className={`grid w-full cursor-pointer gap-3 p-4 text-left hover:bg-btn-bg md:grid-cols-[98px_minmax(0,1.2fr)_minmax(180px,0.8fr)] ${
+        replayMarker.isCurrent ? 'bg-active-bg' : 'bg-transparent'
+      }`}
+      onClick={onSelectReplay}
+      title={replayMarker.isCurrent ? replayMarker.label : 'Cue replay to this event'}
+    >
       <div className="text-xs text-text-muted">{formatRelative(event.timestamp)}</div>
       <div className="min-w-0">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <span className={`h-2 w-2 shrink-0 rounded-full ${severityDot(event.severity)}`} />
           <TimelineSeverityPill severity={event.severity} />
           {event.isActionLike && <TimelineHistoryPill event={event} />}
+          {replayMarker.isCurrent && <TimelineReplayPill marker={replayMarker} />}
           <span className="min-w-[120px] max-w-full truncate text-sm text-text">{event.title}</span>
         </div>
         {event.summary && (
@@ -1859,7 +1922,7 @@ function TimelineEventRow({ event }: { event: TimelinePageItem }) {
         </div>
         <div className="mt-1 truncate text-xs text-text-muted">{event.project}</div>
       </div>
-    </div>
+    </button>
   );
 }
 
@@ -1879,6 +1942,17 @@ function TimelineHistoryPill({ event }: { event: TimelinePageItem }) {
   return (
     <span className="shrink-0 border border-accent bg-btn-bg px-2 py-1 text-xs uppercase tracking-wide text-accent-bright">
       {event.isDelegationLike ? 'Delegation' : 'Action'}
+    </span>
+  );
+}
+
+function TimelineReplayPill({ marker }: { marker: TimelineReplayFrameMarker }) {
+  return (
+    <span
+      className="shrink-0 border border-accent bg-bg px-2 py-1 text-xs uppercase tracking-wide text-accent-bright"
+      title={marker.label}
+    >
+      Replay
     </span>
   );
 }

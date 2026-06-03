@@ -5,7 +5,10 @@ import type { TimelinePageItem } from '../src/components/timelinePageModel.ts';
 import {
   buildTimelineReplaySessions,
   deriveTimelineReplayStatus,
+  findTimelineReplayFrameByEventId,
+  getTimelineReplayFrameMarker,
   getTimelineReplayState,
+  resolveTimelineReplaySelection,
 } from '../src/components/timelineReplayModel.ts';
 
 function item(overrides: Partial<TimelinePageItem>): TimelinePageItem {
@@ -73,6 +76,65 @@ test('timeline replay state exposes cursor progress and previous next availabili
   assert.equal(state.progress, 0.5);
   assert.equal(state.progressLabel, '2 / 3');
   assert.equal(state.kind, 'tool.completed');
+});
+
+test('timeline replay finds the matching session and frame by event id', () => {
+  const sessions = buildTimelineReplaySessions([
+    item({ id: 'first', timestamp: 100, sessionId: 'session-1' }),
+    item({ id: 'target', timestamp: 200, sessionId: 'session-2' }),
+    item({ id: 'after-target', timestamp: 300, sessionId: 'session-2' }),
+  ]);
+
+  const location = findTimelineReplayFrameByEventId(sessions, 'target');
+
+  assert.equal(location?.frame.event.id, 'target');
+  assert.equal(location?.frame.index, 0);
+  assert.equal(location?.cursorIndex, 0);
+  assert.equal(location?.sessionId.includes('session:session-2'), true);
+});
+
+test('timeline replay selection reports filtered-out sessions without crashing', () => {
+  const sessions = buildTimelineReplaySessions([
+    item({ id: 'visible', timestamp: 100, sessionId: 'visible-session' }),
+  ]);
+
+  const state = resolveTimelineReplaySelection(sessions, 'filtered-session', 4);
+
+  assert.equal(state.currentFrame, undefined);
+  assert.equal(state.cursorIndex, 0);
+  assert.equal(state.unavailableReason, 'session-filtered-out');
+  assert.equal(state.hasNext, false);
+});
+
+test('timeline replay handles single-frame sessions', () => {
+  const [session] = buildTimelineReplaySessions([
+    item({ id: 'only', timestamp: 100, sessionId: 'session-1' }),
+  ]);
+
+  const state = getTimelineReplayState(session, 99);
+
+  assert.equal(state.currentFrame?.event.id, 'only');
+  assert.equal(state.progress, 1);
+  assert.equal(state.progressLabel, '1 / 1');
+  assert.equal(state.hasPrevious, false);
+  assert.equal(state.hasNext, false);
+  assert.equal(state.isSingleFrame, true);
+});
+
+test('timeline replay marker identifies the current replay frame', () => {
+  const [session] = buildTimelineReplaySessions([
+    item({ id: 'first', timestamp: 100, sessionId: 'session-1' }),
+    item({ id: 'current', timestamp: 200, sessionId: 'session-1', severity: 'warning' }),
+  ]);
+  const state = getTimelineReplayState(session, 1);
+
+  const currentMarker = getTimelineReplayFrameMarker(session!.frames[1]!.event, state);
+  const otherMarker = getTimelineReplayFrameMarker(session!.frames[0]!.event, state);
+
+  assert.equal(currentMarker.isCurrent, true);
+  assert.equal(currentMarker.label, 'Replay frame 2 / 2');
+  assert.equal(currentMarker.severity, 'warning');
+  assert.equal(otherMarker.isCurrent, false);
 });
 
 test('timeline replay derives lifecycle state from safe statusAfter before kind fallback', () => {

@@ -46,6 +46,21 @@ export interface TimelineReplayState {
   severity: TimelineSeverity;
   kind?: string;
   category?: TimelineCategory;
+  isSingleFrame: boolean;
+  unavailableReason?: 'no-sessions' | 'session-filtered-out';
+}
+
+export interface TimelineReplayFrameLocation {
+  sessionId: string;
+  cursorIndex: number;
+  frame: TimelineReplayFrame;
+}
+
+export interface TimelineReplayFrameMarker {
+  isCurrent: boolean;
+  label?: string;
+  status?: TimelineLifecycleStatus;
+  severity?: TimelineSeverity;
 }
 
 export function buildTimelineReplaySessions(
@@ -71,16 +86,7 @@ export function getTimelineReplayState(
   cursorIndex: number,
 ): TimelineReplayState {
   if (!session || session.frames.length === 0) {
-    return {
-      cursorIndex: 0,
-      hasPrevious: false,
-      hasNext: false,
-      progress: 0,
-      progressLabel: '0 / 0',
-      status: 'idle',
-      statusLabel: timelineReplayStatusLabel('idle'),
-      severity: 'info',
-    };
+    return emptyTimelineReplayState('no-sessions');
   }
 
   const normalizedCursor = clampCursor(cursorIndex, session.frames.length);
@@ -100,6 +106,53 @@ export function getTimelineReplayState(
     severity: currentFrame.severity,
     kind: currentFrame.kind,
     category: currentFrame.category,
+    isSingleFrame: session.frames.length === 1,
+  };
+}
+
+export function findTimelineReplayFrameByEventId(
+  sessions: readonly TimelineReplaySession[],
+  eventId: string,
+): TimelineReplayFrameLocation | undefined {
+  for (const session of sessions) {
+    const frame = session.frames.find((candidate) => candidate.event.id === eventId);
+    if (frame) {
+      return {
+        sessionId: session.id,
+        cursorIndex: frame.index,
+        frame,
+      };
+    }
+  }
+  return undefined;
+}
+
+export function resolveTimelineReplaySelection(
+  sessions: readonly TimelineReplaySession[],
+  selectedSessionId: string,
+  cursorIndex: number,
+): TimelineReplayState {
+  if (sessions.length === 0) return getTimelineReplayState(undefined, 0);
+  const selectedSession = sessions.find((session) => session.id === selectedSessionId);
+  if (!selectedSession) {
+    if (selectedSessionId) return emptyTimelineReplayState('session-filtered-out');
+    return getTimelineReplayState(sessions[0], 0);
+  }
+  return getTimelineReplayState(selectedSession, cursorIndex);
+}
+
+export function getTimelineReplayFrameMarker(
+  event: TimelinePageItem,
+  state: TimelineReplayState,
+): TimelineReplayFrameMarker {
+  if (!state.currentFrame || state.currentFrame.event.id !== event.id) {
+    return { isCurrent: false };
+  }
+  return {
+    isCurrent: true,
+    label: `Replay frame ${state.progressLabel}`,
+    status: state.status,
+    severity: state.severity,
   };
 }
 
@@ -200,6 +253,23 @@ function timelineReplaySessionLabel(event: TimelinePageItem): string {
 function clampCursor(cursorIndex: number, frameCount: number): number {
   if (!Number.isFinite(cursorIndex)) return 0;
   return Math.min(Math.max(0, Math.floor(cursorIndex)), frameCount - 1);
+}
+
+function emptyTimelineReplayState(
+  unavailableReason: TimelineReplayState['unavailableReason'],
+): TimelineReplayState {
+  return {
+    cursorIndex: 0,
+    hasPrevious: false,
+    hasNext: false,
+    progress: 0,
+    progressLabel: '0 / 0',
+    status: 'idle',
+    statusLabel: timelineReplayStatusLabel('idle'),
+    severity: 'info',
+    isSingleFrame: false,
+    unavailableReason,
+  };
 }
 
 function timelineLifecycleStatus(value: string): TimelineLifecycleStatus | undefined {
