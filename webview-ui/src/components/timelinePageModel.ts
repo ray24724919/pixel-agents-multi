@@ -2,6 +2,15 @@ import { TIMELINE_LAST_7_DAYS, TIMELINE_MS_PER_DAY } from '../constants.js';
 
 export type TimelineSeverity = 'info' | 'success' | 'warning' | 'error';
 export type TimelineSeverityFilter = 'all' | TimelineSeverity;
+export type TimelineLifecycleStatus =
+  | 'idle'
+  | 'thinking'
+  | 'tool_running'
+  | 'waiting_user'
+  | 'waiting_permission'
+  | 'paused'
+  | 'completed'
+  | 'error';
 export type TimelineCategory =
   | 'lifecycle'
   | 'tool'
@@ -34,6 +43,7 @@ export interface TimelineSourceEvent {
   summary?: string;
   severity?: TimelineSeverity;
   source?: 'user' | 'agent' | 'tool' | 'system';
+  statusAfter?: TimelineLifecycleStatus;
 }
 
 export interface TimelineLifecycleSourceEvent {
@@ -57,6 +67,7 @@ export interface TimelinePageItem {
   severity: TimelineSeverity;
   kind: string;
   source: 'user' | 'agent' | 'tool' | 'system';
+  statusAfter?: TimelineLifecycleStatus;
   sessionId?: string;
   runId?: string;
   category: TimelineCategory;
@@ -127,6 +138,7 @@ export function buildTimelinePageItems(
       severity: event.severity ?? 'info',
       kind: event.kind,
       source: event.source ?? 'system',
+      statusAfter: event.statusAfter,
       sessionId: event.sessionId,
       runId: event.runId,
       category,
@@ -151,6 +163,7 @@ export function buildTimelinePageItems(
       severity: event.severity ?? 'info',
       kind,
       source: 'system',
+      statusAfter: timelineLifecycleStatus(event.status),
       category: 'lifecycle',
       isActionLike: false,
       isDelegationLike: false,
@@ -158,6 +171,22 @@ export function buildTimelinePageItems(
   });
 
   return items.sort((a, b) => b.timestamp - a.timestamp);
+}
+
+function timelineLifecycleStatus(value: string): TimelineLifecycleStatus | undefined {
+  if (
+    value === 'idle' ||
+    value === 'thinking' ||
+    value === 'tool_running' ||
+    value === 'waiting_user' ||
+    value === 'waiting_permission' ||
+    value === 'paused' ||
+    value === 'completed' ||
+    value === 'error'
+  ) {
+    return value;
+  }
+  return undefined;
 }
 
 export function buildTimelinePageModel(

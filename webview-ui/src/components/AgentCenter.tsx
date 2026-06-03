@@ -1,5 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode, useEffect, useMemo, useState } from 'react';
 
+import { TIMELINE_REPLAY_BASE_INTERVAL_MS, TIMELINE_REPLAY_SPEED_OPTIONS } from '../constants.js';
 import type {
   AgentLifecycleEvent,
   AgentLifecycleState,
@@ -51,6 +52,12 @@ import {
   type TimelineTimeWindowFilter,
   timelineTimeWindowLabel,
 } from './timelinePageModel.js';
+import {
+  buildTimelineReplaySessions,
+  getTimelineReplayState,
+  type TimelineReplaySession,
+  type TimelineReplayState,
+} from './timelineReplayModel.js';
 import { TokenCostSummary } from './TokenCostSummary.js';
 import { Button } from './ui/Button.js';
 import {
@@ -1362,6 +1369,58 @@ function TimelineDashboard({
   const needsMeCount = agents.filter((agent) => agent.statusGroup === 'needs_me').length;
   const errorCount = agents.filter((agent) => agent.statusGroup === 'error').length;
   const historyStatus = timelineHistoryStatusText(timelineHistory);
+  const replaySessions = useMemo(() => buildTimelineReplaySessions(model.events), [model.events]);
+  const [replaySessionId, setReplaySessionId] = useState('');
+  const [replayCursor, setReplayCursor] = useState(0);
+  const [isReplayPlaying, setIsReplayPlaying] = useState(false);
+  const [replaySpeed, setReplaySpeed] = useState<number>(1);
+  const selectedReplaySession =
+    replaySessions.find((session) => session.id === replaySessionId) ?? replaySessions[0];
+  const replayState = useMemo(
+    () => getTimelineReplayState(selectedReplaySession, replayCursor),
+    [replayCursor, selectedReplaySession],
+  );
+
+  useEffect(() => {
+    if (!selectedReplaySession) {
+      if (replaySessionId !== '') setReplaySessionId('');
+      if (replayCursor !== 0) setReplayCursor(0);
+      if (isReplayPlaying) setIsReplayPlaying(false);
+      return;
+    }
+    if (replaySessionId !== selectedReplaySession.id) {
+      setReplaySessionId(selectedReplaySession.id);
+      setReplayCursor(0);
+      setIsReplayPlaying(false);
+      return;
+    }
+    if (replayCursor >= selectedReplaySession.frameCount) {
+      setReplayCursor(Math.max(0, selectedReplaySession.frameCount - 1));
+    }
+  }, [isReplayPlaying, replayCursor, replaySessionId, selectedReplaySession]);
+
+  useEffect(() => {
+    if (!isReplayPlaying || !selectedReplaySession) return;
+    if (!replayState.hasNext) {
+      setIsReplayPlaying(false);
+      return;
+    }
+    const timeout = window.setTimeout(() => {
+      setReplayCursor((cursor) => Math.min(cursor + 1, selectedReplaySession.frameCount - 1));
+    }, TIMELINE_REPLAY_BASE_INTERVAL_MS / replaySpeed);
+    return () => window.clearTimeout(timeout);
+  }, [isReplayPlaying, replaySpeed, replayState.hasNext, selectedReplaySession]);
+
+  const goToPreviousReplayFrame = () => {
+    setIsReplayPlaying(false);
+    setReplayCursor((cursor) => Math.max(0, cursor - 1));
+  };
+  const goToNextReplayFrame = () => {
+    setIsReplayPlaying(false);
+    setReplayCursor((cursor) =>
+      selectedReplaySession ? Math.min(cursor + 1, selectedReplaySession.frameCount - 1) : 0,
+    );
+  };
 
   return (
     <div className="grid gap-4">
@@ -1423,6 +1482,23 @@ function TimelineDashboard({
           detail="retained history"
         />
       </div>
+
+      <TimelineReplayPanel
+        sessions={replaySessions}
+        selectedSessionId={selectedReplaySession?.id ?? ''}
+        state={replayState}
+        isPlaying={isReplayPlaying}
+        speed={replaySpeed}
+        onSessionChange={(sessionId) => {
+          setReplaySessionId(sessionId);
+          setReplayCursor(0);
+          setIsReplayPlaying(false);
+        }}
+        onPrevious={goToPreviousReplayFrame}
+        onNext={goToNextReplayFrame}
+        onTogglePlay={() => setIsReplayPlaying((playing) => !playing && replayState.hasNext)}
+        onSpeedChange={setReplaySpeed}
+      />
 
       <section className="grid gap-3 border border-border bg-btn-bg p-3 md:grid-cols-2 xl:grid-cols-[minmax(220px,1fr)_150px_160px_180px] 2xl:grid-cols-[minmax(220px,1fr)_150px_160px_180px_160px_170px_220px_220px_auto]">
         <label className="min-w-0 text-xs uppercase tracking-wide text-text-muted">
@@ -1559,6 +1635,133 @@ function TimelineDashboard({
         </div>
       </section>
     </div>
+  );
+}
+
+function TimelineReplayPanel({
+  sessions,
+  selectedSessionId,
+  state,
+  isPlaying,
+  speed,
+  onSessionChange,
+  onPrevious,
+  onNext,
+  onTogglePlay,
+  onSpeedChange,
+}: {
+  sessions: TimelineReplaySession[];
+  selectedSessionId: string;
+  state: TimelineReplayState;
+  isPlaying: boolean;
+  speed: number;
+  onSessionChange: (sessionId: string) => void;
+  onPrevious: () => void;
+  onNext: () => void;
+  onTogglePlay: () => void;
+  onSpeedChange: (speed: number) => void;
+}) {
+  const frame = state.currentFrame;
+  return (
+    <section className="border border-border bg-bg">
+      <SectionHeader
+        title="Session Replay"
+        subtitle="Normalized event playback from local timeline history"
+      />
+      <div className="grid gap-3 p-4 lg:grid-cols-[minmax(260px,1fr)_auto_minmax(240px,0.9fr)]">
+        <label className="min-w-0 text-xs uppercase tracking-wide text-text-muted">
+          Scope
+          <select
+            className="mt-2 h-34 w-full border border-border bg-bg px-3 text-sm normal-case tracking-normal text-text outline-none focus:border-accent"
+            value={selectedSessionId}
+            onChange={(event) => onSessionChange(event.currentTarget.value)}
+            aria-label="Select replay scope"
+            disabled={sessions.length === 0}
+          >
+            {sessions.length === 0 ? (
+              <option value="">No replay sessions</option>
+            ) : (
+              sessions.map((session) => (
+                <option key={session.id} value={session.id}>
+                  {session.label} ({session.frameCount})
+                </option>
+              ))
+            )}
+          </select>
+        </label>
+
+        <div className="flex flex-wrap items-end gap-2">
+          <Button
+            variant={state.hasPrevious ? 'default' : 'disabled'}
+            size="sm"
+            disabled={!state.hasPrevious}
+            onClick={onPrevious}
+          >
+            Prev
+          </Button>
+          <Button
+            variant={state.hasNext ? 'default' : 'disabled'}
+            size="sm"
+            disabled={!state.hasNext}
+            onClick={onTogglePlay}
+          >
+            {isPlaying ? 'Pause' : 'Play'}
+          </Button>
+          <Button
+            variant={state.hasNext ? 'default' : 'disabled'}
+            size="sm"
+            disabled={!state.hasNext}
+            onClick={onNext}
+          >
+            Next
+          </Button>
+          <label className="min-w-[104px] text-xs uppercase tracking-wide text-text-muted">
+            Speed
+            <select
+              className="mt-2 h-34 w-full border border-border bg-bg px-3 text-sm normal-case tracking-normal text-text outline-none focus:border-accent"
+              value={String(speed)}
+              onChange={(event) => onSpeedChange(Number(event.currentTarget.value))}
+              aria-label="Replay speed"
+            >
+              {TIMELINE_REPLAY_SPEED_OPTIONS.map((option) => (
+                <option key={option} value={String(option)}>
+                  {option}x
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        <div className="min-w-0 border border-border bg-btn-bg p-3">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <span className={`h-2 w-2 shrink-0 rounded-full ${severityDot(state.severity)}`} />
+            <span className="shrink-0 border border-border bg-bg px-2 py-1 text-xs uppercase tracking-wide text-text-muted">
+              {state.statusLabel}
+            </span>
+            <span className="text-xs text-text-muted">{state.progressLabel}</span>
+          </div>
+          <div className="mt-2 h-2 border border-border bg-bg">
+            <div
+              className="h-full bg-accent"
+              style={{ width: `${Math.round(state.progress * 100)}%` }}
+            />
+          </div>
+          <div className="mt-3 min-w-0">
+            <div className="truncate text-sm text-text">
+              {frame ? frame.event.title : 'No replay frame selected'}
+            </div>
+            <div className="mt-1 break-words text-xs text-text-muted">
+              {frame?.event.summary ?? 'Choose a replay scope with timeline events.'}
+            </div>
+            <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2 text-xs text-text-muted">
+              {state.kind && <span className="truncate">{state.kind}</span>}
+              {state.category && <span>{timelineCategoryLabel(state.category)}</span>}
+              {frame && <span>{formatRelative(frame.timestamp)}</span>}
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
 
