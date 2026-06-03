@@ -22,6 +22,13 @@ export const USAGE_RECORD_SCHEMA_VERSION = 1;
 export const USAGE_PATH_HASH_PREFIX = 'sha256:';
 export const USAGE_PATH_HASH_LENGTH = 16;
 
+// Timeline persistence
+export const TIMELINE_STORE_FILE_DIR = LAYOUT_FILE_DIR;
+export const TIMELINE_STORE_SUBDIR = 'timeline';
+export const TIMELINE_STORE_FILE_NAME = 'timeline-v1.jsonl';
+export const TIMELINE_RECORD_SCHEMA_VERSION = 1;
+export const TIMELINE_HISTORY_MAX_RECORDS = 500;
+
 // ── Settings Persistence (VS Code globalState keys) ─────────
 export const GLOBAL_KEY_SOUND_ENABLED = `${EXTENSION_NAME}.soundEnabled`;
 export const GLOBAL_KEY_LAST_SEEN_VERSION = `${EXTENSION_NAME}.lastSeenVersion`;

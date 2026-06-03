@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
   buildDelegationSummaries,
@@ -27,6 +27,11 @@ import type {
 } from '../office/types.js';
 import { setWallSprites } from '../office/wallTiles.js';
 import { vscode } from '../vscodeApi.js';
+import {
+  mergeTimelineEventsById,
+  timelineEventForPersistence,
+  timelineEventsFromHistoryLoadedMessage,
+} from './timelineHistoryMessages.js';
 import { shouldRetainTimelineEventAfterAgentRemoval } from './timelineRetention.js';
 import {
   initialUsageHistoryState,
@@ -317,6 +322,13 @@ export function useExtensionMessages(
   const [usageHistory, setUsageHistory] = useState<UsageHistoryState>(initialUsageHistoryState);
   const [delegationStateVersion, setDelegationStateVersion] = useState(0);
 
+  const persistTimelineEvent = useCallback((event: AgentTimelineEvent): void => {
+    const persisted = timelineEventForPersistence(event);
+    if (persisted) {
+      vscode.postMessage({ type: 'persistTimelineEvent', event: persisted });
+    }
+  }, []);
+
   // Track whether initial layout has been loaded (ref to avoid re-render)
   const layoutReadyRef = useRef(false);
   const delegationSnapshotsRef = useRef<Map<number, DelegationSummary>>(new Map());
@@ -377,7 +389,10 @@ export function useExtensionMessages(
     const timelineEvents = intents.map((intent, index) =>
       createDelegationTimelineEvent(intent, ++delegationEventSequenceRef.current, index),
     );
-    setAgentTimelineEvents((prev) => [...timelineEvents, ...prev].slice(0, 120));
+    for (const event of timelineEvents) {
+      persistTimelineEvent(event);
+    }
+    setAgentTimelineEvents((prev) => mergeTimelineEventsById(prev, timelineEvents));
   }, [
     agents,
     agentLifecycleStatuses,
@@ -387,6 +402,7 @@ export function useExtensionMessages(
     delegationStateVersion,
     getOfficeState,
     layoutReady,
+    persistTimelineEvent,
     subagentCharacters,
     subagentTools,
   ]);
@@ -898,7 +914,8 @@ export function useExtensionMessages(
             payload: raw.payload,
           };
           traceAgentEvent(event.agentId, 'agentTimelineEvent', `${event.kind} · ${event.title}`);
-          setAgentTimelineEvents((prev) => [event, ...prev].slice(0, 120));
+          persistTimelineEvent(event);
+          setAgentTimelineEvents((prev) => mergeTimelineEventsById(prev, [event]));
         }
       } else if (msg.type === 'agentToolPermission') {
         const id = msg.id as number;
@@ -1098,6 +1115,10 @@ export function useExtensionMessages(
         );
       } else if (msg.type === 'usageHistoryLoaded') {
         setUsageHistory(usageHistoryStateFromLoadedMessage(msg));
+      } else if (msg.type === 'timelineHistoryLoaded') {
+        setAgentTimelineEvents((prev) =>
+          mergeTimelineEventsById(prev, timelineEventsFromHistoryLoadedMessage(msg)),
+        );
       }
     };
     window.addEventListener('message', handler);

@@ -83,6 +83,10 @@ import type { LayoutWatcher } from './layoutPersistence.js';
 import { readLayoutFromFile, watchLayoutFile, writeLayoutToFile } from './layoutPersistence.js';
 import { getExtensionConfigValue, isExtensionConfigExplicitlyConfigured } from './settings.js';
 import { postAgentTimelineEvent } from './timelineEvents.js';
+import {
+  loadTimelineHistoryForWebview,
+  persistTimelineEventForWebview,
+} from './timelineHistoryBridge.js';
 import { readTokenUsageFromTranscript } from './tokenUsage.js';
 import {
   type CodexSubagentSpawn,
@@ -206,6 +210,30 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       console.warn(`[Pixel Agents] Usage history unavailable: ${payload.error ?? 'unknown error'}`);
     }
     this.webview?.postMessage(payload);
+  }
+
+  private postTimelineHistoryLoaded(): void {
+    const payload = loadTimelineHistoryForWebview();
+    if (payload.unavailable) {
+      console.warn(
+        `[Pixel Agents] Timeline history unavailable: ${payload.error ?? 'unknown error'}`,
+      );
+    }
+    this.webview?.postMessage(payload);
+  }
+
+  private persistTimelineEventFromWebview(event: unknown): void {
+    try {
+      persistTimelineEventForWebview(
+        typeof event === 'object' && event !== null ? (event as Record<string, unknown>) : {},
+      );
+    } catch (error) {
+      console.warn(
+        `[Pixel Agents] Timeline history persist failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
   }
 
   private persistAgents = (): void => {
@@ -1203,9 +1231,14 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         sendExistingAgents(this.agents, this.context, this.webview);
         sendCurrentAgentStatuses(this.agents, this.webview);
         this.postUsageHistoryLoaded();
+        this.postTimelineHistoryLoaded();
         this.webview?.postMessage({ type: 'agentSeatsRefresh' });
       } else if (message.type === 'refreshUsageHistory') {
         this.postUsageHistoryLoaded();
+      } else if (message.type === 'refreshTimelineHistory') {
+        this.postTimelineHistoryLoaded();
+      } else if (message.type === 'persistTimelineEvent') {
+        this.persistTimelineEventFromWebview(message.event);
       } else if (message.type === 'saveLayout') {
         this.layoutWatcher?.markOwnWrite();
         writeLayoutToFile(message.layout as Record<string, unknown>);
@@ -1342,6 +1375,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
           projects: this.getRecentCodexProjects(),
         });
         this.postUsageHistoryLoaded();
+        this.postTimelineHistoryLoaded();
         this.seedArchivedAgentDismissals();
 
         // Ensure project scan runs even with no restored agents (to adopt external terminals)
