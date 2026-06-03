@@ -39,6 +39,7 @@ export interface DelegationSubagentContext {
 }
 
 export interface DelegationToolContext {
+  toolId?: string;
   status: string;
   done: boolean;
 }
@@ -47,6 +48,7 @@ export interface DelegationModelInput {
   agents: readonly DelegationAgentContext[];
   subagentCharacters: readonly DelegationSubagentContext[];
   subagentTools: Record<number, Record<string, readonly DelegationToolContext[]>>;
+  parentTools?: Record<number, readonly DelegationToolContext[]>;
   nowMs?: number;
 }
 
@@ -58,6 +60,7 @@ export function buildDelegationSummaries({
   agents,
   subagentCharacters,
   subagentTools,
+  parentTools = {},
   nowMs = Date.now(),
 }: DelegationModelInput): Map<number, DelegationSummary> {
   const agentsById = new Map(agents.map((agent) => [agent.id, agent]));
@@ -67,8 +70,14 @@ export function buildDelegationSummaries({
     const supervisor = agentsById.get(subagent.parentAgentId);
     if (!supervisor) continue;
     const tools = subagentTools[supervisor.id]?.[subagent.parentToolId] ?? [];
-    const failed = tools.some((tool) => isFailureStatus(tool.status));
-    const completed = tools.length > 0 && tools.every((tool) => tool.done);
+    const parentTool = parentTools[supervisor.id]?.find(
+      (tool) => tool.toolId === subagent.parentToolId,
+    );
+    const failed =
+      tools.some((tool) => isFailureStatus(tool.status)) ||
+      (parentTool ? isFailureStatus(parentTool.status) : false);
+    const completed =
+      (tools.length > 0 && tools.every((tool) => tool.done)) || parentTool?.done === true;
     const summary = ensureSummary(summaries, supervisor, nowMs, 'hook');
     addDelegate(summary, {
       label: subagent.label || `Worker #${subagent.id}`,

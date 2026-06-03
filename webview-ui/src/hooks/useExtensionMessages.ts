@@ -1,5 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 
+import {
+  buildDelegationSummaries,
+  type DelegationAgentContext,
+  type DelegationSummary,
+} from '../components/delegationModel.js';
+import {
+  buildDelegationTimelineEventIntents,
+  type DelegationTimelineEventIntent,
+  type DelegationTimelineTransitionHint,
+} from '../components/delegationTimelineModel.js';
 import { playDoneSound, playPermissionSound, setSoundEnabled } from '../notificationSound.js';
 import type { OfficeState } from '../office/engine/officeState.js';
 import { setFloorSprites } from '../office/floorTiles.js';
@@ -8,6 +18,7 @@ import { migrateLayoutColors } from '../office/layout/layoutSerializer.js';
 import { setCharacterTemplates } from '../office/sprites/spriteData.js';
 import { extractToolName } from '../office/toolUtils.js';
 import type {
+  Character,
   OfficeLayout,
   TokenRateLimitSnapshot,
   TokenUsageDetails,
@@ -151,6 +162,108 @@ function saveAgentSeats(os: OfficeState): void {
   vscode.postMessage({ type: 'saveAgentSeats', seats });
 }
 
+function buildDelegationAgentContexts(
+  agentIds: readonly number[],
+  os: OfficeState,
+  agentTools: Record<number, ToolActivity[]>,
+  agentStatuses: Record<number, string>,
+  agentLifecycleStatuses: Record<number, AgentLifecycleState>,
+): DelegationAgentContext[] {
+  return agentIds.map((id) => {
+    const ch = os.characters.get(id);
+    const displayStatus = getAgentDisplayStatus(
+      ch,
+      agentTools[id] ?? [],
+      agentStatuses[id],
+      agentLifecycleStatuses[id],
+    );
+    return {
+      id,
+      name: ch?.agentName ?? `Agent #${id}`,
+      providerId: ch?.providerId ?? 'claude',
+      statusGroup: getDelegationStatusGroup(displayStatus),
+      teamName: ch?.teamName,
+      isTeamLead: ch?.isTeamLead,
+      leadAgentId: ch?.leadAgentId,
+      updatedAt: agentLifecycleStatuses[id]?.updatedAt,
+    };
+  });
+}
+
+function buildDelegationTimelineAgentContexts(
+  agentIds: readonly number[],
+  os: OfficeState,
+  agentRuntimeMetadata: Record<number, AgentRuntimeMetadata>,
+): Array<{
+  id: number;
+  name: string;
+  providerId: string;
+  projectName: string;
+  sessionId?: string;
+}> {
+  return agentIds.map((id) => {
+    const ch = os.characters.get(id);
+    return {
+      id,
+      name: ch?.agentName ?? `Agent #${id}`,
+      providerId: ch?.providerId ?? 'claude',
+      projectName: ch?.folderName ?? 'Unknown project',
+      sessionId: sessionIdFromTranscriptPath(agentRuntimeMetadata[id]?.transcriptPath),
+    };
+  });
+}
+
+function getAgentDisplayStatus(
+  ch: Character | undefined,
+  tools: readonly ToolActivity[],
+  status: string | undefined,
+  lifecycle: AgentLifecycleState | undefined,
+): string {
+  const activeTool =
+    tools.find((tool) => tool.permissionWait && !tool.done) ?? tools.find((tool) => !tool.done);
+  if (activeTool?.permissionWait) return 'needs approval';
+  return lifecycle?.status ?? status ?? (ch?.isActive ? 'active' : 'waiting');
+}
+
+function getDelegationStatusGroup(status: string): DelegationAgentContext['statusGroup'] {
+  if (status === 'paused') return 'paused';
+  if (status === 'error') return 'error';
+  if (status === 'needs approval' || status === 'waiting_permission' || status === 'waiting_user') {
+    return 'needs_me';
+  }
+  if (status === 'active' || status === 'thinking' || status === 'tool_running') return 'active';
+  return 'waiting';
+}
+
+function sessionIdFromTranscriptPath(transcriptPath: string | undefined): string | undefined {
+  const fileName = transcriptPath?.split(/[\\/]/).filter(Boolean).pop();
+  return fileName?.replace(/\.(jsonl|log|txt)$/i, '');
+}
+
+function createDelegationTimelineEvent(
+  intent: DelegationTimelineEventIntent,
+  sequence: number,
+  timestampOffset: number,
+): AgentTimelineEvent {
+  const timestamp = intent.timestamp + timestampOffset;
+  return {
+    id: `delegation-${intent.agentId}-${intent.kind}-${timestamp}-${sequence}`,
+    agentId: intent.agentId,
+    providerId: intent.providerId,
+    projectName: intent.projectName,
+    sessionId: intent.sessionId,
+    runId: intent.runId,
+    timestamp,
+    kind: intent.kind,
+    title: intent.title,
+    summary: intent.summary,
+    severity: intent.severity,
+    source: intent.source,
+    visibility: 'default',
+    payload: intent.payload,
+  };
+}
+
 export function useExtensionMessages(
   getOfficeState: () => OfficeState,
   onLayoutLoaded?: (layout: OfficeLayout) => void,
@@ -189,9 +302,78 @@ export function useExtensionMessages(
   const [hooksEnabled, setHooksEnabled] = useState(true);
   const [hooksInfoShown, setHooksInfoShown] = useState(true);
   const [usageHistory, setUsageHistory] = useState<UsageHistoryState>(initialUsageHistoryState);
+  const [delegationStateVersion, setDelegationStateVersion] = useState(0);
 
   // Track whether initial layout has been loaded (ref to avoid re-render)
   const layoutReadyRef = useRef(false);
+  const delegationSnapshotsRef = useRef<Map<number, DelegationSummary>>(new Map());
+  const delegationTransitionHintsRef = useRef<DelegationTimelineTransitionHint[]>([]);
+  const delegationEventSequenceRef = useRef(0);
+  const delegationTimelineAgentsRef = useRef<
+    Map<
+      number,
+      {
+        id: number;
+        name: string;
+        providerId: string;
+        projectName: string;
+        sessionId?: string;
+      }
+    >
+  >(new Map());
+
+  useEffect(() => {
+    if (!layoutReady) return;
+    const os = getOfficeState();
+    const nowMs = Date.now();
+    const delegationAgents = buildDelegationAgentContexts(
+      agents,
+      os,
+      agentTools,
+      agentStatuses,
+      agentLifecycleStatuses,
+    );
+    const currentSummaries = buildDelegationSummaries({
+      agents: delegationAgents,
+      subagentCharacters,
+      subagentTools,
+      parentTools: agentTools,
+      nowMs,
+    });
+    const currentTimelineAgents = buildDelegationTimelineAgentContexts(
+      agents,
+      os,
+      agentRuntimeMetadata,
+    );
+    for (const agent of currentTimelineAgents) {
+      delegationTimelineAgentsRef.current.set(agent.id, agent);
+    }
+    const intents = buildDelegationTimelineEventIntents({
+      previous: delegationSnapshotsRef.current,
+      current: currentSummaries,
+      agents: [...delegationTimelineAgentsRef.current.values()],
+      transitionHints: delegationTransitionHintsRef.current,
+      nowMs,
+    });
+    delegationTransitionHintsRef.current = [];
+    delegationSnapshotsRef.current = currentSummaries;
+    if (intents.length === 0) return;
+    const timelineEvents = intents.map((intent, index) =>
+      createDelegationTimelineEvent(intent, ++delegationEventSequenceRef.current, index),
+    );
+    setAgentTimelineEvents((prev) => [...timelineEvents, ...prev].slice(0, 120));
+  }, [
+    agents,
+    agentLifecycleStatuses,
+    agentRuntimeMetadata,
+    agentStatuses,
+    agentTools,
+    delegationStateVersion,
+    getOfficeState,
+    layoutReady,
+    subagentCharacters,
+    subagentTools,
+  ]);
 
   useEffect(() => {
     type PendingAgent = {
@@ -340,6 +522,11 @@ export function useExtensionMessages(
         saveAgentSeats(os);
       } else if (msg.type === 'agentClosed' || msg.type === 'agentArchived') {
         const id = msg.id as number;
+        delegationTransitionHintsRef.current.push({
+          supervisorAgentId: id,
+          reason: 'cancelled',
+          timestamp: Date.now(),
+        });
         setAgents((prev) => prev.filter((a) => a !== id));
         setSelectedAgent((prev) => (prev === id ? null : prev));
         setAgentTools((prev) => {
@@ -560,6 +747,11 @@ export function useExtensionMessages(
       } else if (msg.type === 'agentToolsClear') {
         const id = msg.id as number;
         traceAgentEvent(id, 'agentToolsClear');
+        delegationTransitionHintsRef.current.push({
+          supervisorAgentId: id,
+          reason: 'cancelled',
+          timestamp: Date.now(),
+        });
         setAgentTools((prev) => {
           if (!(id in prev)) return prev;
           const next = { ...prev };
@@ -783,6 +975,11 @@ export function useExtensionMessages(
         const id = msg.id as number;
         const parentToolId = msg.parentToolId as string;
         traceAgentEvent(id, 'subagentClear', parentToolId);
+        delegationTransitionHintsRef.current.push({
+          supervisorAgentId: id,
+          reason: 'completed',
+          timestamp: Date.now(),
+        });
         setSubagentTools((prev) => {
           const agentSubs = prev[id];
           if (!agentSubs || !(parentToolId in agentSubs)) return prev;
@@ -871,6 +1068,7 @@ export function useExtensionMessages(
           msg.leadAgentId as number | undefined,
           msg.teamUsesTmux as boolean | undefined,
         );
+        setDelegationStateVersion((version) => version + 1);
       } else if (msg.type === 'agentTokenUsage') {
         const id = msg.id as number;
         traceAgentEvent(id, 'agentTokenUsage', `${msg.inputTokens ?? 0}/${msg.outputTokens ?? 0}`);

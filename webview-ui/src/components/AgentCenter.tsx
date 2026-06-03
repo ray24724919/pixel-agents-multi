@@ -219,8 +219,9 @@ export function AgentCenterSurface({
         agents: baseSummaries,
         subagentCharacters,
         subagentTools,
+        parentTools: agentTools,
       }),
-    [baseSummaries, subagentCharacters, subagentTools],
+    [agentTools, baseSummaries, subagentCharacters, subagentTools],
   );
   const summaries = useMemo(
     () =>

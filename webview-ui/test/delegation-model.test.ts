@@ -98,3 +98,22 @@ test('delegation summaries derive terminal-backed team workers and errors', () =
   assert.equal(summary?.updatedAt, 400);
   assert.equal(delegationStatusLabel(summary?.status ?? 'none'), 'Delegate error');
 });
+
+test('delegation summaries treat completed parent Task tools as completed workers', () => {
+  const summaries = buildDelegationSummaries({
+    agents: [agent({ id: 1, name: 'Codex lead', providerId: 'codex' })],
+    subagentCharacters: [
+      { id: -1, parentAgentId: 1, parentToolId: 'task-a', label: 'patch worker' },
+    ],
+    subagentTools: {},
+    parentTools: {
+      1: [{ toolId: 'task-a', status: 'Subtask: patch worker', done: true }],
+    },
+    nowMs: 500,
+  });
+
+  const summary = summaries.get(1);
+  assert.equal(summary?.status, 'waiting_for_delegate');
+  assert.equal(summary?.activeDelegateCount, 0);
+  assert.equal(summary?.completedDelegateCount, 1);
+});
