@@ -3,6 +3,7 @@ import { beforeEach, test } from 'node:test';
 
 import type { DelegationSummary } from '../src/components/delegationModel.ts';
 import { FALLBACK_FLOOR_COLOR } from '../src/constants.ts';
+import { shouldCreateInlineSubagentCharacter } from '../src/hooks/useExtensionMessages.ts';
 import {
   buildDelegationVisualState,
   delegationVisualMarkerText,
@@ -147,6 +148,12 @@ test('delegation visual state derives safe marker data from DelegationSummary', 
   assert.equal(delegationVisualWorkerLabel(visual), '2 workers');
   assert.equal(delegationVisualStatusLabel(visual), 'Supervising');
   assert.doesNotMatch(JSON.stringify(visual), /raw prompt|private transcript/i);
+});
+
+test('Codex spawn_agent creates an inline delegation marker without hook ids', () => {
+  assert.equal(shouldCreateInlineSubagentCharacter('spawn_agent', undefined, 'call-spawn'), true);
+  assert.equal(shouldCreateInlineSubagentCharacter('spawn_agent', false, 'hook-spawn'), false);
+  assert.equal(shouldCreateInlineSubagentCharacter('Agent', true, 'call-agent'), false);
 });
 
 test('delegating supervisor uses a work seat instead of idle rest behavior', () => {

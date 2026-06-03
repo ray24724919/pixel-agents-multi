@@ -568,6 +568,14 @@ function basename(value: unknown): string {
   return typeof value === 'string' ? path.basename(value) : '';
 }
 
+function safeCodexDelegateLabel(input: unknown): string {
+  const data = objectValue(input);
+  const raw = data?.agent_type ?? data?.agentRole ?? data?.role;
+  if (typeof raw !== 'string') return 'worker';
+  const label = raw.replace(/[^\w .-]/g, ' ').trim();
+  return label || 'worker';
+}
+
 export function formatCodexToolStatus(toolName: string, input?: unknown): string {
   const data =
     typeof input === 'object' && input !== null ? (input as Record<string, unknown>) : {};
@@ -593,7 +601,7 @@ export function formatCodexToolStatus(toolName: string, input?: unknown): string
     case 'tool_search_call':
       return 'Searching tools';
     case 'spawn_agent':
-      return 'Spawning agent';
+      return `Subtask: ${safeCodexDelegateLabel(input)}`;
     case 'read_mcp_resource':
       return 'Reading resource';
     default:
@@ -617,6 +625,12 @@ function callId(payload: Record<string, unknown>): string | undefined {
 
 function objectValue(value: unknown): Record<string, unknown> | null {
   return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : null;
+}
+
+function isCodexSpawnAgentSuccessOutput(value: unknown): boolean {
+  const output = objectValue(parseMaybeJson(value));
+  const childThreadId = output?.agent_id ?? output?.agentId;
+  return typeof childThreadId === 'string' && childThreadId.trim().length > 0;
 }
 
 function numberValue(value: unknown): number {
@@ -747,6 +761,12 @@ export function parseCodexTranscriptLine(line: string): CodexTranscriptEvent | n
       payloadType === 'custom_tool_call_output' ||
       payloadType === 'tool_search_output'
     ) {
+      if (
+        payloadType === 'function_call_output' &&
+        isCodexSpawnAgentSuccessOutput(payload.output)
+      ) {
+        return null;
+      }
       return { kind: 'toolEnd', toolId: callId(payload) ?? 'unknown' };
     }
 

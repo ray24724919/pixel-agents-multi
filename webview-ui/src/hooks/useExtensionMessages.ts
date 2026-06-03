@@ -43,6 +43,18 @@ export interface SubagentCharacter {
   label: string;
 }
 
+export function shouldCreateInlineSubagentCharacter(
+  toolName: string | null | undefined,
+  runInBackground: boolean | undefined,
+  toolId: string,
+): boolean {
+  return (
+    (toolName === 'Task' || toolName === 'Agent' || toolName === 'spawn_agent') &&
+    !runInBackground &&
+    !toolId.startsWith('hook-')
+  );
+}
+
 export interface AgentEventTrace {
   event: string;
   at: number;
@@ -714,7 +726,7 @@ export function useExtensionMessages(
         if (!permissionActive) {
           os.clearPermissionBubble(id);
         }
-        // Create sub-agent character for Task/Agent tool subtasks.
+        // Create sub-agent character for inline delegation tools.
         // In tmux / inline teams mode, Agent tool has run_in_background=true -- those
         // are handled via the independent teammate path (onTeammateDetected), not here.
         // runInBackground gates them out so we don't create ghost sub-agents for them.
@@ -724,11 +736,7 @@ export function useExtensionMessages(
         // sub-agent (mismatched keys). JSONL's agentToolStart (with real id) handles
         // creation in both hooks and heuristic modes -- ~500ms delay vs instant hook.
         const runInBackground = msg.runInBackground as boolean | undefined;
-        if (
-          (toolName === 'Task' || toolName === 'Agent') &&
-          !runInBackground &&
-          !toolId.startsWith('hook-')
-        ) {
+        if (shouldCreateInlineSubagentCharacter(toolName, runInBackground, toolId)) {
           const label = status.startsWith('Subtask:') ? status.slice('Subtask:'.length).trim() : '';
           const subId = os.addSubagent(id, toolId);
           setSubagentCharacters((prev) => {

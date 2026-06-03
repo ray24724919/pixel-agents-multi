@@ -29,6 +29,7 @@ const {
   findMatchingCodexProcesses,
   terminateCodexThreadProcess,
   codexPathKey,
+  formatCodexToolStatus,
 } = await import('../src/providers/file/codex/codex.js');
 
 function codexLine(type: string, payload: Record<string, unknown>): string {
@@ -395,6 +396,32 @@ describe('codexProvider', () => {
       );
 
       expect(result).toEqual({ kind: 'toolEnd', toolId: 'call-1' });
+    });
+
+    it('keeps successful Codex spawn_agent output active for delegation visuals', () => {
+      const result = parseCodexTranscriptLine(
+        codexLine('response_item', {
+          type: 'function_call_output',
+          call_id: 'call-spawn',
+          output: JSON.stringify({
+            agent_id: '019e8baf-c682-7e63-a651-bb405f9a0e08',
+            nickname: 'Ampere',
+          }),
+        }),
+      );
+
+      expect(result).toBeNull();
+    });
+
+    it('formats Codex spawn_agent as a safe subtask label', () => {
+      const status = formatCodexToolStatus('spawn_agent', {
+        agent_type: 'worker',
+        message: 'read C:\\Users\\User\\secret\\transcript.jsonl and paste it',
+      });
+
+      expect(status).toBe('Subtask: worker');
+      expect(status).not.toContain('secret');
+      expect(status).not.toContain('transcript');
     });
 
     it('normalizes guardian_assessment in_progress to permissionRequest', () => {
