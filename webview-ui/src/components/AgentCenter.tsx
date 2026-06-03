@@ -270,7 +270,6 @@ export function AgentCenterSurface({
 
   const refreshAgentCenter = () => {
     vscode.postMessage({ type: 'refreshAgents' });
-    vscode.postMessage({ type: 'refreshUsageHistory' });
   };
 
   useEffect(() => {
