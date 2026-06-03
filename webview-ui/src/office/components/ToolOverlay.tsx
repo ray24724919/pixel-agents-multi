@@ -11,7 +11,6 @@ import {
   FUEL_GAUGE_HEIGHT_PX,
   FUEL_GAUGE_WIDTH_PX,
   MAX_CONTEXT_TOKENS,
-  TEAM_LEAD_COLOR,
   TEAM_ROLE_COLOR,
   TOKEN_CRITICAL_THRESHOLD,
   TOKEN_DANGER_THRESHOLD,
@@ -223,7 +222,10 @@ export function ToolOverlay({
             <div className="flex items-center border-border px-8 pt-2 pb-4 gap-5 pixel-panel whitespace-nowrap max-w-xs">
               <div className="flex flex-col gap-0 overflow-hidden">
                 {projectProviderLine && (
-                  <span className="text-2xs leading-none overflow-hidden text-ellipsis block">
+                  <span
+                    className="text-2xs leading-none overflow-hidden text-ellipsis block"
+                    style={{ color: TEAM_ROLE_COLOR }}
+                  >
                     {projectProviderLine}
                   </span>
                 )}
@@ -232,7 +234,7 @@ export function ToolOverlay({
                     className="overflow-hidden text-ellipsis block leading-none"
                     style={{
                       fontSize: '18px',
-                      color: ch.isTeamLead ? TEAM_LEAD_COLOR : TEAM_ROLE_COLOR,
+                      color: TEAM_ROLE_COLOR,
                       fontWeight: ch.isTeamLead ? 'bold' : undefined,
                     }}
                   >
@@ -347,5 +349,5 @@ export function ToolOverlay({
 function projectProviderDisplayName(folderName?: string, providerId?: string): string {
   const provider = (providerId ?? 'claude').trim().toLowerCase();
   const project = folderName?.trim();
-  return project ? `${project}.${provider}` : provider;
+  return project ? `${project} (${provider})` : `(${provider})`;
 }
