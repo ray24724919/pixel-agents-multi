@@ -90,6 +90,7 @@ import {
   setHookProvider,
 } from './transcriptParser.js';
 import type { AgentState, ArchivedAgentRecord } from './types.js';
+import { loadUsageHistoryForWebview } from './usageHistoryBridge.js';
 import { ingestAgentUsageSnapshot } from './usageIngestion.js';
 
 export function getLiveCodexThreadIdsForSpawnedAgentCwds(
@@ -197,6 +198,14 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 
   private get webview(): vscode.Webview | undefined {
     return this.webviewView?.webview;
+  }
+
+  private postUsageHistoryLoaded(): void {
+    const payload = loadUsageHistoryForWebview();
+    if (payload.unavailable) {
+      console.warn(`[Pixel Agents] Usage history unavailable: ${payload.error ?? 'unknown error'}`);
+    }
+    this.webview?.postMessage(payload);
   }
 
   private persistAgents = (): void => {
@@ -1193,7 +1202,10 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         this.scanCodexWorkspaceThreads();
         sendExistingAgents(this.agents, this.context, this.webview);
         sendCurrentAgentStatuses(this.agents, this.webview);
+        this.postUsageHistoryLoaded();
         this.webview?.postMessage({ type: 'agentSeatsRefresh' });
+      } else if (message.type === 'refreshUsageHistory') {
+        this.postUsageHistoryLoaded();
       } else if (message.type === 'saveLayout') {
         this.layoutWatcher?.markOwnWrite();
         writeLayoutToFile(message.layout as Record<string, unknown>);
@@ -1329,6 +1341,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
           type: 'codexProjects',
           projects: this.getRecentCodexProjects(),
         });
+        this.postUsageHistoryLoaded();
         this.seedArchivedAgentDismissals();
 
         // Ensure project scan runs even with no restored agents (to adopt external terminals)

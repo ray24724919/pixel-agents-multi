@@ -16,6 +16,13 @@ import type {
 import { setWallSprites } from '../office/wallTiles.js';
 import { vscode } from '../vscodeApi.js';
 import { shouldRetainTimelineEventAfterAgentRemoval } from './timelineRetention.js';
+import {
+  initialUsageHistoryState,
+  type UsageHistoryState,
+  usageHistoryStateFromLoadedMessage,
+} from './usageHistoryMessages.js';
+
+export type { UsageHistoryState } from './usageHistoryMessages.js';
 
 export interface SubagentCharacter {
   id: number;
@@ -132,6 +139,7 @@ interface ExtensionMessageState {
   hooksEnabled: boolean;
   setHooksEnabled: (v: boolean) => void;
   hooksInfoShown: boolean;
+  usageHistory: UsageHistoryState;
 }
 
 function saveAgentSeats(os: OfficeState): void {
@@ -180,6 +188,7 @@ export function useExtensionMessages(
   const [alwaysShowLabels, setAlwaysShowLabels] = useState(false);
   const [hooksEnabled, setHooksEnabled] = useState(true);
   const [hooksInfoShown, setHooksInfoShown] = useState(true);
+  const [usageHistory, setUsageHistory] = useState<UsageHistoryState>(initialUsageHistoryState);
 
   // Track whether initial layout has been loaded (ref to avoid re-render)
   const layoutReadyRef = useRef(false);
@@ -877,6 +886,8 @@ export function useExtensionMessages(
           msg.details as TokenUsageDetails | undefined,
           rateLimits?.find((limit) => limit.name === 'primary') ?? rateLimits?.[0],
         );
+      } else if (msg.type === 'usageHistoryLoaded') {
+        setUsageHistory(usageHistoryStateFromLoadedMessage(msg));
       }
     };
     window.addEventListener('message', handler);
@@ -912,5 +923,6 @@ export function useExtensionMessages(
     hooksEnabled,
     setHooksEnabled,
     hooksInfoShown,
+    usageHistory,
   };
 }
