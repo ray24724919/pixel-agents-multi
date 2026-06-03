@@ -150,3 +150,75 @@ test('delegation timeline uses completion hints for subagent clear terminal tran
   assert.equal(events[0]?.kind, 'delegation.completed');
   assert.equal(events[0]?.timestamp, 1000);
 });
+
+test('delegation timeline emits no duplicate events across repeated snapshots', () => {
+  let previous = new Map<number, DelegationSummary>();
+  const step = (
+    current: Map<number, DelegationSummary>,
+    expectedKinds: readonly string[],
+  ): void => {
+    const events = buildDelegationTimelineEventIntents({
+      previous,
+      current,
+      agents: agents(),
+      nowMs: 1200,
+    });
+    assert.deepEqual(
+      events.map((event) => event.kind),
+      expectedKinds,
+    );
+    previous = current;
+  };
+
+  const activeOne = mapOf(delegation({ status: 'delegating', activeDelegateCount: 1 }));
+  step(activeOne, ['delegation.started']);
+  step(activeOne, []);
+
+  const activeTwo = mapOf(delegation({ status: 'delegating', activeDelegateCount: 2 }));
+  step(activeTwo, ['delegation.progress']);
+  step(activeTwo, []);
+
+  const completed = mapOf(
+    delegation({
+      status: 'waiting_for_delegate',
+      activeDelegateCount: 0,
+      completedDelegateCount: 2,
+    }),
+  );
+  step(completed, ['delegation.completed']);
+  step(completed, []);
+  step(new Map(), []);
+
+  const activeAgain = mapOf(delegation({ status: 'delegating', activeDelegateCount: 1 }));
+  step(activeAgain, ['delegation.started']);
+  step(new Map(), ['delegation.cancelled']);
+  step(new Map(), []);
+});
+
+test('delegation timeline emits started and failed once for initial error snapshots', () => {
+  const errored = mapOf(
+    delegation({
+      status: 'delegate_error',
+      activeDelegateCount: 0,
+      failedDelegateCount: 1,
+    }),
+  );
+  const events = buildDelegationTimelineEventIntents({
+    previous: new Map(),
+    current: errored,
+    agents: agents(),
+    nowMs: 1300,
+  });
+  const repeated = buildDelegationTimelineEventIntents({
+    previous: errored,
+    current: errored,
+    agents: agents(),
+    nowMs: 1400,
+  });
+
+  assert.deepEqual(
+    events.map((event) => event.kind),
+    ['delegation.started', 'delegation.failed'],
+  );
+  assert.equal(repeated.length, 0);
+});

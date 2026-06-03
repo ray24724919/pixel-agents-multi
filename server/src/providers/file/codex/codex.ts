@@ -58,6 +58,14 @@ export interface CodexRateLimitSnapshot {
   resetAfterSeconds?: number;
 }
 
+export interface CodexTranscriptParserState {
+  delegationToolCallIds: Set<string>;
+}
+
+export function createCodexTranscriptParserState(): CodexTranscriptParserState {
+  return { delegationToolCallIds: new Set() };
+}
+
 function codexHome(): string {
   return process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
 }
@@ -576,6 +584,10 @@ function safeCodexDelegateLabel(input: unknown): string {
   return label || 'worker';
 }
 
+function isCodexDelegationToolName(toolName: string): boolean {
+  return toolName === 'spawn_agent' || toolName === 'Agent' || toolName === 'Task';
+}
+
 export function formatCodexToolStatus(toolName: string, input?: unknown): string {
   const data =
     typeof input === 'object' && input !== null ? (input as Record<string, unknown>) : {};
@@ -601,6 +613,8 @@ export function formatCodexToolStatus(toolName: string, input?: unknown): string
     case 'tool_search_call':
       return 'Searching tools';
     case 'spawn_agent':
+    case 'Agent':
+    case 'Task':
       return `Subtask: ${safeCodexDelegateLabel(input)}`;
     case 'read_mcp_resource':
       return 'Reading resource';
@@ -627,7 +641,7 @@ function objectValue(value: unknown): Record<string, unknown> | null {
   return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : null;
 }
 
-function isCodexSpawnAgentSuccessOutput(value: unknown): boolean {
+function isCodexDelegationSuccessOutput(value: unknown): boolean {
   const output = objectValue(parseMaybeJson(value));
   const childThreadId = output?.agent_id ?? output?.agentId;
   return typeof childThreadId === 'string' && childThreadId.trim().length > 0;
@@ -723,7 +737,10 @@ function parseCodexRateLimits(value: unknown): CodexRateLimitSnapshot[] | undefi
   return out.length > 0 ? out : undefined;
 }
 
-export function parseCodexTranscriptLine(line: string): CodexTranscriptEvent | null {
+export function parseCodexTranscriptLine(
+  line: string,
+  state?: CodexTranscriptParserState,
+): CodexTranscriptEvent | null {
   let record: Record<string, unknown>;
   try {
     record = JSON.parse(line) as Record<string, unknown>;
@@ -748,9 +765,13 @@ export function parseCodexTranscriptLine(line: string): CodexTranscriptEvent | n
     ) {
       const name = typeof payload.name === 'string' ? payload.name : String(payloadType);
       const input = parseMaybeJson(payload.arguments ?? payload.input);
+      const toolId = callId(payload);
+      if (toolId && isCodexDelegationToolName(name)) {
+        state?.delegationToolCallIds.add(toolId);
+      }
       return {
         kind: 'toolStart',
-        toolId: callId(payload) ?? `${name}-${Date.now()}`,
+        toolId: toolId ?? `${name}-${Date.now()}`,
         toolName: name,
         input,
       };
@@ -761,13 +782,16 @@ export function parseCodexTranscriptLine(line: string): CodexTranscriptEvent | n
       payloadType === 'custom_tool_call_output' ||
       payloadType === 'tool_search_output'
     ) {
+      const toolId = callId(payload);
       if (
         payloadType === 'function_call_output' &&
-        isCodexSpawnAgentSuccessOutput(payload.output)
+        toolId &&
+        state?.delegationToolCallIds.has(toolId)
       ) {
-        return null;
+        state.delegationToolCallIds.delete(toolId);
+        return isCodexDelegationSuccessOutput(payload.output) ? null : { kind: 'toolEnd', toolId };
       }
-      return { kind: 'toolEnd', toolId: callId(payload) ?? 'unknown' };
+      return { kind: 'toolEnd', toolId: toolId ?? 'unknown' };
     }
 
     if (payloadType === 'reasoning') {

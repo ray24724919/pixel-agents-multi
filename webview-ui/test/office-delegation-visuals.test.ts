@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import { beforeEach, test } from 'node:test';
 
-import type { DelegationSummary } from '../src/components/delegationModel.ts';
+import {
+  buildDelegationSummaries,
+  type DelegationSummary,
+} from '../src/components/delegationModel.ts';
 import { FALLBACK_FLOOR_COLOR } from '../src/constants.ts';
 import { shouldCreateInlineSubagentCharacter } from '../src/hooks/useExtensionMessages.ts';
 import {
@@ -154,6 +157,38 @@ test('Codex spawn_agent creates an inline delegation marker without hook ids', (
   assert.equal(shouldCreateInlineSubagentCharacter('spawn_agent', undefined, 'call-spawn'), true);
   assert.equal(shouldCreateInlineSubagentCharacter('spawn_agent', false, 'hook-spawn'), false);
   assert.equal(shouldCreateInlineSubagentCharacter('Agent', true, 'call-agent'), false);
+});
+
+test('pure smoke derives a visible Codex delegation marker without VS Code click-through', () => {
+  const summaries = buildDelegationSummaries({
+    agents: [
+      {
+        id: 1,
+        name: 'Codex supervisor',
+        providerId: 'codex',
+        statusGroup: 'active',
+        updatedAt: 200,
+      },
+    ],
+    subagentCharacters: [{ id: -1, parentAgentId: 1, parentToolId: 'call-spawn', label: 'worker' }],
+    subagentTools: {},
+    parentTools: {
+      1: [{ toolId: 'call-spawn', status: 'Subtask: worker', done: false }],
+    },
+    nowMs: 250,
+  });
+  const visual = buildDelegationVisualState(summaries.get(1))!;
+  const state = new OfficeState(makeLayout([...workstationFurniture(), ...loungeFurniture()]));
+  addAgent(state, 1, false);
+
+  state.setAgentDelegation(1, visual);
+
+  const ch = state.characters.get(1)!;
+  assert.equal(delegationVisualMarkerText(visual), '1w');
+  assert.equal(delegationVisualStatusLabel(visual), 'Supervising');
+  assert.equal(ch.delegation?.totalDelegateCount, 1);
+  assert.equal(ch.isActive, true);
+  assert.equal(state.seats.get(ch.seatId!)?.seatKind, 'work');
 });
 
 test('delegating supervisor uses a work seat instead of idle rest behavior', () => {

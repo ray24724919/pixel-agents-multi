@@ -30,10 +30,20 @@ const {
   terminateCodexThreadProcess,
   codexPathKey,
   formatCodexToolStatus,
+  createCodexTranscriptParserState,
 } = await import('../src/providers/file/codex/codex.js');
 
 function codexLine(type: string, payload: Record<string, unknown>): string {
   return JSON.stringify({ type, payload });
+}
+
+function parseCodexFixture(name: string) {
+  const state = createCodexTranscriptParserState();
+  const fixture = fs.readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8');
+  return fixture
+    .trim()
+    .split(/\r?\n/)
+    .map((line) => parseCodexTranscriptLine(line, state));
 }
 
 describe('codexProvider', () => {
@@ -399,6 +409,17 @@ describe('codexProvider', () => {
     });
 
     it('keeps successful Codex spawn_agent output active for delegation visuals', () => {
+      const state = createCodexTranscriptParserState();
+      parseCodexTranscriptLine(
+        codexLine('response_item', {
+          type: 'function_call',
+          call_id: 'call-spawn',
+          name: 'spawn_agent',
+          namespace: 'multi_agent_v1',
+          arguments: JSON.stringify({ agent_type: 'worker' }),
+        }),
+        state,
+      );
       const result = parseCodexTranscriptLine(
         codexLine('response_item', {
           type: 'function_call_output',
@@ -408,9 +429,87 @@ describe('codexProvider', () => {
             nickname: 'Ampere',
           }),
         }),
+        state,
       );
 
       expect(result).toBeNull();
+    });
+
+    it('does not treat unrelated agent_id tool output as delegation', () => {
+      const state = createCodexTranscriptParserState();
+      parseCodexTranscriptLine(
+        codexLine('response_item', {
+          type: 'function_call',
+          call_id: 'call-lookup',
+          name: 'lookup_agent_metadata',
+          arguments: JSON.stringify({ id: 'agent-1' }),
+        }),
+        state,
+      );
+      const result = parseCodexTranscriptLine(
+        codexLine('response_item', {
+          type: 'function_call_output',
+          call_id: 'call-lookup',
+          output: JSON.stringify({ agent_id: 'not-a-delegate', status: 'ok' }),
+        }),
+        state,
+      );
+
+      expect(result).toEqual({ kind: 'toolEnd', toolId: 'call-lookup' });
+    });
+
+    it('tracks Codex Agent and Task calls as delegation tools', () => {
+      for (const name of ['Agent', 'Task']) {
+        const state = createCodexTranscriptParserState();
+        const start = parseCodexTranscriptLine(
+          codexLine('response_item', {
+            type: 'function_call',
+            call_id: `call-${name}`,
+            name,
+            arguments: JSON.stringify({ agent_type: 'worker' }),
+          }),
+          state,
+        );
+        const done = parseCodexTranscriptLine(
+          codexLine('response_item', {
+            type: 'function_call_output',
+            call_id: `call-${name}`,
+            output: JSON.stringify({ agent_id: `${name}-child` }),
+          }),
+          state,
+        );
+
+        expect(start).toMatchObject({ kind: 'toolStart', toolName: name });
+        expect(done).toBeNull();
+      }
+    });
+
+    it('parses current Codex spawn_agent transcript fixture without early toolEnd', () => {
+      const events = parseCodexFixture('codex-spawn-agent-current.jsonl');
+
+      expect(events).toEqual([
+        expect.objectContaining({
+          kind: 'toolStart',
+          toolId: 'call_spawn',
+          toolName: 'spawn_agent',
+        }),
+        null,
+        { kind: 'turnEnd' },
+      ]);
+    });
+
+    it('parses non-delegation agent_id fixture as normal tool output', () => {
+      const events = parseCodexFixture('codex-agent-id-non-delegation-output.jsonl');
+
+      expect(events).toEqual([
+        expect.objectContaining({
+          kind: 'toolStart',
+          toolId: 'call_lookup',
+          toolName: 'lookup_agent_metadata',
+        }),
+        { kind: 'toolEnd', toolId: 'call_lookup' },
+        { kind: 'turnEnd' },
+      ]);
     });
 
     it('formats Codex spawn_agent as a safe subtask label', () => {
@@ -418,10 +517,16 @@ describe('codexProvider', () => {
         agent_type: 'worker',
         message: 'read C:\\Users\\User\\secret\\transcript.jsonl and paste it',
       });
+      const agentStatus = formatCodexToolStatus('Agent', {
+        role: 'reviewer',
+        message: 'private prompt text',
+      });
 
       expect(status).toBe('Subtask: worker');
+      expect(agentStatus).toBe('Subtask: reviewer');
       expect(status).not.toContain('secret');
       expect(status).not.toContain('transcript');
+      expect(agentStatus).not.toContain('private prompt');
     });
 
     it('normalizes guardian_assessment in_progress to permissionRequest', () => {

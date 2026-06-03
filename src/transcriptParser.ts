@@ -11,6 +11,7 @@ import {
 } from '../server/src/constants.js';
 import type { HookProvider } from '../server/src/provider.js';
 import {
+  createCodexTranscriptParserState,
   formatCodexToolStatus,
   parseCodexTranscriptLine,
 } from '../server/src/providers/file/codex/codex.js';
@@ -626,7 +627,12 @@ function processCodexTranscriptLine(
       evidence: 'source=transcriptParser; event=codex_artifact_estimate',
     });
   }
-  const event = parseCodexTranscriptLine(line);
+  const codexTranscriptState = {
+    delegationToolCallIds:
+      agent.codexDelegationToolCallIds ??
+      (agent.codexDelegationToolCallIds = createCodexTranscriptParserState().delegationToolCallIds),
+  };
+  const event = parseCodexTranscriptLine(line, codexTranscriptState);
   if (!event) return;
   const codexErrorDetail = getCodexErrorDetail(line);
 
@@ -682,6 +688,7 @@ function processCodexTranscriptLine(
       agent.activeToolNames.clear();
       agent.activeSubagentToolIds.clear();
       agent.activeSubagentToolNames.clear();
+      agent.codexDelegationToolCallIds?.clear();
       webview?.postMessage({ type: 'agentToolsClear', id: agentId });
       webview?.postMessage({ type: 'agentStatus', id: agentId, status: 'waiting' });
       if (codexErrorDetail) {
@@ -693,6 +700,7 @@ function processCodexTranscriptLine(
     case 'userTurn':
       cancelWaitingTimer(agentId, waitingTimers);
       clearAgentActivity(agent, agentId, permissionTimers, webview);
+      agent.codexDelegationToolCallIds?.clear();
       agent.hadToolsInTurn = false;
       webview?.postMessage({ type: 'agentStatus', id: agentId, status: 'active' });
       postThinking(webview, agentId, agent);
