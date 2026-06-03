@@ -92,6 +92,7 @@ function App() {
     setHooksEnabled,
     hooksInfoShown,
     usageHistory,
+    timelineHistory,
   } = useExtensionMessages(getOfficeState, editor.setLastSavedLayout, isEditDirty);
 
   // Show migration notice once layout reset is detected
@@ -424,6 +425,7 @@ function App() {
           onPauseAgent={(id) => vscode.postMessage(buildPauseResumeMessage(id, false))}
           onResumeAgent={(id) => vscode.postMessage(buildPauseResumeMessage(id, true))}
           usageHistory={usageHistory}
+          timelineHistory={timelineHistory}
         />
       </div>
 

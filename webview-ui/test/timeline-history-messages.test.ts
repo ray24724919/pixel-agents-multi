@@ -5,6 +5,7 @@ import {
   mergeTimelineEventsById,
   timelineEventForPersistence,
   timelineEventsFromHistoryLoadedMessage,
+  timelineHistoryStateFromLoadedMessage,
 } from '../src/hooks/timelineHistoryMessages.ts';
 import type { AgentTimelineEvent } from '../src/hooks/useExtensionMessages.ts';
 
@@ -95,4 +96,23 @@ test('timeline event persistence helper drops payload and invalid fields', () =>
   assert.equal(persisted?.severity, 'warning');
   assert.equal('payload' in persisted!, false);
   assert.doesNotMatch(JSON.stringify(persisted), /rawToolOutput|secret/);
+});
+
+test('timeline history state tracks loaded metadata and valid persisted record count', () => {
+  const state = timelineHistoryStateFromLoadedMessage({
+    type: 'timelineHistoryLoaded',
+    loadedAtMs: 900,
+    unavailable: true,
+    error: 'read failed',
+    records: [
+      event({ id: 'valid-1', timestamp: 200 }),
+      { id: 'invalid', timestamp: 300 },
+      event({ id: 'valid-2', timestamp: 100 }),
+    ],
+  });
+
+  assert.equal(state.loadedAtMs, 900);
+  assert.equal(state.unavailable, true);
+  assert.equal(state.error, 'read failed');
+  assert.equal(state.persistedRecordCount, 2);
 });

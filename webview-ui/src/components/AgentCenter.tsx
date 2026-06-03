@@ -6,6 +6,7 @@ import type {
   AgentRuntimeMetadata,
   AgentTimelineEvent,
   SubagentCharacter,
+  TimelineHistoryState,
   UsageHistoryState,
 } from '../hooks/useExtensionMessages.js';
 import type { OfficeState } from '../office/engine/officeState.js';
@@ -39,12 +40,16 @@ import { isPausedStatus, pauseActionLabel } from './pauseResume.js';
 import {
   buildTimelinePageItems,
   buildTimelinePageModel,
+  type TimelineCategoryFilter,
+  timelineCategoryLabel,
   type TimelinePageFilters,
   type TimelinePageItem,
   type TimelinePageModel,
   type TimelineSeverity,
   type TimelineSeverityFilter,
   timelineSeverityLabel,
+  type TimelineTimeWindowFilter,
+  timelineTimeWindowLabel,
 } from './timelinePageModel.js';
 import { TokenCostSummary } from './TokenCostSummary.js';
 import { Button } from './ui/Button.js';
@@ -97,6 +102,7 @@ interface AgentCenterSurfaceProps {
   onPauseAgent: (id: number) => void;
   onResumeAgent: (id: number) => void;
   usageHistory: UsageHistoryState;
+  timelineHistory: TimelineHistoryState;
 }
 
 interface AgentSummary extends AgentListItem {
@@ -173,6 +179,7 @@ export function AgentCenterSurface({
   onPauseAgent,
   onResumeAgent,
   usageHistory,
+  timelineHistory,
 }: AgentCenterSurfaceProps) {
   const [providerFilter, setProviderFilter] = useState<ProviderFilter>('all');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
@@ -186,6 +193,10 @@ export function AgentCenterSurface({
     useState<TimelineSeverityFilter>('all');
   const [timelineProjectFilter, setTimelineProjectFilter] = useState<'all' | string>('all');
   const [timelineAgentFilter, setTimelineAgentFilter] = useState<'all' | string>('all');
+  const [timelineCategoryFilter, setTimelineCategoryFilter] =
+    useState<TimelineCategoryFilter>('all');
+  const [timelineKindFilter, setTimelineKindFilter] = useState<'all' | string>('all');
+  const [timelineTimeWindow, setTimelineTimeWindow] = useState<TimelineTimeWindowFilter>('all');
   const [detailAgentId, setDetailAgentId] = useState<number | null>(selectedAgent);
 
   const baseSummaries = useMemo(
@@ -281,14 +292,20 @@ export function AgentCenterSurface({
       severityFilter: timelineSeverityFilter,
       projectFilter: timelineProjectFilter,
       agentFilter: timelineAgentFilter,
+      categoryFilter: timelineCategoryFilter,
+      kindFilter: timelineKindFilter,
+      timeWindow: timelineTimeWindow,
       searchQuery: timelineSearchQuery,
     }),
     [
       timelineAgentFilter,
+      timelineCategoryFilter,
+      timelineKindFilter,
       timelineProjectFilter,
       timelineProviderFilter,
       timelineSearchQuery,
       timelineSeverityFilter,
+      timelineTimeWindow,
     ],
   );
   const timelineModel = useMemo(
@@ -310,11 +327,18 @@ export function AgentCenterSurface({
     setTimelineSeverityFilter('all');
     setTimelineProjectFilter('all');
     setTimelineAgentFilter('all');
+    setTimelineCategoryFilter('all');
+    setTimelineKindFilter('all');
+    setTimelineTimeWindow('all');
     setTimelineSearchQuery('');
   };
 
   const refreshAgentCenter = () => {
     vscode.postMessage({ type: 'refreshAgents' });
+  };
+
+  const refreshTimelineHistory = () => {
+    vscode.postMessage({ type: 'refreshTimelineHistory' });
   };
 
   useEffect(() => {
@@ -511,7 +535,12 @@ export function AgentCenterSurface({
             onSeverityFilterChange={setTimelineSeverityFilter}
             onProjectFilterChange={setTimelineProjectFilter}
             onAgentFilterChange={setTimelineAgentFilter}
+            onCategoryFilterChange={setTimelineCategoryFilter}
+            onKindFilterChange={setTimelineKindFilter}
+            onTimeWindowChange={setTimelineTimeWindow}
             onClearFilters={clearTimelineFilters}
+            timelineHistory={timelineHistory}
+            onRefreshHistory={refreshTimelineHistory}
           />
         )}
       </div>
@@ -1307,7 +1336,12 @@ function TimelineDashboard({
   onSeverityFilterChange,
   onProjectFilterChange,
   onAgentFilterChange,
+  onCategoryFilterChange,
+  onKindFilterChange,
+  onTimeWindowChange,
   onClearFilters,
+  timelineHistory,
+  onRefreshHistory,
 }: {
   agents: AgentSummary[];
   model: TimelinePageModel;
@@ -1317,11 +1351,17 @@ function TimelineDashboard({
   onSeverityFilterChange: (severity: TimelineSeverityFilter) => void;
   onProjectFilterChange: (project: 'all' | string) => void;
   onAgentFilterChange: (agent: 'all' | string) => void;
+  onCategoryFilterChange: (category: TimelineCategoryFilter) => void;
+  onKindFilterChange: (kind: 'all' | string) => void;
+  onTimeWindowChange: (timeWindow: TimelineTimeWindowFilter) => void;
   onClearFilters: () => void;
+  timelineHistory: TimelineHistoryState;
+  onRefreshHistory: () => void;
 }) {
   const activeCount = agents.filter((agent) => agent.statusGroup === 'active').length;
   const needsMeCount = agents.filter((agent) => agent.statusGroup === 'needs_me').length;
   const errorCount = agents.filter((agent) => agent.statusGroup === 'error').length;
+  const historyStatus = timelineHistoryStatusText(timelineHistory);
 
   return (
     <div className="grid gap-4">
@@ -1333,9 +1373,20 @@ function TimelineDashboard({
               Local event history across visible agents and retained action events
             </div>
           </div>
-          <div className="text-xs uppercase tracking-wide text-text-muted">
-            {agents.length} visible agents / {activeCount} active / {needsMeCount} needs me /{' '}
-            {errorCount} errors
+          <div className="flex flex-wrap items-center justify-end gap-2 text-xs uppercase tracking-wide text-text-muted">
+            <span>
+              {agents.length} visible agents / {activeCount} active / {needsMeCount} needs me /{' '}
+              {errorCount} errors
+            </span>
+            <span
+              className="border border-border bg-btn-bg px-2 py-1"
+              title={timelineHistory.error}
+            >
+              {historyStatus}
+            </span>
+            <Button variant="default" size="sm" onClick={onRefreshHistory}>
+              Refresh history
+            </Button>
           </div>
         </div>
       </section>
@@ -1373,7 +1424,7 @@ function TimelineDashboard({
         />
       </div>
 
-      <section className="grid gap-3 border border-border bg-btn-bg p-3 xl:grid-cols-[minmax(220px,1fr)_160px_170px_220px_220px_auto]">
+      <section className="grid gap-3 border border-border bg-btn-bg p-3 md:grid-cols-2 xl:grid-cols-[minmax(220px,1fr)_150px_160px_180px] 2xl:grid-cols-[minmax(220px,1fr)_150px_160px_180px_160px_170px_220px_220px_auto]">
         <label className="min-w-0 text-xs uppercase tracking-wide text-text-muted">
           Search
           <input
@@ -1384,6 +1435,60 @@ function TimelineDashboard({
             aria-label="Search timeline"
           />
         </label>
+        <label className="min-w-0 text-xs uppercase tracking-wide text-text-muted">
+          Time
+          <select
+            className="mt-2 h-34 w-full border border-border bg-bg px-3 text-sm normal-case tracking-normal text-text outline-none focus:border-accent"
+            value={filters.timeWindow}
+            onChange={(event) =>
+              onTimeWindowChange(event.currentTarget.value as TimelineTimeWindowFilter)
+            }
+            aria-label="Filter timeline time window"
+          >
+            {(['all', 'today', 'last_24h', 'last_7_days'] as const).map((timeWindow) => (
+              <option key={timeWindow} value={timeWindow}>
+                {timelineTimeWindowLabel(timeWindow)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="min-w-0 text-xs uppercase tracking-wide text-text-muted">
+          Category
+          <select
+            className="mt-2 h-34 w-full border border-border bg-bg px-3 text-sm normal-case tracking-normal text-text outline-none focus:border-accent"
+            value={filters.categoryFilter}
+            onChange={(event) =>
+              onCategoryFilterChange(event.currentTarget.value as TimelineCategoryFilter)
+            }
+            aria-label="Filter timeline category"
+          >
+            {(
+              [
+                'all',
+                'lifecycle',
+                'tool',
+                'action',
+                'delegation',
+                'permission',
+                'run',
+                'token',
+                'other',
+              ] as const
+            ).map((category) => (
+              <option key={category} value={category}>
+                {timelineCategoryLabel(category)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <TimelineFilterSelect
+          label="Kind"
+          value={filters.kindFilter}
+          allLabel="All kinds"
+          options={model.kindOptions}
+          onChange={onKindFilterChange}
+          ariaLabel="Filter timeline kind"
+        />
         <TimelineFilterSelect
           label="Provider"
           value={filters.providerFilter}
@@ -1657,6 +1762,15 @@ function usageHistoryStatusText(usageHistory: UsageHistoryState): string {
   if (usageHistory.unavailable) return 'History unavailable';
   if (usageHistory.loadedAtMs === undefined) return 'History loading';
   return `${usageHistory.records.length.toLocaleString()} history records`;
+}
+
+function timelineHistoryStatusText(timelineHistory: TimelineHistoryState): string {
+  if (timelineHistory.unavailable) return 'Local history unavailable';
+  if (timelineHistory.loadedAtMs === undefined) return 'Local history loading';
+  const noun = timelineHistory.persistedRecordCount === 1 ? 'record' : 'records';
+  return `${timelineHistory.persistedRecordCount.toLocaleString()} persisted ${noun} / loaded ${formatRelative(
+    timelineHistory.loadedAtMs,
+  )}`;
 }
 
 function usageHistoryCopyLabel(status: 'idle' | 'copied' | 'failed'): string {

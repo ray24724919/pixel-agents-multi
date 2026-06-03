@@ -61,6 +61,8 @@ export const DELEGATION_MARKER_FONT_PX = 5;
 export const DELEGATION_MARKER_DOT_SIZE_PX = 2;
 export const DELEGATION_MARKER_BORDER_WIDTH_PX = 1;
 export const TIMELINE_HISTORY_MAX_EVENTS = 500;
+export const TIMELINE_MS_PER_DAY = 24 * 60 * 60 * 1000;
+export const TIMELINE_LAST_7_DAYS = 7;
 export const FALLBACK_FLOOR_COLOR = '#808080';
 
 // ── Rendering - Overlay Colors (canvas, not CSS) ─────────────

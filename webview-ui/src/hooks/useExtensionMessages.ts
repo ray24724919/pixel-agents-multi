@@ -28,9 +28,12 @@ import type {
 import { setWallSprites } from '../office/wallTiles.js';
 import { vscode } from '../vscodeApi.js';
 import {
+  initialTimelineHistoryState,
   mergeTimelineEventsById,
   timelineEventForPersistence,
   timelineEventsFromHistoryLoadedMessage,
+  type TimelineHistoryState,
+  timelineHistoryStateFromLoadedMessage,
 } from './timelineHistoryMessages.js';
 import { shouldRetainTimelineEventAfterAgentRemoval } from './timelineRetention.js';
 import {
@@ -39,6 +42,7 @@ import {
   usageHistoryStateFromLoadedMessage,
 } from './usageHistoryMessages.js';
 
+export type { TimelineHistoryState } from './timelineHistoryMessages.js';
 export type { UsageHistoryState } from './usageHistoryMessages.js';
 
 export interface SubagentCharacter {
@@ -169,6 +173,7 @@ interface ExtensionMessageState {
   setHooksEnabled: (v: boolean) => void;
   hooksInfoShown: boolean;
   usageHistory: UsageHistoryState;
+  timelineHistory: TimelineHistoryState;
 }
 
 function saveAgentSeats(os: OfficeState): void {
@@ -320,6 +325,9 @@ export function useExtensionMessages(
   const [hooksEnabled, setHooksEnabled] = useState(true);
   const [hooksInfoShown, setHooksInfoShown] = useState(true);
   const [usageHistory, setUsageHistory] = useState<UsageHistoryState>(initialUsageHistoryState);
+  const [timelineHistory, setTimelineHistory] = useState<TimelineHistoryState>(
+    initialTimelineHistoryState,
+  );
   const [delegationStateVersion, setDelegationStateVersion] = useState(0);
 
   const persistTimelineEvent = useCallback((event: AgentTimelineEvent): void => {
@@ -1116,6 +1124,7 @@ export function useExtensionMessages(
       } else if (msg.type === 'usageHistoryLoaded') {
         setUsageHistory(usageHistoryStateFromLoadedMessage(msg));
       } else if (msg.type === 'timelineHistoryLoaded') {
+        setTimelineHistory(timelineHistoryStateFromLoadedMessage(msg));
         setAgentTimelineEvents((prev) =>
           mergeTimelineEventsById(prev, timelineEventsFromHistoryLoadedMessage(msg)),
         );
@@ -1155,5 +1164,6 @@ export function useExtensionMessages(
     setHooksEnabled,
     hooksInfoShown,
     usageHistory,
+    timelineHistory,
   };
 }

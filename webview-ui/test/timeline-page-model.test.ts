@@ -14,6 +14,9 @@ const defaultFilters: TimelinePageFilters = {
   severityFilter: 'all',
   projectFilter: 'all',
   agentFilter: 'all',
+  categoryFilter: 'all',
+  kindFilter: 'all',
+  timeWindow: 'all',
   searchQuery: '',
 };
 
@@ -240,6 +243,89 @@ test('timeline page applies provider severity project and agent filters together
 
   assert.equal(model.counts.shown, 1);
   assert.equal(model.events[0]?.id, 'timeline-match');
+});
+
+test('timeline page filters retained history by category and kind', () => {
+  const items = buildTimelinePageItems(
+    [],
+    [
+      event({
+        id: 'archive-1',
+        agentId: 10,
+        providerId: 'codex',
+        projectName: 'old-project',
+        timestamp: 600,
+        kind: 'action.archive',
+        title: 'Archived agent',
+        severity: 'warning',
+      }),
+      event({
+        id: 'delegation-1',
+        agentId: 11,
+        providerId: 'claude',
+        projectName: 'old-project',
+        timestamp: 500,
+        kind: 'delegation.completed',
+        title: 'Delegation completed',
+      }),
+    ],
+    [],
+  );
+  const model = buildTimelinePageModel(items, {
+    ...defaultFilters,
+    categoryFilter: 'action',
+    kindFilter: 'action.archive',
+  });
+
+  assert.deepEqual(
+    model.events.map((item) => [item.id, item.category, item.kind]),
+    [['timeline-archive-1', 'action', 'action.archive']],
+  );
+  assert.deepEqual(
+    model.kindOptions.map((option) => option.value),
+    ['action.archive', 'delegation.completed'],
+  );
+  assert.deepEqual(
+    model.categoryOptions.map((option) => option.value),
+    ['action', 'delegation'],
+  );
+});
+
+test('timeline page filters by time window', () => {
+  const nowMs = 1_700_000_000_000;
+  const items = buildTimelinePageItems(
+    [agent({ id: 1 })],
+    [
+      event({
+        id: 'recent',
+        agentId: 1,
+        timestamp: nowMs - 60 * 60 * 1000,
+        kind: 'tool.completed',
+        title: 'Recent event',
+      }),
+      event({
+        id: 'old',
+        agentId: 1,
+        timestamp: nowMs - 3 * 24 * 60 * 60 * 1000,
+        kind: 'tool.completed',
+        title: 'Old event',
+      }),
+    ],
+    [],
+  );
+  const model = buildTimelinePageModel(
+    items,
+    {
+      ...defaultFilters,
+      timeWindow: 'last_24h',
+    },
+    nowMs,
+  );
+
+  assert.deepEqual(
+    model.events.map((item) => item.id),
+    ['timeline-recent'],
+  );
 });
 
 test('timeline page counters and filter options are built from the indexed event set', () => {

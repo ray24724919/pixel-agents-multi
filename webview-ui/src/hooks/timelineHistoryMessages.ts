@@ -9,7 +9,19 @@ export interface TimelineHistoryLoadedMessage {
   error?: unknown;
 }
 
+export interface TimelineHistoryState {
+  loadedAtMs?: number;
+  unavailable: boolean;
+  error?: string;
+  persistedRecordCount: number;
+}
+
 export type PersistedTimelineEvent = Omit<AgentTimelineEvent, 'payload'>;
+
+export const initialTimelineHistoryState: TimelineHistoryState = {
+  unavailable: false,
+  persistedRecordCount: 0,
+};
 
 export function timelineEventsFromHistoryLoadedMessage(
   message: TimelineHistoryLoadedMessage,
@@ -18,6 +30,20 @@ export function timelineEventsFromHistoryLoadedMessage(
   return message.records
     .map(timelineEventForPersistence)
     .filter((event): event is PersistedTimelineEvent => event !== undefined);
+}
+
+export function timelineHistoryStateFromLoadedMessage(
+  message: TimelineHistoryLoadedMessage,
+): TimelineHistoryState {
+  const events = timelineEventsFromHistoryLoadedMessage(message);
+  const loadedAtMs = numberValue(message.loadedAtMs);
+  const error = stringValue(message.error);
+  return {
+    loadedAtMs,
+    unavailable: message.unavailable === true,
+    error,
+    persistedRecordCount: events.length,
+  };
 }
 
 export function mergeTimelineEventsById(

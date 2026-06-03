@@ -1,5 +1,18 @@
+import { TIMELINE_LAST_7_DAYS, TIMELINE_MS_PER_DAY } from '../constants.js';
+
 export type TimelineSeverity = 'info' | 'success' | 'warning' | 'error';
 export type TimelineSeverityFilter = 'all' | TimelineSeverity;
+export type TimelineCategory =
+  | 'lifecycle'
+  | 'tool'
+  | 'action'
+  | 'delegation'
+  | 'permission'
+  | 'run'
+  | 'token'
+  | 'other';
+export type TimelineCategoryFilter = 'all' | TimelineCategory;
+export type TimelineTimeWindowFilter = 'all' | 'today' | 'last_24h' | 'last_7_days';
 
 export interface TimelineAgentContext {
   id: number;
@@ -46,6 +59,7 @@ export interface TimelinePageItem {
   source: 'user' | 'agent' | 'tool' | 'system';
   sessionId?: string;
   runId?: string;
+  category: TimelineCategory;
   isActionLike: boolean;
   isDelegationLike: boolean;
 }
@@ -55,6 +69,9 @@ export interface TimelinePageFilters {
   severityFilter: TimelineSeverityFilter;
   projectFilter: 'all' | string;
   agentFilter: 'all' | string;
+  categoryFilter: TimelineCategoryFilter;
+  kindFilter: 'all' | string;
+  timeWindow: TimelineTimeWindowFilter;
   searchQuery: string;
 }
 
@@ -79,6 +96,8 @@ export interface TimelinePageModel {
   providerOptions: TimelineFilterOption[];
   projectOptions: TimelineFilterOption[];
   agentOptions: TimelineFilterOption[];
+  categoryOptions: TimelineFilterOption[];
+  kindOptions: TimelineFilterOption[];
   hasFilters: boolean;
 }
 
@@ -94,6 +113,7 @@ export function buildTimelinePageItems(
     const agent = agentsById.get(event.agentId);
     const isActionLike = isActionLikeTimelineKind(event.kind);
     const isDelegationLike = isDelegationTimelineKind(event.kind);
+    const category = timelineCategoryForKind(event.kind);
     if (!agent && !isActionLike) continue;
     items.push({
       id: `timeline-${event.id}`,
@@ -109,6 +129,7 @@ export function buildTimelinePageItems(
       source: event.source ?? 'system',
       sessionId: event.sessionId,
       runId: event.runId,
+      category,
       isActionLike,
       isDelegationLike,
     });
@@ -130,6 +151,7 @@ export function buildTimelinePageItems(
       severity: event.severity ?? 'info',
       kind,
       source: 'system',
+      category: 'lifecycle',
       isActionLike: false,
       isDelegationLike: false,
     });
@@ -141,8 +163,9 @@ export function buildTimelinePageItems(
 export function buildTimelinePageModel(
   events: readonly TimelinePageItem[],
   filters: TimelinePageFilters,
+  nowMs = Date.now(),
 ): TimelinePageModel {
-  const filtered = events.filter((event) => timelineEventMatchesFilters(event, filters));
+  const filtered = events.filter((event) => timelineEventMatchesFilters(event, filters, nowMs));
   return {
     events: filtered.slice().sort((a, b) => b.timestamp - a.timestamp),
     counts: getTimelinePageCounts(events, filtered.length),
@@ -153,11 +176,20 @@ export function buildTimelinePageModel(
       (event) => String(event.agentId),
       (_value, event) => `${event.agentName} #${event.agentId}`,
     ),
+    categoryOptions: getTimelineFilterOptions(
+      events,
+      (event) => event.category,
+      (value) => timelineCategoryLabel(value as TimelineCategoryFilter),
+    ),
+    kindOptions: getTimelineFilterOptions(events, (event) => event.kind),
     hasFilters:
       filters.providerFilter !== 'all' ||
       filters.severityFilter !== 'all' ||
       filters.projectFilter !== 'all' ||
       filters.agentFilter !== 'all' ||
+      filters.categoryFilter !== 'all' ||
+      filters.kindFilter !== 'all' ||
+      filters.timeWindow !== 'all' ||
       filters.searchQuery.trim().length > 0,
   };
 }
@@ -165,6 +197,7 @@ export function buildTimelinePageModel(
 export function timelineEventMatchesFilters(
   event: TimelinePageItem,
   filters: TimelinePageFilters,
+  nowMs = Date.now(),
 ): boolean {
   if (filters.providerFilter !== 'all' && event.providerId !== filters.providerFilter) {
     return false;
@@ -176,6 +209,15 @@ export function timelineEventMatchesFilters(
     return false;
   }
   if (filters.agentFilter !== 'all' && String(event.agentId) !== filters.agentFilter) {
+    return false;
+  }
+  if (filters.categoryFilter !== 'all' && event.category !== filters.categoryFilter) {
+    return false;
+  }
+  if (filters.kindFilter !== 'all' && event.kind !== filters.kindFilter) {
+    return false;
+  }
+  if (!timelineEventMatchesTimeWindow(event, filters.timeWindow, nowMs)) {
     return false;
   }
   return timelineEventMatchesSearch(event, filters.searchQuery);
@@ -196,12 +238,42 @@ export function timelineSeverityLabel(severity: TimelineSeverityFilter): string 
   return 'Error';
 }
 
+export function timelineCategoryLabel(category: TimelineCategoryFilter): string {
+  if (category === 'all') return 'All categories';
+  if (category === 'lifecycle') return 'Lifecycle';
+  if (category === 'tool') return 'Tool';
+  if (category === 'action') return 'Action';
+  if (category === 'delegation') return 'Delegation';
+  if (category === 'permission') return 'Permission';
+  if (category === 'run') return 'Run';
+  if (category === 'token') return 'Token';
+  return 'Other';
+}
+
+export function timelineTimeWindowLabel(timeWindow: TimelineTimeWindowFilter): string {
+  if (timeWindow === 'all') return 'All time';
+  if (timeWindow === 'today') return 'Today';
+  if (timeWindow === 'last_24h') return 'Last 24h';
+  return 'Last 7 days';
+}
+
 export function isActionLikeTimelineKind(kind: string): boolean {
   return kind.startsWith('action.') || isDelegationTimelineKind(kind);
 }
 
 export function isDelegationTimelineKind(kind: string): boolean {
   return kind.startsWith('delegation.');
+}
+
+export function timelineCategoryForKind(kind: string): TimelineCategory {
+  if (kind.startsWith('delegation.')) return 'delegation';
+  if (kind.startsWith('action.')) return 'action';
+  if (kind.includes('permission')) return 'permission';
+  if (kind.startsWith('lifecycle.')) return 'lifecycle';
+  if (kind.startsWith('tool.')) return 'tool';
+  if (kind.startsWith('run.') || kind.includes('.run') || kind.includes('run.')) return 'run';
+  if (kind.startsWith('token.') || kind.includes('token')) return 'token';
+  return 'other';
 }
 
 function getTimelinePageCounts(
@@ -266,6 +338,7 @@ function buildTimelineSearchText(event: TimelinePageItem): string {
     event.providerId,
     event.project,
     event.kind,
+    event.category,
     event.source,
     event.severity,
     event.sessionId,
@@ -276,6 +349,26 @@ function buildTimelineSearchText(event: TimelinePageItem): string {
     .map((value) => normalizeSearchText(value ?? ''))
     .filter(Boolean)
     .join(' ');
+}
+
+function timelineEventMatchesTimeWindow(
+  event: TimelinePageItem,
+  timeWindow: TimelineTimeWindowFilter,
+  nowMs: number,
+): boolean {
+  if (timeWindow === 'all') return true;
+  if (timeWindow === 'today') {
+    return event.timestamp >= startOfLocalDay(nowMs) && event.timestamp <= nowMs;
+  }
+  const ageMs = nowMs - event.timestamp;
+  if (ageMs < 0) return true;
+  if (timeWindow === 'last_24h') return ageMs <= TIMELINE_MS_PER_DAY;
+  return ageMs <= TIMELINE_LAST_7_DAYS * TIMELINE_MS_PER_DAY;
+}
+
+function startOfLocalDay(timestamp: number): number {
+  const date = new Date(timestamp);
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
 }
 
 function tokenizeSearch(query: string): string[] {
