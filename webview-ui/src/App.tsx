@@ -488,7 +488,6 @@ function App() {
         onOpenAgent={editor.handleOpenAgent}
         onToggleEditMode={editor.handleToggleEditMode}
         activePage={activePage}
-        onPageChange={setActivePage}
         isSettingsOpen={isSettingsOpen}
         onToggleSettings={() => setIsSettingsOpen((v) => !v)}
         workspaceFolders={workspaceFolders}

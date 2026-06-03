@@ -11,7 +11,6 @@ interface BottomToolbarProps {
   onOpenAgent: () => void;
   onToggleEditMode: () => void;
   activePage: AppPage;
-  onPageChange: (page: AppPage) => void;
   isSettingsOpen: boolean;
   onToggleSettings: () => void;
   workspaceFolders: WorkspaceFolder[];
@@ -32,7 +31,6 @@ export function BottomToolbar({
   isEditMode,
   onToggleEditMode,
   activePage,
-  onPageChange,
   isSettingsOpen,
   onToggleSettings,
   workspaceFolders,
@@ -127,13 +125,6 @@ export function BottomToolbar({
             Layout
           </Button>
         )}
-        <Button
-          variant={activePage === 'agents' ? 'active' : 'default'}
-          onClick={() => onPageChange('agents')}
-          title="Open Agents page"
-        >
-          Agents
-        </Button>
         <Button
           variant={isSettingsOpen ? 'active' : 'default'}
           onClick={onToggleSettings}
