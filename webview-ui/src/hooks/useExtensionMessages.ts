@@ -116,6 +116,9 @@ export interface AgentTimelineEvent {
   artifactStatus?: string;
   previousStatus?: string;
   nextStatus?: string;
+  dispatchStatus?: string;
+  packageRelativePath?: string;
+  reportRelativePath?: string;
   timestamp: number;
   kind: string;
   title: string;
@@ -982,6 +985,9 @@ export function useExtensionMessages(
             artifactStatus: raw.artifactStatus,
             previousStatus: raw.previousStatus,
             nextStatus: raw.nextStatus,
+            dispatchStatus: raw.dispatchStatus,
+            packageRelativePath: raw.packageRelativePath,
+            reportRelativePath: raw.reportRelativePath,
             timestamp: Number.isFinite(timestamp) ? timestamp : Date.now(),
             kind: raw.kind ?? raw.type ?? 'event',
             title: raw.title ?? raw.summary ?? raw.kind ?? raw.type ?? 'Event',

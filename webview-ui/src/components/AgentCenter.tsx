@@ -48,9 +48,15 @@ import {
 } from './delegationModel.js';
 import {
   buildCreateHandoffDispatchPromptMessage,
+  buildCreateHandoffWorkPackageMessage,
+  buildCreateHandoffWorkPackagePromptMessage,
   buildOpenHandoffArtifactMessage,
+  buildOpenHandoffWorkPackageMessage,
   buildUpdateHandoffArtifactStatusMessage,
+  buildUpdateHandoffDispatchStatusMessage,
   canCreateHandoffDispatchPrompt,
+  canCreateHandoffWorkPackage,
+  canUseHandoffWorkPackage,
   type HandoffArtifactLibraryItem,
   type HandoffArtifactLibraryState,
   handoffArtifactLibraryStateFromLoadedMessage,
@@ -58,6 +64,10 @@ import {
   handoffArtifactStatusActions,
   type HandoffDispatchPromptStatus,
   handoffDispatchPromptStatusLabel,
+  type HandoffDispatchStatus,
+  handoffDispatchStatusActions,
+  type HandoffWorkPackageStatus,
+  handoffWorkPackageStatusLabel,
   initialHandoffArtifactLibraryState,
   shouldRefreshHandoffArtifactsForMessage,
 } from './handoffArtifactLibraryModel.js';
@@ -1433,6 +1443,13 @@ function TimelineDashboard({
   const [handoffDispatchReportPath, setHandoffDispatchReportPath] = useState('');
   const [handoffDispatchPromptError, setHandoffDispatchPromptError] = useState('');
   const handoffDispatchPromptRequestIdRef = useRef('');
+  const [handoffWorkPackageStatus, setHandoffWorkPackageStatus] =
+    useState<HandoffWorkPackageStatus>('idle');
+  const [handoffWorkPackagePath, setHandoffWorkPackagePath] = useState('');
+  const [handoffWorkPackageBranchName, setHandoffWorkPackageBranchName] = useState('');
+  const [handoffWorkPackageReportPath, setHandoffWorkPackageReportPath] = useState('');
+  const [handoffWorkPackageError, setHandoffWorkPackageError] = useState('');
+  const handoffWorkPackageRequestIdRef = useRef('');
   const replayState = useMemo(
     () => resolveTimelineReplaySelection(replaySessions, replaySessionId, replayCursor),
     [replayCursor, replaySessionId, replaySessions],
@@ -1609,6 +1626,135 @@ function TimelineDashboard({
             ? message.error
             : 'Could not create handoff dispatch prompt.',
         );
+        return;
+      }
+      if (
+        message.type === 'handoffWorkPackageCreated' &&
+        message.requestId === handoffWorkPackageRequestIdRef.current
+      ) {
+        setHandoffWorkPackageStatus('created');
+        setHandoffWorkPackagePath(
+          typeof message.packageRelativePath === 'string' ? message.packageRelativePath : '',
+        );
+        setHandoffWorkPackageBranchName(
+          typeof message.branchName === 'string' ? message.branchName : '',
+        );
+        setHandoffWorkPackageReportPath(
+          typeof message.reportRelativePath === 'string' ? message.reportRelativePath : '',
+        );
+        setHandoffWorkPackageError('');
+        return;
+      }
+      if (
+        message.type === 'handoffWorkPackageCreateFailed' &&
+        message.requestId === handoffWorkPackageRequestIdRef.current
+      ) {
+        setHandoffWorkPackageStatus('failed');
+        setHandoffWorkPackagePath('');
+        setHandoffWorkPackageBranchName('');
+        setHandoffWorkPackageReportPath('');
+        setHandoffWorkPackageError(
+          typeof message.error === 'string'
+            ? message.error
+            : 'Could not create handoff work package.',
+        );
+        return;
+      }
+      if (
+        message.type === 'handoffWorkPackageOpened' &&
+        message.requestId === handoffWorkPackageRequestIdRef.current
+      ) {
+        setHandoffWorkPackageStatus('opened');
+        setHandoffWorkPackagePath(
+          typeof message.packageRelativePath === 'string' ? message.packageRelativePath : '',
+        );
+        setHandoffWorkPackageError('');
+        return;
+      }
+      if (
+        message.type === 'handoffWorkPackageOpenFailed' &&
+        message.requestId === handoffWorkPackageRequestIdRef.current
+      ) {
+        setHandoffWorkPackageStatus('failed');
+        setHandoffWorkPackageError(
+          typeof message.error === 'string' ? message.error : 'Could not open work package.',
+        );
+        return;
+      }
+      if (
+        message.type === 'handoffWorkPackagePromptCreated' &&
+        message.requestId === handoffWorkPackageRequestIdRef.current
+      ) {
+        const prompt = typeof message.prompt === 'string' ? message.prompt : '';
+        const branchName = typeof message.branchName === 'string' ? message.branchName : '';
+        const reportRelativePath =
+          typeof message.reportRelativePath === 'string' ? message.reportRelativePath : '';
+        const packageRelativePath =
+          typeof message.packageRelativePath === 'string' ? message.packageRelativePath : '';
+        if (!prompt.trim()) {
+          setHandoffWorkPackageStatus('failed');
+          setHandoffWorkPackagePath(packageRelativePath);
+          setHandoffWorkPackageBranchName(branchName);
+          setHandoffWorkPackageReportPath(reportRelativePath);
+          setHandoffWorkPackageError('No work-package prompt was returned.');
+          return;
+        }
+        void copyTextToClipboard(prompt)
+          .then(() => {
+            setHandoffWorkPackageStatus('copied');
+            setHandoffWorkPackagePath(packageRelativePath);
+            setHandoffWorkPackageBranchName(branchName);
+            setHandoffWorkPackageReportPath(reportRelativePath);
+            setHandoffWorkPackageError('');
+          })
+          .catch(() => {
+            setHandoffWorkPackageStatus('failed');
+            setHandoffWorkPackagePath(packageRelativePath);
+            setHandoffWorkPackageBranchName(branchName);
+            setHandoffWorkPackageReportPath(reportRelativePath);
+            setHandoffWorkPackageError('Clipboard copy failed.');
+          });
+        return;
+      }
+      if (
+        message.type === 'handoffWorkPackagePromptFailed' &&
+        message.requestId === handoffWorkPackageRequestIdRef.current
+      ) {
+        setHandoffWorkPackageStatus('failed');
+        setHandoffWorkPackageError(
+          typeof message.error === 'string'
+            ? message.error
+            : 'Could not create work-package prompt.',
+        );
+        return;
+      }
+      if (
+        message.type === 'handoffDispatchStatusUpdated' &&
+        message.requestId === handoffWorkPackageRequestIdRef.current
+      ) {
+        setHandoffWorkPackageStatus('updated');
+        setHandoffWorkPackagePath(
+          typeof message.packageRelativePath === 'string' ? message.packageRelativePath : '',
+        );
+        setHandoffWorkPackageBranchName(
+          typeof message.branchName === 'string' ? message.branchName : '',
+        );
+        setHandoffWorkPackageReportPath(
+          typeof message.reportRelativePath === 'string' ? message.reportRelativePath : '',
+        );
+        setHandoffWorkPackageError('');
+        return;
+      }
+      if (
+        message.type === 'handoffDispatchStatusUpdateFailed' &&
+        message.requestId === handoffWorkPackageRequestIdRef.current
+      ) {
+        setHandoffWorkPackageStatus('failed');
+        setHandoffWorkPackageError(
+          typeof message.error === 'string'
+            ? message.error
+            : 'Could not update work-package status.',
+        );
       }
     };
     window.addEventListener('message', handler);
@@ -1732,6 +1878,69 @@ function TimelineDashboard({
     setHandoffDispatchPromptError('');
     vscode.postMessage(message);
   };
+  const createHandoffWorkPackage = (item: HandoffArtifactLibraryItem) => {
+    const requestId = `handoff-work-package-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const message = buildCreateHandoffWorkPackageMessage(item, requestId);
+    if (!message) {
+      setHandoffWorkPackageStatus('failed');
+      setHandoffWorkPackageError('No reviewed handoff metadata is available for a work package.');
+      return;
+    }
+    handoffWorkPackageRequestIdRef.current = requestId;
+    setHandoffWorkPackageStatus('creating');
+    setHandoffWorkPackagePath('');
+    setHandoffWorkPackageBranchName('');
+    setHandoffWorkPackageReportPath('');
+    setHandoffWorkPackageError('');
+    vscode.postMessage(message);
+  };
+  const openHandoffWorkPackage = (item: HandoffArtifactLibraryItem) => {
+    const requestId = `handoff-work-open-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const message = buildOpenHandoffWorkPackageMessage(item, requestId);
+    if (!message) {
+      setHandoffWorkPackageStatus('failed');
+      setHandoffWorkPackageError('No handoff work package is available to open.');
+      return;
+    }
+    handoffWorkPackageRequestIdRef.current = requestId;
+    setHandoffWorkPackageStatus('opening');
+    setHandoffWorkPackagePath('');
+    setHandoffWorkPackageError('');
+    vscode.postMessage(message);
+  };
+  const copyHandoffWorkPackagePrompt = (item: HandoffArtifactLibraryItem) => {
+    const requestId = `handoff-work-copy-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const message = buildCreateHandoffWorkPackagePromptMessage(item, requestId);
+    if (!message) {
+      setHandoffWorkPackageStatus('failed');
+      setHandoffWorkPackageError('Create a work package before copying its executor prompt.');
+      return;
+    }
+    handoffWorkPackageRequestIdRef.current = requestId;
+    setHandoffWorkPackageStatus('copying');
+    setHandoffWorkPackagePath('');
+    setHandoffWorkPackageBranchName('');
+    setHandoffWorkPackageReportPath('');
+    setHandoffWorkPackageError('');
+    vscode.postMessage(message);
+  };
+  const updateHandoffDispatchStatus = (
+    item: HandoffArtifactLibraryItem,
+    nextStatus: HandoffDispatchStatus,
+  ) => {
+    const requestId = `handoff-work-status-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const message = buildUpdateHandoffDispatchStatusMessage(item, nextStatus, requestId);
+    if (!message) {
+      setHandoffWorkPackageStatus('failed');
+      setHandoffWorkPackageError('No handoff work-package status update is available.');
+      return;
+    }
+    handoffWorkPackageRequestIdRef.current = requestId;
+    setHandoffWorkPackageStatus('updating');
+    setHandoffWorkPackagePath('');
+    setHandoffWorkPackageError('');
+    vscode.postMessage(message);
+  };
 
   return (
     <div className="grid gap-4">
@@ -1838,10 +2047,19 @@ function TimelineDashboard({
         dispatchBranchName={handoffDispatchBranchName}
         dispatchReportPath={handoffDispatchReportPath}
         dispatchPromptError={handoffDispatchPromptError}
+        workPackageStatus={handoffWorkPackageStatus}
+        workPackagePath={handoffWorkPackagePath}
+        workPackageBranchName={handoffWorkPackageBranchName}
+        workPackageReportPath={handoffWorkPackageReportPath}
+        workPackageError={handoffWorkPackageError}
         onRefresh={refreshHandoffArtifacts}
         onOpen={openHandoffArtifact}
         onUpdateStatus={updateHandoffArtifactStatus}
         onCopyDispatchPrompt={copyHandoffDispatchPrompt}
+        onCreateWorkPackage={createHandoffWorkPackage}
+        onOpenWorkPackage={openHandoffWorkPackage}
+        onCopyWorkPackagePrompt={copyHandoffWorkPackagePrompt}
+        onUpdateDispatchStatus={updateHandoffDispatchStatus}
       />
 
       <section className="grid gap-3 border border-border bg-btn-bg p-3 md:grid-cols-2 xl:grid-cols-[minmax(220px,1fr)_150px_160px_180px] 2xl:grid-cols-[minmax(220px,1fr)_150px_160px_180px_160px_170px_220px_220px_auto]">
@@ -2316,10 +2534,19 @@ function HandoffArtifactLibraryPanel({
   dispatchBranchName,
   dispatchReportPath,
   dispatchPromptError,
+  workPackageStatus,
+  workPackagePath,
+  workPackageBranchName,
+  workPackageReportPath,
+  workPackageError,
   onRefresh,
   onOpen,
   onUpdateStatus,
   onCopyDispatchPrompt,
+  onCreateWorkPackage,
+  onOpenWorkPackage,
+  onCopyWorkPackagePrompt,
+  onUpdateDispatchStatus,
 }: {
   state: HandoffArtifactLibraryState;
   openStatus: HandoffOpenStatus;
@@ -2332,6 +2559,11 @@ function HandoffArtifactLibraryPanel({
   dispatchBranchName: string;
   dispatchReportPath: string;
   dispatchPromptError: string;
+  workPackageStatus: HandoffWorkPackageStatus;
+  workPackagePath: string;
+  workPackageBranchName: string;
+  workPackageReportPath: string;
+  workPackageError: string;
   onRefresh: () => void;
   onOpen: (item: HandoffArtifactLibraryItem) => void;
   onUpdateStatus: (
@@ -2339,7 +2571,19 @@ function HandoffArtifactLibraryPanel({
     nextStatus: HandoffArtifactLocalStatus,
   ) => void;
   onCopyDispatchPrompt: (item: HandoffArtifactLibraryItem) => void;
+  onCreateWorkPackage: (item: HandoffArtifactLibraryItem) => void;
+  onOpenWorkPackage: (item: HandoffArtifactLibraryItem) => void;
+  onCopyWorkPackagePrompt: (item: HandoffArtifactLibraryItem) => void;
+  onUpdateDispatchStatus: (
+    item: HandoffArtifactLibraryItem,
+    nextStatus: HandoffDispatchStatus,
+  ) => void;
 }) {
+  const workPackageBusy =
+    workPackageStatus === 'creating' ||
+    workPackageStatus === 'opening' ||
+    workPackageStatus === 'copying' ||
+    workPackageStatus === 'updating';
   return (
     <section className="border border-border bg-bg">
       <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border bg-btn-bg p-4">
@@ -2415,6 +2659,59 @@ function HandoffArtifactLibraryPanel({
                   >
                     Copy dispatch prompt
                   </Button>
+                  {!item.dispatchPackage ? (
+                    <Button
+                      variant={
+                        workPackageBusy || !canCreateHandoffWorkPackage(item) ? 'disabled' : 'ghost'
+                      }
+                      size="sm"
+                      disabled={workPackageBusy || !canCreateHandoffWorkPackage(item)}
+                      onClick={() => onCreateWorkPackage(item)}
+                    >
+                      Create work package
+                    </Button>
+                  ) : (
+                    <>
+                      {handoffDispatchStatusActions(item).map((action) => {
+                        const disabled = action.disabled || workPackageBusy;
+                        return (
+                          <Button
+                            key={action.nextStatus}
+                            variant={disabled ? 'disabled' : 'ghost'}
+                            size="sm"
+                            disabled={disabled}
+                            onClick={() => onUpdateDispatchStatus(item, action.nextStatus)}
+                          >
+                            {action.label}
+                          </Button>
+                        );
+                      })}
+                      <Button
+                        variant={
+                          workPackageBusy || !canUseHandoffWorkPackage(item) ? 'disabled' : 'ghost'
+                        }
+                        size="sm"
+                        disabled={workPackageBusy || !canUseHandoffWorkPackage(item)}
+                        onClick={() => onCopyWorkPackagePrompt(item)}
+                      >
+                        Copy work-package prompt
+                      </Button>
+                      <Button
+                        variant={
+                          workPackageStatus === 'opening' || !canUseHandoffWorkPackage(item)
+                            ? 'disabled'
+                            : 'default'
+                        }
+                        size="sm"
+                        disabled={
+                          workPackageStatus === 'opening' || !canUseHandoffWorkPackage(item)
+                        }
+                        onClick={() => onOpenWorkPackage(item)}
+                      >
+                        Open work package
+                      </Button>
+                    </>
+                  )}
                   <Button
                     variant={openStatus === 'opening' ? 'disabled' : 'default'}
                     size="sm"
@@ -2464,6 +2761,26 @@ function HandoffArtifactLibraryPanel({
             dispatchBranchName,
             dispatchReportPath,
             dispatchPromptError,
+          )}
+        </div>
+        <div
+          className={`break-words text-xs ${
+            workPackageStatus === 'failed'
+              ? 'text-status-error'
+              : workPackageStatus === 'created' ||
+                  workPackageStatus === 'opened' ||
+                  workPackageStatus === 'copied' ||
+                  workPackageStatus === 'updated'
+                ? 'text-status-waiting'
+                : 'text-text-muted'
+          }`}
+        >
+          {handoffWorkPackageStatusLabel(
+            workPackageStatus,
+            workPackagePath,
+            workPackageBranchName,
+            workPackageReportPath,
+            workPackageError,
           )}
         </div>
       </div>
@@ -2592,6 +2909,11 @@ function TimelineEventRow({
           {event.runId && <span className="truncate">{event.runId}</span>}
           {event.artifactId && <span className="truncate">{event.artifactId}</span>}
           {event.artifactStatus && <span className="truncate">{event.artifactStatus}</span>}
+          {event.dispatchStatus && <span className="truncate">{event.dispatchStatus}</span>}
+          {event.packageRelativePath && (
+            <span className="truncate">{event.packageRelativePath}</span>
+          )}
+          {event.reportRelativePath && <span className="truncate">{event.reportRelativePath}</span>}
           {event.previousStatus && event.nextStatus && (
             <span className="truncate">
               {event.previousStatus} -&gt; {event.nextStatus}

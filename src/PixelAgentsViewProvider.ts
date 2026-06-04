@@ -86,10 +86,14 @@ import {
   buildHandoffArtifactMetadata,
   buildHandoffArtifactTarget,
   buildHandoffDispatchPrompt,
+  buildHandoffWorkPackagePrompt,
+  createHandoffWorkPackage,
   readHandoffArtifactMetadataForMarkdown,
   resolveHandoffArtifactOpenPath,
+  resolveHandoffWorkPackageOpenPath,
   scanHandoffArtifacts,
   updateHandoffArtifactStatus,
+  updateHandoffDispatchStatus,
 } from './handoffArtifacts.js';
 import type { LayoutWatcher } from './layoutPersistence.js';
 import { readLayoutFromFile, watchLayoutFile, writeLayoutToFile } from './layoutPersistence.js';
@@ -530,12 +534,219 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  private async createHandoffWorkPackageFromWebview(
+    message: Record<string, unknown>,
+  ): Promise<void> {
+    const requestId = typeof message.requestId === 'string' ? message.requestId : undefined;
+    try {
+      const repoRoot = this.getHandoffRepoRoot();
+      if (!repoRoot) {
+        throw new Error('Open a repository workspace before creating a handoff work package.');
+      }
+      const result = createHandoffWorkPackage(repoRoot, message.relativePath);
+      this.webview?.postMessage({
+        type: 'handoffWorkPackageCreated',
+        requestId,
+        relativePath: result.markdown.relativePath,
+        filename: result.markdown.filename,
+        artifactId: result.metadata.artifactId,
+        status: result.metadata.status,
+        packageRelativePath: result.dispatchPackage.packageRelativePath,
+        branchName: result.dispatchPackage.branchName,
+        reportRelativePath: result.dispatchPackage.reportRelativePath,
+        dispatchStatus: result.dispatchPackage.status,
+      });
+      this.postHandoffTimelineEvent(
+        'handoff.dispatch_package_created',
+        result.markdown.relativePath,
+        {
+          filename: result.markdown.filename,
+          artifactId: result.metadata.artifactId,
+          artifactStatus: result.metadata.status,
+          dispatchStatus: result.dispatchPackage.status,
+          packageRelativePath: result.dispatchPackage.packageRelativePath,
+          reportRelativePath: result.dispatchPackage.reportRelativePath,
+          providerId: result.metadata.providerId,
+          project: result.metadata.projectName,
+          sessionId: result.metadata.sessionId,
+          runId: result.metadata.runId,
+        },
+      );
+      this.postHandoffArtifactsLoaded();
+      vscode.window.showInformationMessage(
+        `Pixel Agents: Handoff work package created at ${result.dispatchPackage.packageRelativePath}`,
+      );
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.webview?.postMessage({
+        type: 'handoffWorkPackageCreateFailed',
+        requestId,
+        relativePath: typeof message.relativePath === 'string' ? message.relativePath : undefined,
+        error: errorMessage,
+      });
+      vscode.window.showErrorMessage(
+        `Pixel Agents: Failed to create handoff work package: ${errorMessage}`,
+      );
+    }
+  }
+
+  private async openHandoffWorkPackageFromWebview(message: Record<string, unknown>): Promise<void> {
+    const requestId = typeof message.requestId === 'string' ? message.requestId : undefined;
+    try {
+      const repoRoot = this.getHandoffRepoRoot();
+      if (!repoRoot) {
+        throw new Error('Open a repository workspace before opening handoff work packages.');
+      }
+      const target = resolveHandoffWorkPackageOpenPath(repoRoot, message.relativePath);
+      const metadata = readHandoffArtifactMetadataForMarkdown(
+        repoRoot,
+        typeof message.relativePath === 'string' ? message.relativePath : '',
+      );
+      const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(target.absolutePath));
+      await vscode.window.showTextDocument(doc, { preview: false });
+      this.webview?.postMessage({
+        type: 'handoffWorkPackageOpened',
+        requestId,
+        packageRelativePath: target.relativePath,
+        filename: target.filename,
+        relativePath: typeof message.relativePath === 'string' ? message.relativePath : undefined,
+      });
+      this.postHandoffTimelineEvent(
+        'handoff.dispatch_package_opened',
+        typeof message.relativePath === 'string' ? message.relativePath : target.relativePath,
+        {
+          filename: target.filename,
+          artifactId: metadata?.artifactId,
+          artifactStatus: metadata?.status,
+          dispatchStatus: metadata?.dispatchPackage?.status,
+          packageRelativePath: target.relativePath,
+          reportRelativePath: metadata?.dispatchPackage?.reportRelativePath,
+          providerId: metadata?.providerId,
+          project: metadata?.projectName,
+          sessionId: metadata?.sessionId,
+          runId: metadata?.runId,
+        },
+      );
+    } catch (error) {
+      this.webview?.postMessage({
+        type: 'handoffWorkPackageOpenFailed',
+        requestId,
+        relativePath: typeof message.relativePath === 'string' ? message.relativePath : undefined,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private async createHandoffWorkPackagePromptFromWebview(
+    message: Record<string, unknown>,
+  ): Promise<void> {
+    const requestId = typeof message.requestId === 'string' ? message.requestId : undefined;
+    try {
+      const repoRoot = this.getHandoffRepoRoot();
+      if (!repoRoot) {
+        throw new Error('Open a repository workspace before creating a work-package prompt.');
+      }
+      const result = buildHandoffWorkPackagePrompt(repoRoot, message.relativePath);
+      this.webview?.postMessage({
+        type: 'handoffWorkPackagePromptCreated',
+        requestId,
+        relativePath: result.markdown.relativePath,
+        artifactId: result.metadata.artifactId,
+        status: result.metadata.status,
+        packageRelativePath: result.dispatchPackage.packageRelativePath,
+        branchName: result.dispatchPackage.branchName,
+        reportRelativePath: result.dispatchPackage.reportRelativePath,
+        dispatchStatus: result.dispatchPackage.status,
+        prompt: result.prompt,
+      });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.webview?.postMessage({
+        type: 'handoffWorkPackagePromptFailed',
+        requestId,
+        relativePath: typeof message.relativePath === 'string' ? message.relativePath : undefined,
+        error: errorMessage,
+      });
+      vscode.window.showErrorMessage(
+        `Pixel Agents: Failed to create handoff work-package prompt: ${errorMessage}`,
+      );
+    }
+  }
+
+  private async updateHandoffDispatchStatusFromWebview(
+    message: Record<string, unknown>,
+  ): Promise<void> {
+    const requestId = typeof message.requestId === 'string' ? message.requestId : undefined;
+    try {
+      const repoRoot = this.getHandoffRepoRoot();
+      if (!repoRoot) {
+        throw new Error('Open a repository workspace before updating handoff work packages.');
+      }
+      const result = updateHandoffDispatchStatus(
+        repoRoot,
+        message.relativePath,
+        message.nextStatus,
+      );
+      this.webview?.postMessage({
+        type: 'handoffDispatchStatusUpdated',
+        requestId,
+        relativePath: result.markdown.relativePath,
+        filename: result.markdown.filename,
+        artifactId: result.metadata.artifactId,
+        status: result.metadata.status,
+        previousStatus: result.previousStatus,
+        nextStatus: result.nextStatus,
+        dispatchStatus: result.dispatchPackage.status,
+        packageRelativePath: result.dispatchPackage.packageRelativePath,
+        branchName: result.dispatchPackage.branchName,
+        reportRelativePath: result.dispatchPackage.reportRelativePath,
+      });
+      this.postHandoffTimelineEvent(
+        'handoff.dispatch_status_changed',
+        result.markdown.relativePath,
+        {
+          filename: result.markdown.filename,
+          artifactId: result.metadata.artifactId,
+          artifactStatus: result.metadata.status,
+          previousStatus: result.previousStatus,
+          nextStatus: result.nextStatus,
+          dispatchStatus: result.dispatchPackage.status,
+          packageRelativePath: result.dispatchPackage.packageRelativePath,
+          reportRelativePath: result.dispatchPackage.reportRelativePath,
+          providerId: result.metadata.providerId,
+          project: result.metadata.projectName,
+          sessionId: result.metadata.sessionId,
+          runId: result.metadata.runId,
+        },
+      );
+      this.postHandoffArtifactsLoaded();
+      vscode.window.showInformationMessage(
+        `Pixel Agents: Handoff work package status updated to ${result.nextStatus}: ${result.dispatchPackage.packageRelativePath}`,
+      );
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.webview?.postMessage({
+        type: 'handoffDispatchStatusUpdateFailed',
+        requestId,
+        relativePath: typeof message.relativePath === 'string' ? message.relativePath : undefined,
+        nextStatus: typeof message.nextStatus === 'string' ? message.nextStatus : undefined,
+        error: errorMessage,
+      });
+      vscode.window.showErrorMessage(
+        `Pixel Agents: Failed to update handoff work-package status: ${errorMessage}`,
+      );
+    }
+  }
+
   private postHandoffTimelineEvent(
     kind:
       | 'handoff.generated'
       | 'handoff.opened'
       | 'handoff.status_changed'
-      | 'handoff.dispatch_prompt_created',
+      | 'handoff.dispatch_prompt_created'
+      | 'handoff.dispatch_package_created'
+      | 'handoff.dispatch_package_opened'
+      | 'handoff.dispatch_status_changed',
     relativePath: string,
     metadata: Record<string, unknown> = {},
   ): void {
@@ -549,11 +760,21 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     const previousStatus =
       typeof metadata.previousStatus === 'string' ? metadata.previousStatus : undefined;
     const nextStatus = typeof metadata.nextStatus === 'string' ? metadata.nextStatus : undefined;
+    const dispatchStatus =
+      typeof metadata.dispatchStatus === 'string' ? metadata.dispatchStatus : undefined;
+    const packageRelativePath =
+      typeof metadata.packageRelativePath === 'string' ? metadata.packageRelativePath : undefined;
+    const reportRelativePath =
+      typeof metadata.reportRelativePath === 'string' ? metadata.reportRelativePath : undefined;
     const statusChange =
       previousStatus && nextStatus ? `${previousStatus} -> ${nextStatus}` : undefined;
-    const summaryParts = [relativePath, artifactId, statusChange ?? artifactStatus].filter(
-      (part): part is string => typeof part === 'string' && part.trim().length > 0,
-    );
+    const summaryParts = [
+      relativePath,
+      packageRelativePath,
+      reportRelativePath,
+      artifactId,
+      statusChange ?? dispatchStatus ?? artifactStatus,
+    ].filter((part): part is string => typeof part === 'string' && part.trim().length > 0);
     const title =
       kind === 'handoff.generated'
         ? 'Handoff generated'
@@ -561,7 +782,13 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
           ? 'Handoff opened'
           : kind === 'handoff.status_changed'
             ? 'Handoff status changed'
-            : 'Handoff dispatch prompt created';
+            : kind === 'handoff.dispatch_prompt_created'
+              ? 'Handoff dispatch prompt created'
+              : kind === 'handoff.dispatch_package_created'
+                ? 'Handoff work package created'
+                : kind === 'handoff.dispatch_package_opened'
+                  ? 'Handoff work package opened'
+                  : 'Handoff work package status changed';
     postAgentTimelineEvent(this.webview, {
       agentId: typeof metadata.agentId === 'number' ? metadata.agentId : 0,
       kind,
@@ -577,6 +804,9 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       artifactStatus,
       previousStatus,
       nextStatus,
+      dispatchStatus,
+      packageRelativePath,
+      reportRelativePath,
     });
   }
 
@@ -1603,6 +1833,30 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         );
       } else if (message.type === 'createHandoffDispatchPrompt') {
         await this.createHandoffDispatchPromptFromWebview(
+          typeof message === 'object' && message !== null
+            ? (message as Record<string, unknown>)
+            : {},
+        );
+      } else if (message.type === 'createHandoffWorkPackage') {
+        await this.createHandoffWorkPackageFromWebview(
+          typeof message === 'object' && message !== null
+            ? (message as Record<string, unknown>)
+            : {},
+        );
+      } else if (message.type === 'openHandoffWorkPackage') {
+        await this.openHandoffWorkPackageFromWebview(
+          typeof message === 'object' && message !== null
+            ? (message as Record<string, unknown>)
+            : {},
+        );
+      } else if (message.type === 'createHandoffWorkPackagePrompt') {
+        await this.createHandoffWorkPackagePromptFromWebview(
+          typeof message === 'object' && message !== null
+            ? (message as Record<string, unknown>)
+            : {},
+        );
+      } else if (message.type === 'updateHandoffDispatchStatus') {
+        await this.updateHandoffDispatchStatusFromWebview(
           typeof message === 'object' && message !== null
             ? (message as Record<string, unknown>)
             : {},

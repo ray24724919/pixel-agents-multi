@@ -41,6 +41,9 @@ export interface TimelineSourceEvent {
   artifactStatus?: string;
   previousStatus?: string;
   nextStatus?: string;
+  dispatchStatus?: string;
+  packageRelativePath?: string;
+  reportRelativePath?: string;
   timestamp: number;
   kind: string;
   title: string;
@@ -78,6 +81,9 @@ export interface TimelinePageItem {
   artifactStatus?: string;
   previousStatus?: string;
   nextStatus?: string;
+  dispatchStatus?: string;
+  packageRelativePath?: string;
+  reportRelativePath?: string;
   category: TimelineCategory;
   isActionLike: boolean;
   isDelegationLike: boolean;
@@ -154,6 +160,9 @@ export function buildTimelinePageItems(
       artifactStatus: event.artifactStatus,
       previousStatus: event.previousStatus,
       nextStatus: event.nextStatus,
+      dispatchStatus: event.dispatchStatus,
+      packageRelativePath: event.packageRelativePath,
+      reportRelativePath: event.reportRelativePath,
       category,
       isActionLike,
       isDelegationLike,
@@ -395,6 +404,9 @@ function buildTimelineSearchText(event: TimelinePageItem): string {
     event.artifactStatus,
     event.previousStatus,
     event.nextStatus,
+    event.dispatchStatus,
+    event.packageRelativePath,
+    event.reportRelativePath,
     event.isActionLike ? 'action' : undefined,
     event.isDelegationLike ? 'delegation delegate worker supervising' : undefined,
     isHandoffTimelineKind(event.kind) ? 'handoff artifact note repo review' : undefined,

@@ -44,6 +44,10 @@ describe('timeline store foundation', () => {
         runId: 'W8-A',
         artifactId: '2026-06-04-1507-safe-handoff',
         artifactStatus: 'draft',
+        dispatchStatus: 'ready',
+        packageRelativePath:
+          'docs/roadmap/supervision/work-packages/handoffs/safe-handoff-work-package.md',
+        reportRelativePath: 'docs/roadmap/supervision/reports/safe-handoff-executor-report.md',
         timestamp: 2000,
         kind: 'delegation.started',
         title: 'Delegation started',
@@ -69,6 +73,10 @@ describe('timeline store foundation', () => {
       runId: 'W8-A',
       artifactId: '2026-06-04-1507-safe-handoff',
       artifactStatus: 'draft',
+      dispatchStatus: 'ready',
+      packageRelativePath:
+        'docs/roadmap/supervision/work-packages/handoffs/safe-handoff-work-package.md',
+      reportRelativePath: 'docs/roadmap/supervision/reports/safe-handoff-executor-report.md',
       kind: 'delegation.started',
       title: 'Delegation started',
       summary: 'Codex supervisor #7 / 1 worker',

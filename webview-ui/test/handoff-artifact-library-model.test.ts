@@ -3,12 +3,20 @@ import test from 'node:test';
 
 import {
   buildCreateHandoffDispatchPromptMessage,
+  buildCreateHandoffWorkPackageMessage,
+  buildCreateHandoffWorkPackagePromptMessage,
   buildOpenHandoffArtifactMessage,
+  buildOpenHandoffWorkPackageMessage,
   buildUpdateHandoffArtifactStatusMessage,
+  buildUpdateHandoffDispatchStatusMessage,
   canCreateHandoffDispatchPrompt,
+  canCreateHandoffWorkPackage,
+  canUseHandoffWorkPackage,
   handoffArtifactLibraryStateFromLoadedMessage,
   handoffArtifactStatusActions,
   handoffDispatchPromptStatusLabel,
+  handoffDispatchStatusActions,
+  handoffWorkPackageStatusLabel,
   shouldRefreshHandoffArtifactsForMessage,
 } from '../src/components/handoffArtifactLibraryModel.ts';
 
@@ -227,4 +235,188 @@ test('handoff artifact library preserves unavailable errors without crashing', (
   assert.equal(state.unavailable, true);
   assert.equal(state.error, 'Open a repository workspace before loading handoff artifacts.');
   assert.deepEqual(state.items, []);
+});
+
+test('handoff artifact library model exposes dispatch package metadata', () => {
+  const state = handoffArtifactLibraryStateFromLoadedMessage({
+    type: 'handoffArtifactsLoaded',
+    artifacts: [
+      {
+        relativePath: 'docs/agent-handoffs/2026-06-04-1507-pixel-handoff.md',
+        filename: '2026-06-04-1507-pixel-handoff.md',
+        modifiedAt: 1_780_000_000_000,
+        sizeBytes: 1536,
+        title: 'Pixel handoff',
+        artifactId: '2026-06-04-1507-pixel-handoff',
+        metadataRelativePath: 'docs/agent-handoffs/2026-06-04-1507-pixel-handoff.handoff.json',
+        status: 'reviewed',
+        dispatchPackage: {
+          packageRelativePath:
+            'docs/roadmap/supervision/work-packages/handoffs/pixel-handoff-work-package.md',
+          branchName: 'product/handoff-pixel-handoff',
+          reportRelativePath: 'docs/roadmap/supervision/reports/pixel-handoff-executor-report.md',
+          status: 'ready',
+          createdAt: '2026-06-04T07:09:00.000Z',
+          updatedAt: '2026-06-04T07:10:00.000Z',
+          absolutePath: 'C:\\Users\\User\\secret.md',
+        },
+      },
+    ],
+    loadedAtMs: 1_780_000_000_100,
+  });
+
+  assert.equal(state.items[0]?.dispatchPackage?.status, 'ready');
+  assert.equal(state.items[0]?.dispatchPackage?.statusLabel, 'Ready');
+  assert.equal(
+    state.items[0]?.dispatchPackage?.packageRelativePath,
+    'docs/roadmap/supervision/work-packages/handoffs/pixel-handoff-work-package.md',
+  );
+  assert.match(state.items[0]?.displayDetail ?? '', /package Ready/);
+  assert.equal('absolutePath' in (state.items[0]?.dispatchPackage ?? {}), false);
+});
+
+test('handoff work package create action requires sidecar metadata and no existing package', () => {
+  const withMetadata = {
+    relativePath: 'docs/agent-handoffs/2026-06-04-1507-pixel-handoff.md',
+    artifactId: '2026-06-04-1507-pixel-handoff',
+    metadataRelativePath: 'docs/agent-handoffs/2026-06-04-1507-pixel-handoff.handoff.json',
+  };
+
+  assert.equal(canCreateHandoffWorkPackage(withMetadata), true);
+  assert.equal(
+    canCreateHandoffWorkPackage({
+      ...withMetadata,
+      dispatchPackage: {
+        packageRelativePath:
+          'docs/roadmap/supervision/work-packages/handoffs/pixel-handoff-work-package.md',
+        branchName: 'product/handoff-pixel-handoff',
+        reportRelativePath: 'docs/roadmap/supervision/reports/pixel-handoff-executor-report.md',
+        status: 'draft',
+        createdAt: '2026-06-04T07:09:00.000Z',
+        updatedAt: '2026-06-04T07:09:00.000Z',
+        statusLabel: 'Draft package',
+      },
+    }),
+    false,
+  );
+  assert.equal(canCreateHandoffWorkPackage({ relativePath: withMetadata.relativePath }), false);
+});
+
+test('handoff work package messages send only the handoff relative path and status', () => {
+  const item = {
+    relativePath: 'docs/agent-handoffs/2026-06-04-1507-pixel-handoff.md',
+    artifactId: '2026-06-04-1507-pixel-handoff',
+    metadataRelativePath: 'docs/agent-handoffs/2026-06-04-1507-pixel-handoff.handoff.json',
+    dispatchPackage: {
+      packageRelativePath:
+        'docs/roadmap/supervision/work-packages/handoffs/pixel-handoff-work-package.md',
+      branchName: 'product/handoff-pixel-handoff',
+      reportRelativePath: 'docs/roadmap/supervision/reports/pixel-handoff-executor-report.md',
+      status: 'draft' as const,
+      createdAt: '2026-06-04T07:09:00.000Z',
+      updatedAt: '2026-06-04T07:09:00.000Z',
+      statusLabel: 'Draft package',
+    },
+  };
+
+  assert.deepEqual(buildOpenHandoffWorkPackageMessage(item, 'open-work-1'), {
+    type: 'openHandoffWorkPackage',
+    requestId: 'open-work-1',
+    relativePath: item.relativePath,
+  });
+  assert.deepEqual(buildCreateHandoffWorkPackagePromptMessage(item, 'copy-work-1'), {
+    type: 'createHandoffWorkPackagePrompt',
+    requestId: 'copy-work-1',
+    relativePath: item.relativePath,
+  });
+  assert.deepEqual(buildUpdateHandoffDispatchStatusMessage(item, 'ready', 'status-work-1'), {
+    type: 'updateHandoffDispatchStatus',
+    requestId: 'status-work-1',
+    relativePath: item.relativePath,
+    nextStatus: 'ready',
+  });
+  assert.deepEqual(
+    buildCreateHandoffWorkPackageMessage({ ...item, dispatchPackage: undefined }, 'create-work-1'),
+    {
+      type: 'createHandoffWorkPackage',
+      requestId: 'create-work-1',
+      relativePath: item.relativePath,
+    },
+  );
+  assert.equal(
+    'packageRelativePath' in buildOpenHandoffWorkPackageMessage(item, 'open-work-2')!,
+    false,
+  );
+  assert.equal(
+    'absolutePath' in buildCreateHandoffWorkPackagePromptMessage(item, 'copy-work-2')!,
+    false,
+  );
+  assert.equal(
+    'prompt' in buildUpdateHandoffDispatchStatusMessage(item, 'ready', 'status-work-2')!,
+    false,
+  );
+});
+
+test('handoff dispatch status actions disable the current package status', () => {
+  const item = {
+    relativePath: 'docs/agent-handoffs/2026-06-04-1507-pixel-handoff.md',
+    dispatchPackage: {
+      packageRelativePath:
+        'docs/roadmap/supervision/work-packages/handoffs/pixel-handoff-work-package.md',
+      branchName: 'product/handoff-pixel-handoff',
+      reportRelativePath: 'docs/roadmap/supervision/reports/pixel-handoff-executor-report.md',
+      status: 'blocked' as const,
+      createdAt: '2026-06-04T07:09:00.000Z',
+      updatedAt: '2026-06-04T07:09:00.000Z',
+      statusLabel: 'Blocked',
+    },
+  };
+
+  assert.equal(canUseHandoffWorkPackage(item), true);
+  assert.deepEqual(
+    handoffDispatchStatusActions(item).map((action) => ({
+      nextStatus: action.nextStatus,
+      label: action.label,
+      disabled: action.disabled,
+    })),
+    [
+      { nextStatus: 'ready', label: 'Mark ready', disabled: false },
+      { nextStatus: 'dispatched', label: 'Mark dispatched', disabled: false },
+      { nextStatus: 'completed', label: 'Mark completed', disabled: false },
+      { nextStatus: 'blocked', label: 'Mark blocked', disabled: true },
+      { nextStatus: 'draft', label: 'Reset draft', disabled: false },
+    ],
+  );
+});
+
+test('handoff work package feedback labels include generated branch and report names', () => {
+  assert.match(
+    handoffWorkPackageStatusLabel(
+      'copied',
+      'docs/roadmap/supervision/work-packages/handoffs/pixel-handoff-work-package.md',
+      'product/handoff-pixel-handoff',
+      'docs/roadmap/supervision/reports/pixel-handoff-executor-report.md',
+      '',
+    ),
+    /product\/handoff-pixel-handoff/,
+  );
+  assert.match(
+    handoffWorkPackageStatusLabel('failed', '', '', '', 'Clipboard copy failed.'),
+    /Clipboard copy failed/,
+  );
+});
+
+test('handoff artifact library refreshes after work package mutations', () => {
+  assert.equal(
+    shouldRefreshHandoffArtifactsForMessage({ type: 'handoffWorkPackageCreated' }),
+    true,
+  );
+  assert.equal(
+    shouldRefreshHandoffArtifactsForMessage({ type: 'handoffDispatchStatusUpdated' }),
+    true,
+  );
+  assert.equal(
+    shouldRefreshHandoffArtifactsForMessage({ type: 'handoffWorkPackagePromptCreated' }),
+    false,
+  );
 });

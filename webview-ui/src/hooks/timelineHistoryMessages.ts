@@ -88,6 +88,9 @@ export function timelineEventForPersistence(value: unknown): PersistedTimelineEv
   const artifactStatus = stringValue(event.artifactStatus);
   const previousStatus = stringValue(event.previousStatus);
   const nextStatus = stringValue(event.nextStatus);
+  const dispatchStatus = stringValue(event.dispatchStatus);
+  const packageRelativePath = stringValue(event.packageRelativePath);
+  const reportRelativePath = stringValue(event.reportRelativePath);
   const summary = stringValue(event.summary);
   const statusAfter = lifecycleStatus(event.statusAfter);
   const severity = timelineSeverity(event.severity);
@@ -101,6 +104,9 @@ export function timelineEventForPersistence(value: unknown): PersistedTimelineEv
   if (artifactStatus) out.artifactStatus = artifactStatus;
   if (previousStatus) out.previousStatus = previousStatus;
   if (nextStatus) out.nextStatus = nextStatus;
+  if (dispatchStatus) out.dispatchStatus = dispatchStatus;
+  if (packageRelativePath) out.packageRelativePath = packageRelativePath;
+  if (reportRelativePath) out.reportRelativePath = reportRelativePath;
   if (summary) out.summary = summary;
   if (statusAfter) out.statusAfter = statusAfter;
   if (severity) out.severity = severity;
