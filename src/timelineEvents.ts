@@ -36,6 +36,8 @@ export interface TimelineEvent {
   projectName?: string;
   sessionId?: string;
   runId?: string;
+  artifactId?: string;
+  artifactStatus?: string;
   visibility: TimelineEventVisibility;
 }
 

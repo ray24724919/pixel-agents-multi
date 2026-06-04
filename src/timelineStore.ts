@@ -23,6 +23,8 @@ export interface TimelineRecordV1 {
   projectName?: string;
   sessionId?: string;
   runId?: string;
+  artifactId?: string;
+  artifactStatus?: string;
   timestamp: number;
   kind: string;
   title: string;
@@ -46,6 +48,8 @@ export interface TimelineRecordInput {
   projectName?: unknown;
   sessionId?: unknown;
   runId?: unknown;
+  artifactId?: unknown;
+  artifactStatus?: unknown;
   timestamp?: unknown;
   kind?: unknown;
   title?: unknown;
@@ -135,6 +139,8 @@ export function createTimelineRecord(input: TimelineRecordInput): TimelineRecord
   const projectName = stringValue(input.projectName);
   const sessionId = stringValue(input.sessionId);
   const runId = stringValue(input.runId);
+  const artifactId = stringValue(input.artifactId);
+  const artifactStatus = stringValue(input.artifactStatus);
   const summary = stringValue(input.summary);
   const statusAfter = lifecycleStatus(input.statusAfter);
   const severity = timelineSeverity(input.severity);
@@ -144,6 +150,8 @@ export function createTimelineRecord(input: TimelineRecordInput): TimelineRecord
   if (projectName) record.projectName = projectName;
   if (sessionId) record.sessionId = sessionId;
   if (runId) record.runId = runId;
+  if (artifactId) record.artifactId = artifactId;
+  if (artifactStatus) record.artifactStatus = artifactStatus;
   if (summary) record.summary = summary;
   if (statusAfter) record.statusAfter = statusAfter;
   if (severity) record.severity = severity;
@@ -173,6 +181,8 @@ function isTimelineRecordV1(value: unknown): value is TimelineRecordV1 {
     typeof record.kind === 'string' &&
     typeof record.title === 'string' &&
     timelineVisibility(record.visibility) !== undefined &&
+    (record.artifactId === undefined || typeof record.artifactId === 'string') &&
+    (record.artifactStatus === undefined || typeof record.artifactStatus === 'string') &&
     (record.severity === undefined || timelineSeverity(record.severity) !== undefined) &&
     (record.source === undefined || timelineSource(record.source) !== undefined) &&
     (record.statusAfter === undefined || lifecycleStatus(record.statusAfter) !== undefined)
