@@ -163,6 +163,40 @@ test('timeline page keeps handoff artifact history for agents that are no longer
   assert.equal(model.counts.actionLike, 1);
 });
 
+test('timeline page keeps handoff dispatch prompt history searchable', () => {
+  const items = buildTimelinePageItems(
+    [],
+    [
+      event({
+        id: 'handoff-dispatch',
+        agentId: 7,
+        providerId: 'codex',
+        projectName: 'pixel-agents',
+        artifactId: '2026-06-04-1507-pixel-handoff',
+        artifactStatus: 'reviewed',
+        timestamp: 460,
+        kind: 'handoff.dispatch_prompt_created',
+        title: 'Handoff dispatch prompt created',
+        summary:
+          '2026-06-04-1507-pixel-handoff.md (docs/agent-handoffs/2026-06-04-1507-pixel-handoff.md)',
+        severity: 'success',
+        source: 'user',
+      }),
+    ],
+    [],
+  );
+  const model = buildTimelinePageModel(items, {
+    ...defaultFilters,
+    searchQuery: 'handoff dispatch prompt reviewed',
+  });
+
+  assert.equal(items.length, 1);
+  assert.equal(model.events[0]?.id, 'timeline-handoff-dispatch');
+  assert.equal(model.events[0]?.isActionLike, true);
+  assert.equal(model.events[0]?.category, 'other');
+  assert.equal(model.events[0]?.artifactStatus, 'reviewed');
+});
+
 test('timeline page search spans event, agent, provider, and project text', () => {
   const items = buildTimelinePageItems(
     [

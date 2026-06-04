@@ -38,6 +38,10 @@ export const HANDOFF_ARTIFACT_LIBRARY_MAX_ITEMS = 25;
 export const HANDOFF_ARTIFACT_TITLE_SCAN_BYTES = 16 * 1024;
 export const HANDOFF_ARTIFACT_METADATA_SCHEMA_VERSION = 1;
 export const HANDOFF_ARTIFACT_METADATA_EXTENSION = '.handoff.json';
+export const HANDOFF_DISPATCH_BRANCH_PREFIX = 'product/handoff-';
+export const HANDOFF_DISPATCH_REPORTS_RELATIVE_DIR = 'docs/roadmap/supervision/reports';
+export const HANDOFF_DISPATCH_REPORT_SUFFIX = 'executor-report';
+export const HANDOFF_DISPATCH_PROMPT_MAX_LENGTH = 8_000;
 
 // ── Settings Persistence (VS Code globalState keys) ─────────
 export const GLOBAL_KEY_SOUND_ENABLED = `${EXTENSION_NAME}.soundEnabled`;

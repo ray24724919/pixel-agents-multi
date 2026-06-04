@@ -17,7 +17,8 @@ export type TimelineEventKind =
   | 'action.kill'
   | 'handoff.generated'
   | 'handoff.opened'
-  | 'handoff.status_changed';
+  | 'handoff.status_changed'
+  | 'handoff.dispatch_prompt_created';
 
 export type TimelineEventSeverity = 'info' | 'success' | 'warning' | 'error';
 

@@ -85,6 +85,7 @@ import {
 import {
   buildHandoffArtifactMetadata,
   buildHandoffArtifactTarget,
+  buildHandoffDispatchPrompt,
   readHandoffArtifactMetadataForMarkdown,
   resolveHandoffArtifactOpenPath,
   scanHandoffArtifacts,
@@ -481,8 +482,60 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  private async createHandoffDispatchPromptFromWebview(
+    message: Record<string, unknown>,
+  ): Promise<void> {
+    const requestId = typeof message.requestId === 'string' ? message.requestId : undefined;
+    try {
+      const repoRoot = this.getHandoffRepoRoot();
+      if (!repoRoot) {
+        throw new Error('Open a repository workspace before creating a dispatch prompt.');
+      }
+      const dispatch = buildHandoffDispatchPrompt(repoRoot, message.relativePath);
+      this.webview?.postMessage({
+        type: 'handoffDispatchPromptCreated',
+        requestId,
+        relativePath: dispatch.markdown.relativePath,
+        filename: dispatch.markdown.filename,
+        artifactId: dispatch.metadata?.artifactId,
+        status: dispatch.metadata?.status,
+        branchName: dispatch.branchName,
+        reportRelativePath: dispatch.reportRelativePath,
+        prompt: dispatch.prompt,
+      });
+      this.postHandoffTimelineEvent(
+        'handoff.dispatch_prompt_created',
+        dispatch.markdown.relativePath,
+        {
+          filename: dispatch.markdown.filename,
+          artifactId: dispatch.metadata?.artifactId,
+          artifactStatus: dispatch.metadata?.status,
+          providerId: dispatch.metadata?.providerId,
+          project: dispatch.metadata?.projectName,
+          sessionId: dispatch.metadata?.sessionId,
+          runId: dispatch.metadata?.runId,
+        },
+      );
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.webview?.postMessage({
+        type: 'handoffDispatchPromptFailed',
+        requestId,
+        relativePath: typeof message.relativePath === 'string' ? message.relativePath : undefined,
+        error: errorMessage,
+      });
+      vscode.window.showErrorMessage(
+        `Pixel Agents: Failed to create handoff dispatch prompt: ${errorMessage}`,
+      );
+    }
+  }
+
   private postHandoffTimelineEvent(
-    kind: 'handoff.generated' | 'handoff.opened' | 'handoff.status_changed',
+    kind:
+      | 'handoff.generated'
+      | 'handoff.opened'
+      | 'handoff.status_changed'
+      | 'handoff.dispatch_prompt_created',
     relativePath: string,
     metadata: Record<string, unknown> = {},
   ): void {
@@ -506,7 +559,9 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         ? 'Handoff generated'
         : kind === 'handoff.opened'
           ? 'Handoff opened'
-          : 'Handoff status changed';
+          : kind === 'handoff.status_changed'
+            ? 'Handoff status changed'
+            : 'Handoff dispatch prompt created';
     postAgentTimelineEvent(this.webview, {
       agentId: typeof metadata.agentId === 'number' ? metadata.agentId : 0,
       kind,
@@ -1542,6 +1597,12 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         );
       } else if (message.type === 'updateHandoffArtifactStatus') {
         await this.updateHandoffArtifactStatusFromWebview(
+          typeof message === 'object' && message !== null
+            ? (message as Record<string, unknown>)
+            : {},
+        );
+      } else if (message.type === 'createHandoffDispatchPrompt') {
+        await this.createHandoffDispatchPromptFromWebview(
           typeof message === 'object' && message !== null
             ? (message as Record<string, unknown>)
             : {},

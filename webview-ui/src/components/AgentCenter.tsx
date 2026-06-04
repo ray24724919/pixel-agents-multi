@@ -47,13 +47,17 @@ import {
   delegationWorkerLabel,
 } from './delegationModel.js';
 import {
+  buildCreateHandoffDispatchPromptMessage,
   buildOpenHandoffArtifactMessage,
   buildUpdateHandoffArtifactStatusMessage,
+  canCreateHandoffDispatchPrompt,
   type HandoffArtifactLibraryItem,
   type HandoffArtifactLibraryState,
   handoffArtifactLibraryStateFromLoadedMessage,
   type HandoffArtifactLocalStatus,
   handoffArtifactStatusActions,
+  type HandoffDispatchPromptStatus,
+  handoffDispatchPromptStatusLabel,
   initialHandoffArtifactLibraryState,
   shouldRefreshHandoffArtifactsForMessage,
 } from './handoffArtifactLibraryModel.js';
@@ -1423,6 +1427,12 @@ function TimelineDashboard({
   const [handoffStatusUpdatedPath, setHandoffStatusUpdatedPath] = useState('');
   const [handoffStatusUpdateError, setHandoffStatusUpdateError] = useState('');
   const handoffStatusUpdateRequestIdRef = useRef('');
+  const [handoffDispatchPromptStatus, setHandoffDispatchPromptStatus] =
+    useState<HandoffDispatchPromptStatus>('idle');
+  const [handoffDispatchBranchName, setHandoffDispatchBranchName] = useState('');
+  const [handoffDispatchReportPath, setHandoffDispatchReportPath] = useState('');
+  const [handoffDispatchPromptError, setHandoffDispatchPromptError] = useState('');
+  const handoffDispatchPromptRequestIdRef = useRef('');
   const replayState = useMemo(
     () => resolveTimelineReplaySelection(replaySessions, replaySessionId, replayCursor),
     [replayCursor, replaySessionId, replaySessions],
@@ -1555,6 +1565,50 @@ function TimelineDashboard({
         setHandoffStatusUpdateError(
           typeof message.error === 'string' ? message.error : 'Could not update handoff status.',
         );
+        return;
+      }
+      if (
+        message.type === 'handoffDispatchPromptCreated' &&
+        message.requestId === handoffDispatchPromptRequestIdRef.current
+      ) {
+        const prompt = typeof message.prompt === 'string' ? message.prompt : '';
+        const branchName = typeof message.branchName === 'string' ? message.branchName : '';
+        const reportRelativePath =
+          typeof message.reportRelativePath === 'string' ? message.reportRelativePath : '';
+        if (!prompt.trim()) {
+          setHandoffDispatchPromptStatus('failed');
+          setHandoffDispatchBranchName(branchName);
+          setHandoffDispatchReportPath(reportRelativePath);
+          setHandoffDispatchPromptError('No dispatch prompt was returned.');
+          return;
+        }
+        void copyTextToClipboard(prompt)
+          .then(() => {
+            setHandoffDispatchPromptStatus('copied');
+            setHandoffDispatchBranchName(branchName);
+            setHandoffDispatchReportPath(reportRelativePath);
+            setHandoffDispatchPromptError('');
+          })
+          .catch(() => {
+            setHandoffDispatchPromptStatus('failed');
+            setHandoffDispatchBranchName(branchName);
+            setHandoffDispatchReportPath(reportRelativePath);
+            setHandoffDispatchPromptError('Clipboard copy failed.');
+          });
+        return;
+      }
+      if (
+        message.type === 'handoffDispatchPromptFailed' &&
+        message.requestId === handoffDispatchPromptRequestIdRef.current
+      ) {
+        setHandoffDispatchPromptStatus('failed');
+        setHandoffDispatchBranchName('');
+        setHandoffDispatchReportPath('');
+        setHandoffDispatchPromptError(
+          typeof message.error === 'string'
+            ? message.error
+            : 'Could not create handoff dispatch prompt.',
+        );
       }
     };
     window.addEventListener('message', handler);
@@ -1663,6 +1717,21 @@ function TimelineDashboard({
     setHandoffStatusUpdateError('');
     vscode.postMessage(message);
   };
+  const copyHandoffDispatchPrompt = (item: HandoffArtifactLibraryItem) => {
+    const requestId = `handoff-dispatch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const message = buildCreateHandoffDispatchPromptMessage(item, requestId);
+    if (!message) {
+      setHandoffDispatchPromptStatus('failed');
+      setHandoffDispatchPromptError('No handoff artifact path is available for dispatch.');
+      return;
+    }
+    handoffDispatchPromptRequestIdRef.current = requestId;
+    setHandoffDispatchPromptStatus('creating');
+    setHandoffDispatchBranchName('');
+    setHandoffDispatchReportPath('');
+    setHandoffDispatchPromptError('');
+    vscode.postMessage(message);
+  };
 
   return (
     <div className="grid gap-4">
@@ -1765,9 +1834,14 @@ function TimelineDashboard({
         statusUpdateStatus={handoffStatusUpdateStatus}
         statusUpdatedPath={handoffStatusUpdatedPath}
         statusUpdateError={handoffStatusUpdateError}
+        dispatchPromptStatus={handoffDispatchPromptStatus}
+        dispatchBranchName={handoffDispatchBranchName}
+        dispatchReportPath={handoffDispatchReportPath}
+        dispatchPromptError={handoffDispatchPromptError}
         onRefresh={refreshHandoffArtifacts}
         onOpen={openHandoffArtifact}
         onUpdateStatus={updateHandoffArtifactStatus}
+        onCopyDispatchPrompt={copyHandoffDispatchPrompt}
       />
 
       <section className="grid gap-3 border border-border bg-btn-bg p-3 md:grid-cols-2 xl:grid-cols-[minmax(220px,1fr)_150px_160px_180px] 2xl:grid-cols-[minmax(220px,1fr)_150px_160px_180px_160px_170px_220px_220px_auto]">
@@ -2238,9 +2312,14 @@ function HandoffArtifactLibraryPanel({
   statusUpdateStatus,
   statusUpdatedPath,
   statusUpdateError,
+  dispatchPromptStatus,
+  dispatchBranchName,
+  dispatchReportPath,
+  dispatchPromptError,
   onRefresh,
   onOpen,
   onUpdateStatus,
+  onCopyDispatchPrompt,
 }: {
   state: HandoffArtifactLibraryState;
   openStatus: HandoffOpenStatus;
@@ -2249,12 +2328,17 @@ function HandoffArtifactLibraryPanel({
   statusUpdateStatus: HandoffStatusUpdateStatus;
   statusUpdatedPath: string;
   statusUpdateError: string;
+  dispatchPromptStatus: HandoffDispatchPromptStatus;
+  dispatchBranchName: string;
+  dispatchReportPath: string;
+  dispatchPromptError: string;
   onRefresh: () => void;
   onOpen: (item: HandoffArtifactLibraryItem) => void;
   onUpdateStatus: (
     item: HandoffArtifactLibraryItem,
     nextStatus: HandoffArtifactLocalStatus,
   ) => void;
+  onCopyDispatchPrompt: (item: HandoffArtifactLibraryItem) => void;
 }) {
   return (
     <section className="border border-border bg-bg">
@@ -2318,6 +2402,20 @@ function HandoffArtifactLibraryPanel({
                     );
                   })}
                   <Button
+                    variant={
+                      dispatchPromptStatus === 'creating' || !canCreateHandoffDispatchPrompt(item)
+                        ? 'disabled'
+                        : 'ghost'
+                    }
+                    size="sm"
+                    disabled={
+                      dispatchPromptStatus === 'creating' || !canCreateHandoffDispatchPrompt(item)
+                    }
+                    onClick={() => onCopyDispatchPrompt(item)}
+                  >
+                    Copy dispatch prompt
+                  </Button>
+                  <Button
                     variant={openStatus === 'opening' ? 'disabled' : 'default'}
                     size="sm"
                     disabled={openStatus === 'opening'}
@@ -2351,6 +2449,22 @@ function HandoffArtifactLibraryPanel({
           }`}
         >
           {handoffStatusUpdateLabel(statusUpdateStatus, statusUpdatedPath, statusUpdateError)}
+        </div>
+        <div
+          className={`break-words text-xs ${
+            dispatchPromptStatus === 'failed'
+              ? 'text-status-error'
+              : dispatchPromptStatus === 'copied'
+                ? 'text-status-waiting'
+                : 'text-text-muted'
+          }`}
+        >
+          {handoffDispatchPromptStatusLabel(
+            dispatchPromptStatus,
+            dispatchBranchName,
+            dispatchReportPath,
+            dispatchPromptError,
+          )}
         </div>
       </div>
     </section>
