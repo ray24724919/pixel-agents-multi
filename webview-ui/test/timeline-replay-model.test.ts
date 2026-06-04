@@ -71,11 +71,32 @@ test('timeline replay state exposes cursor progress and previous next availabili
   const state = getTimelineReplayState(session, 1);
 
   assert.equal(state.currentFrame?.event.id, 'second');
+  assert.equal(state.hasFirst, true);
   assert.equal(state.hasPrevious, true);
   assert.equal(state.hasNext, true);
+  assert.equal(state.hasLast, true);
   assert.equal(state.progress, 0.5);
   assert.equal(state.progressLabel, '2 / 3');
   assert.equal(state.kind, 'tool.completed');
+});
+
+test('timeline replay state exposes first and last jump availability', () => {
+  const [session] = buildTimelineReplaySessions([
+    item({ id: 'first', timestamp: 100, sessionId: 'session-1' }),
+    item({ id: 'middle', timestamp: 200, sessionId: 'session-1' }),
+    item({ id: 'last', timestamp: 300, sessionId: 'session-1' }),
+  ]);
+
+  const first = getTimelineReplayState(session, 0);
+  const middle = getTimelineReplayState(session, 1);
+  const last = getTimelineReplayState(session, 2);
+
+  assert.equal(first.hasFirst, false);
+  assert.equal(first.hasLast, true);
+  assert.equal(middle.hasFirst, true);
+  assert.equal(middle.hasLast, true);
+  assert.equal(last.hasFirst, true);
+  assert.equal(last.hasLast, false);
 });
 
 test('timeline replay finds the matching session and frame by event id', () => {
@@ -116,8 +137,10 @@ test('timeline replay handles single-frame sessions', () => {
   assert.equal(state.currentFrame?.event.id, 'only');
   assert.equal(state.progress, 1);
   assert.equal(state.progressLabel, '1 / 1');
+  assert.equal(state.hasFirst, false);
   assert.equal(state.hasPrevious, false);
   assert.equal(state.hasNext, false);
+  assert.equal(state.hasLast, false);
   assert.equal(state.isSingleFrame, true);
 });
 

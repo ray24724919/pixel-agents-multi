@@ -37,8 +37,10 @@ export interface TimelineReplayState {
   session?: TimelineReplaySession;
   cursorIndex: number;
   currentFrame?: TimelineReplayFrame;
+  hasFirst: boolean;
   hasPrevious: boolean;
   hasNext: boolean;
+  hasLast: boolean;
   progress: number;
   progressLabel: string;
   status: TimelineLifecycleStatus;
@@ -97,8 +99,10 @@ export function getTimelineReplayState(
     session,
     cursorIndex: normalizedCursor,
     currentFrame,
+    hasFirst: normalizedCursor > 0,
     hasPrevious: normalizedCursor > 0,
     hasNext: normalizedCursor < session.frames.length - 1,
+    hasLast: normalizedCursor < session.frames.length - 1,
     progress,
     progressLabel: `${normalizedCursor + 1} / ${session.frames.length}`,
     status: currentFrame.status,
@@ -260,8 +264,10 @@ function emptyTimelineReplayState(
 ): TimelineReplayState {
   return {
     cursorIndex: 0,
+    hasFirst: false,
     hasPrevious: false,
     hasNext: false,
+    hasLast: false,
     progress: 0,
     progressLabel: '0 / 0',
     status: 'idle',

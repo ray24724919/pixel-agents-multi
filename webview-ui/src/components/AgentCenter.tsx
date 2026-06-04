@@ -1,4 +1,12 @@
-import { Component, type ErrorInfo, type ReactNode, useEffect, useMemo, useState } from 'react';
+import {
+  Component,
+  type ErrorInfo,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
 
 import { TIMELINE_REPLAY_BASE_INTERVAL_MS, TIMELINE_REPLAY_SPEED_OPTIONS } from '../constants.js';
 import type {
@@ -1421,11 +1429,19 @@ function TimelineDashboard({
     setIsReplayPlaying(false);
     setReplayCursor((cursor) => Math.max(0, cursor - 1));
   };
+  const goToFirstReplayFrame = () => {
+    setIsReplayPlaying(false);
+    setReplayCursor(0);
+  };
   const goToNextReplayFrame = () => {
     setIsReplayPlaying(false);
     setReplayCursor((cursor) =>
       replayState.session ? Math.min(cursor + 1, replayState.session.frameCount - 1) : 0,
     );
+  };
+  const goToLastReplayFrame = () => {
+    setIsReplayPlaying(false);
+    setReplayCursor(replayState.session ? replayState.session.frameCount - 1 : 0);
   };
   const selectReplayEvent = (event: TimelinePageItem) => {
     const location = findTimelineReplayFrameByEventId(replaySessions, event.id);
@@ -1507,8 +1523,10 @@ function TimelineDashboard({
           setReplayCursor(0);
           setIsReplayPlaying(false);
         }}
+        onFirst={goToFirstReplayFrame}
         onPrevious={goToPreviousReplayFrame}
         onNext={goToNextReplayFrame}
+        onLast={goToLastReplayFrame}
         onTogglePlay={() => setIsReplayPlaying((playing) => !playing && replayState.hasNext)}
         onSpeedChange={setReplaySpeed}
       />
@@ -1665,8 +1683,10 @@ function TimelineReplayPanel({
   isPlaying,
   speed,
   onSessionChange,
+  onFirst,
   onPrevious,
   onNext,
+  onLast,
   onTogglePlay,
   onSpeedChange,
 }: {
@@ -1676,8 +1696,10 @@ function TimelineReplayPanel({
   isPlaying: boolean;
   speed: number;
   onSessionChange: (sessionId: string) => void;
+  onFirst: () => void;
   onPrevious: () => void;
   onNext: () => void;
+  onLast: () => void;
   onTogglePlay: () => void;
   onSpeedChange: (speed: number) => void;
 }) {
@@ -1685,8 +1707,45 @@ function TimelineReplayPanel({
   const selectedSessionMissing =
     state.unavailableReason === 'session-filtered-out' && selectedSessionId !== '';
   const replayHint = timelineReplayHintText(state);
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (isReplayKeyboardTargetInteractive(event.target)) return;
+    if (event.key === 'ArrowLeft' || event.key === 'Left') {
+      if (!state.hasPrevious) return;
+      event.preventDefault();
+      onPrevious();
+      return;
+    }
+    if (event.key === 'ArrowRight' || event.key === 'Right') {
+      if (!state.hasNext) return;
+      event.preventDefault();
+      onNext();
+      return;
+    }
+    if (event.key === 'Home') {
+      if (!state.hasFirst) return;
+      event.preventDefault();
+      onFirst();
+      return;
+    }
+    if (event.key === 'End') {
+      if (!state.hasLast) return;
+      event.preventDefault();
+      onLast();
+      return;
+    }
+    if (event.key === ' ' || event.key === 'Spacebar') {
+      if (!isPlaying && !state.hasNext) return;
+      event.preventDefault();
+      onTogglePlay();
+    }
+  };
   return (
-    <section className="border border-border bg-bg">
+    <section
+      className="border border-border bg-bg outline-none focus:border-accent"
+      tabIndex={0}
+      onKeyDown={handleKeyDown}
+      aria-label="Session Replay controls"
+    >
       <SectionHeader
         title="Session Replay"
         subtitle="Normalized event playback from local timeline history"
@@ -1725,6 +1784,14 @@ function TimelineReplayPanel({
 
         <div className="flex flex-wrap items-end gap-2">
           <Button
+            variant={state.hasFirst ? 'default' : 'disabled'}
+            size="sm"
+            disabled={!state.hasFirst}
+            onClick={onFirst}
+          >
+            First
+          </Button>
+          <Button
             variant={state.hasPrevious ? 'default' : 'disabled'}
             size="sm"
             disabled={!state.hasPrevious}
@@ -1747,6 +1814,14 @@ function TimelineReplayPanel({
             onClick={onNext}
           >
             Next
+          </Button>
+          <Button
+            variant={state.hasLast ? 'default' : 'disabled'}
+            size="sm"
+            disabled={!state.hasLast}
+            onClick={onLast}
+          >
+            Last
           </Button>
           <label className="min-w-[104px] text-xs uppercase tracking-wide text-text-muted">
             Speed
@@ -1845,6 +1920,12 @@ function timelineReplayHintText(state: TimelineReplayState): string {
     return 'This replay has one frame, so previous and next controls stay disabled.';
   }
   return 'Choose a replay scope with timeline events.';
+}
+
+function isReplayKeyboardTargetInteractive(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  return ['BUTTON', 'INPUT', 'SELECT', 'TEXTAREA'].includes(target.tagName);
 }
 
 function TimelineEmptyState({
