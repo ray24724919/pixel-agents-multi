@@ -124,8 +124,9 @@ export function buildTimelinePageItems(
     const agent = agentsById.get(event.agentId);
     const isActionLike = isActionLikeTimelineKind(event.kind);
     const isDelegationLike = isDelegationTimelineKind(event.kind);
+    const isHandoffLike = isHandoffTimelineKind(event.kind);
     const category = timelineCategoryForKind(event.kind);
-    if (!agent && !isActionLike) continue;
+    if (!agent && !isActionLike && !isHandoffLike) continue;
     items.push({
       id: `timeline-${event.id}`,
       agentId: event.agentId,
@@ -287,11 +288,17 @@ export function timelineTimeWindowLabel(timeWindow: TimelineTimeWindowFilter): s
 }
 
 export function isActionLikeTimelineKind(kind: string): boolean {
-  return kind.startsWith('action.') || isDelegationTimelineKind(kind);
+  return (
+    kind.startsWith('action.') || isDelegationTimelineKind(kind) || isHandoffTimelineKind(kind)
+  );
 }
 
 export function isDelegationTimelineKind(kind: string): boolean {
   return kind.startsWith('delegation.');
+}
+
+export function isHandoffTimelineKind(kind: string): boolean {
+  return kind.startsWith('handoff.');
 }
 
 export function timelineCategoryForKind(kind: string): TimelineCategory {
@@ -374,6 +381,7 @@ function buildTimelineSearchText(event: TimelinePageItem): string {
     event.runId,
     event.isActionLike ? 'action' : undefined,
     event.isDelegationLike ? 'delegation delegate worker supervising' : undefined,
+    isHandoffTimelineKind(event.kind) ? 'handoff artifact note repo review' : undefined,
   ]
     .map((value) => normalizeSearchText(value ?? ''))
     .filter(Boolean)

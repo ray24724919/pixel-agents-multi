@@ -82,7 +82,11 @@ import {
   startStaleExternalAgentCheck,
   syncClaudeAgentMetadata,
 } from './fileWatcher.js';
-import { buildHandoffArtifactTarget } from './handoffArtifacts.js';
+import {
+  buildHandoffArtifactTarget,
+  resolveHandoffArtifactOpenPath,
+  scanHandoffArtifacts,
+} from './handoffArtifacts.js';
 import type { LayoutWatcher } from './layoutPersistence.js';
 import { readLayoutFromFile, watchLayoutFile, writeLayoutToFile } from './layoutPersistence.js';
 import { getExtensionConfigValue, isExtensionConfigExplicitlyConfigured } from './settings.js';
@@ -308,6 +312,11 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         relativePath: target.relativePath,
         filename: target.filename,
       });
+      this.postHandoffTimelineEvent('handoff.generated', target.relativePath, {
+        ...message,
+        filename: target.filename,
+      });
+      this.postHandoffArtifactsLoaded();
       vscode.window.showInformationMessage(
         `Pixel Agents: Handoff draft written to ${target.relativePath}`,
       );
@@ -322,6 +331,88 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         `Pixel Agents: Failed to write handoff draft: ${errorMessage}`,
       );
     }
+  }
+
+  private postHandoffArtifactsLoaded(): void {
+    const loadedAtMs = Date.now();
+    try {
+      const repoRoot = this.getHandoffRepoRoot();
+      if (!repoRoot) {
+        throw new Error('Open a repository workspace before loading handoff artifacts.');
+      }
+      this.webview?.postMessage({
+        type: 'handoffArtifactsLoaded',
+        artifacts: scanHandoffArtifacts(repoRoot),
+        loadedAtMs,
+      });
+    } catch (error) {
+      this.webview?.postMessage({
+        type: 'handoffArtifactsLoaded',
+        artifacts: [],
+        loadedAtMs,
+        unavailable: true,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private async openHandoffArtifactFromWebview(message: Record<string, unknown>): Promise<void> {
+    const requestId = typeof message.requestId === 'string' ? message.requestId : undefined;
+    try {
+      const repoRoot = this.getHandoffRepoRoot();
+      if (!repoRoot) {
+        throw new Error('Open a repository workspace before opening handoff artifacts.');
+      }
+      const target = resolveHandoffArtifactOpenPath(repoRoot, message.relativePath);
+      if (!fs.existsSync(target.absolutePath) || !fs.statSync(target.absolutePath).isFile()) {
+        throw new Error(`Handoff artifact does not exist: ${target.relativePath}`);
+      }
+      const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(target.absolutePath));
+      await vscode.window.showTextDocument(doc, { preview: false });
+      this.webview?.postMessage({
+        type: 'handoffArtifactOpened',
+        requestId,
+        relativePath: target.relativePath,
+        filename: target.filename,
+      });
+      this.postHandoffTimelineEvent('handoff.opened', target.relativePath, {
+        filename: target.filename,
+      });
+    } catch (error) {
+      this.webview?.postMessage({
+        type: 'handoffArtifactOpenFailed',
+        requestId,
+        relativePath: typeof message.relativePath === 'string' ? message.relativePath : undefined,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private postHandoffTimelineEvent(
+    kind: 'handoff.generated' | 'handoff.opened',
+    relativePath: string,
+    metadata: Record<string, unknown> = {},
+  ): void {
+    const filename =
+      typeof metadata.filename === 'string' && metadata.filename.trim()
+        ? metadata.filename.trim()
+        : path.posix.basename(relativePath);
+    postAgentTimelineEvent(this.webview, {
+      agentId: typeof metadata.agentId === 'number' ? metadata.agentId : 0,
+      kind,
+      title: kind === 'handoff.generated' ? 'Handoff generated' : 'Handoff opened',
+      summary: `${filename} (${relativePath})`,
+      severity: 'success',
+      source: 'user',
+      providerId: typeof metadata.providerId === 'string' ? metadata.providerId : undefined,
+      projectName: typeof metadata.project === 'string' ? metadata.project : undefined,
+      sessionId: typeof metadata.sessionId === 'string' ? metadata.sessionId : undefined,
+      runId: typeof metadata.runId === 'string' ? metadata.runId : undefined,
+    });
+  }
+
+  private getHandoffRepoRoot(): string | undefined {
+    return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   }
 
   private persistAgents = (): void => {
@@ -1327,6 +1418,14 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         this.postTimelineHistoryLoaded();
       } else if (message.type === 'persistTimelineEvent') {
         this.persistTimelineEventFromWebview(message.event);
+      } else if (message.type === 'refreshHandoffArtifacts') {
+        this.postHandoffArtifactsLoaded();
+      } else if (message.type === 'openHandoffArtifact') {
+        await this.openHandoffArtifactFromWebview(
+          typeof message === 'object' && message !== null
+            ? (message as Record<string, unknown>)
+            : {},
+        );
       } else if (message.type === 'writeHandoffDraft') {
         await this.writeHandoffDraftFromWebview(
           typeof message === 'object' && message !== null
@@ -1471,6 +1570,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         });
         this.postUsageHistoryLoaded();
         this.postTimelineHistoryLoaded();
+        this.postHandoffArtifactsLoaded();
         this.seedArchivedAgentDismissals();
 
         // Ensure project scan runs even with no restored agents (to adopt external terminals)

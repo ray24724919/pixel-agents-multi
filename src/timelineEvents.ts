@@ -14,7 +14,9 @@ export type TimelineEventKind =
   | 'token.usage'
   | 'action.hide'
   | 'action.archive'
-  | 'action.kill';
+  | 'action.kill'
+  | 'handoff.generated'
+  | 'handoff.opened';
 
 export type TimelineEventSeverity = 'info' | 'success' | 'warning' | 'error';
 
@@ -29,8 +31,11 @@ export interface TimelineEvent {
   summary?: string;
   statusAfter?: AgentLifecycleStatus;
   severity?: TimelineEventSeverity;
+  source?: 'user' | 'agent' | 'tool' | 'system';
   providerId?: string;
   projectName?: string;
+  sessionId?: string;
+  runId?: string;
   visibility: TimelineEventVisibility;
 }
 
