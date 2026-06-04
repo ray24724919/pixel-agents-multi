@@ -389,11 +389,11 @@
               <div class="label">目前本機 VSIX 版本</div>
             </div>
             <div class="stat">
-              <div class="value">7620874</div>
-              <div class="label">目前 main HEAD</div>
+              <div class="value">b396196</div>
+              <div class="label">最新功能 commit</div>
             </div>
             <div class="stat">
-              <div class="value">97 / 239</div>
+              <div class="value">100 / 239</div>
               <div class="label">最新 webview / server 測試數</div>
             </div>
           </div>
@@ -406,7 +406,7 @@
             <li>最新本機安裝驗證為 <code>raychen.pixel-agents-multi@1.3.0</code>。</li>
             <li>私有 fork 與 public <code>pixel-agents</code> 已透過 release identity 分離。</li>
             <li>接手清理主線從 <code>cleanup-baseline-2026-05-27</code> 開始。</li>
-            <li>目前最新功能主線是 W9：Replay navigation polish 與 Handoff draft model。</li>
+            <li>目前最新功能主線是 W9：Replay navigation polish、Handoff draft model、Handoff UI。</li>
           </ul>
         </section>
 
@@ -624,7 +624,8 @@
                 <li>Replay controls 對 empty / single-frame sessions 會正確 disabled。</li>
                 <li>Handoff draft model：從 normalized Timeline + Usage 產生安全 Markdown draft。</li>
                 <li>Handoff redaction：遮蔽 absolute local paths、raw prompt、raw tool output、credentials。</li>
-                <li>目前 W9-C 尚未開始，下一步是把 Handoff model 接到 Timeline/Replay UI。</li>
+                <li>Handoff UI：Timeline / Session Replay 內新增 Create Handoff、Markdown preview、Copy Markdown。</li>
+                <li>Handoff UI 維持 local-only，不寫檔、不做 git operation、不分享 raw transcript。</li>
               </ul>
             </div>
           </article>
@@ -741,21 +742,27 @@
                 <td><a href="roadmap/supervision/reports/W9-B-handoff-draft-model-report.md">W9-B report</a></td>
                 <td>Handoff draft model、redaction helper、usage summary mapping。</td>
               </tr>
+              <tr>
+                <td>W9-C</td>
+                <td><a href="roadmap/supervision/reports/W9-C-handoff-ui-report.md">W9-C report</a></td>
+                <td>Timeline / Session Replay 的 Create Handoff UI、Markdown preview、copy state。</td>
+              </tr>
             </tbody>
           </table>
         </section>
 
         <h2 id="next">下一步</h2>
         <section class="panel">
-          <h3>建議下一包：W9-C Handoff UI</h3>
+          <h3>建議下一包：W9-D Build Identity 或 Usage Charts</h3>
           <p>
-            W9-B 已經完成 model-only foundation，下一步應該把它接到 Timeline / Session
-            Replay 頁面，提供 <code>Create Handoff</code>、Markdown preview、Copy Markdown
-            與 copy success/failure state。
+            W9-C 已經把 Handoff model 接到 Timeline / Session Replay UI。下一步可以補
+            extension 內的 build identity 顯示，降低「我現在看到的是不是舊版」的混亂；
+            或者接 Usage charts，讓 usage history 更像可讀的分析頁。
           </p>
           <div class="callout">
-            Product rule: Handoff 應該維持 local-only、user-reviewed、redacted by default。
-            不要在 W9-C 加 filesystem write、git operation、sync、raw transcript export。
+            Product rule: 後續若擴充 Handoff，仍應維持 local-only、user-reviewed、
+            redacted by default。不要把 raw transcript export 或自動 git operation
+            放進預設路徑。
           </div>
         </section>
 
