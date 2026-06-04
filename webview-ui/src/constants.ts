@@ -65,6 +65,7 @@ export const TIMELINE_MS_PER_DAY = 24 * 60 * 60 * 1000;
 export const TIMELINE_LAST_7_DAYS = 7;
 export const TIMELINE_REPLAY_SPEED_OPTIONS = [0.5, 1, 2, 4] as const;
 export const TIMELINE_REPLAY_BASE_INTERVAL_MS = 1200;
+export const HANDOFF_DRAFT_MAX_IMPORTANT_EVENTS = 8;
 export const FALLBACK_FLOOR_COLOR = '#808080';
 
 // ── Rendering - Overlay Colors (canvas, not CSS) ─────────────
