@@ -14,6 +14,9 @@ import {
   HANDOFF_DISPATCH_PROMPT_MAX_LENGTH,
   HANDOFF_DISPATCH_REPORT_SUFFIX,
   HANDOFF_DISPATCH_REPORTS_RELATIVE_DIR,
+  HANDOFF_WORK_PACKAGE_PROMPT_MAX_LENGTH,
+  HANDOFF_WORK_PACKAGE_RELATIVE_DIR,
+  HANDOFF_WORK_PACKAGE_SUFFIX,
 } from './constants.js';
 
 export interface HandoffArtifactNamingInput {
@@ -47,6 +50,16 @@ export interface HandoffArtifactTarget {
 
 export type HandoffArtifactStatus = 'draft' | 'published' | 'reviewed' | 'stale';
 export type HandoffArtifactLocalStatus = 'draft' | 'reviewed' | 'stale';
+export type HandoffDispatchStatus = 'draft' | 'ready' | 'dispatched' | 'completed' | 'blocked';
+
+export interface HandoffDispatchPackageV1 {
+  packageRelativePath: string;
+  branchName: string;
+  reportRelativePath: string;
+  status: HandoffDispatchStatus;
+  createdAt: string;
+  updatedAt: string;
+}
 
 export interface HandoffArtifactMetadataV1 {
   schemaVersion: typeof HANDOFF_ARTIFACT_METADATA_SCHEMA_VERSION;
@@ -62,6 +75,7 @@ export interface HandoffArtifactMetadataV1 {
   agentName?: string;
   sessionId?: string;
   runId?: string;
+  dispatchPackage?: HandoffDispatchPackageV1;
 }
 
 export interface HandoffArtifactSummary {
@@ -81,6 +95,7 @@ export interface HandoffArtifactSummary {
   agentName?: string;
   sessionId?: string;
   runId?: string;
+  dispatchPackage?: HandoffDispatchPackageV1;
 }
 
 export interface HandoffArtifactOpenPath {
@@ -106,6 +121,38 @@ export interface HandoffDispatchPrompt {
   slug: string;
   branchName: string;
   reportRelativePath: string;
+  prompt: string;
+}
+
+export interface HandoffWorkPackageTarget {
+  markdown: HandoffArtifactOpenPath;
+  metadataPath: HandoffArtifactMetadataPath;
+  metadata: HandoffArtifactMetadataV1;
+  slug: string;
+  packageRelativePath: string;
+  packageFilename: string;
+  packageAbsolutePath: string;
+  branchName: string;
+  reportRelativePath: string;
+}
+
+export interface HandoffWorkPackageWriteResult extends HandoffWorkPackageTarget {
+  dispatchPackage: HandoffDispatchPackageV1;
+}
+
+export interface HandoffDispatchStatusUpdateResult {
+  markdown: HandoffArtifactOpenPath;
+  metadataPath: HandoffArtifactMetadataPath;
+  metadata: HandoffArtifactMetadataV1;
+  previousStatus: HandoffDispatchStatus;
+  nextStatus: HandoffDispatchStatus;
+  dispatchPackage: HandoffDispatchPackageV1;
+}
+
+export interface HandoffWorkPackagePrompt {
+  markdown: HandoffArtifactOpenPath;
+  metadata: HandoffArtifactMetadataV1;
+  dispatchPackage: HandoffDispatchPackageV1;
   prompt: string;
 }
 
@@ -180,6 +227,7 @@ export function scanHandoffArtifacts(
       agentName: metadata?.agentName,
       sessionId: metadata?.sessionId,
       runId: metadata?.runId,
+      dispatchPackage: metadata?.dispatchPackage,
     });
   }
   return summaries
@@ -389,6 +437,221 @@ export function buildHandoffDispatchPrompt(
   };
 }
 
+export function buildHandoffWorkPackageTarget(
+  repoRoot: string,
+  markdownRelativePath: unknown,
+): HandoffWorkPackageTarget {
+  const { markdown, metadataPath, metadata } = readRequiredHandoffArtifactMetadataForMarkdown(
+    repoRoot,
+    markdownRelativePath,
+  );
+  const slug = safeHandoffFilenamePart(
+    metadata.title || metadata.artifactId || path.posix.basename(markdown.filename, '.md'),
+  );
+  const packageFilename = `${slug}-${HANDOFF_WORK_PACKAGE_SUFFIX}.md`;
+  const packageRelativePath = normalizedHandoffWorkPackageRelativePath(
+    `${HANDOFF_WORK_PACKAGE_RELATIVE_DIR}/${packageFilename}`,
+  );
+  const resolvedRoot = path.resolve(repoRoot);
+  const packageAbsolutePath = path.resolve(resolvedRoot, ...packageRelativePath.split('/'));
+  assertPathInsideRepo(resolvedRoot, packageAbsolutePath);
+  const branchName = safeDispatchBranchName(`${HANDOFF_DISPATCH_BRANCH_PREFIX}${slug}`);
+  const reportRelativePath = normalizedHandoffReportRelativePath(
+    `${HANDOFF_DISPATCH_REPORTS_RELATIVE_DIR}/${slug}-${HANDOFF_DISPATCH_REPORT_SUFFIX}.md`,
+  );
+  return {
+    markdown,
+    metadataPath,
+    metadata,
+    slug,
+    packageRelativePath,
+    packageFilename,
+    packageAbsolutePath,
+    branchName,
+    reportRelativePath,
+  };
+}
+
+export function createHandoffWorkPackage(
+  repoRoot: string,
+  markdownRelativePath: unknown,
+  nowMs = Date.now(),
+): HandoffWorkPackageWriteResult {
+  const target = buildHandoffWorkPackageTarget(repoRoot, markdownRelativePath);
+  if (target.metadata.dispatchPackage) {
+    throw new Error(`Handoff work package already exists: ${target.packageRelativePath}`);
+  }
+  if (fs.existsSync(target.packageAbsolutePath)) {
+    throw new Error(`Handoff work package already exists: ${target.packageRelativePath}`);
+  }
+
+  const timestamp = isoTimestampFromMs(nowMs);
+  const dispatchPackage: HandoffDispatchPackageV1 = {
+    packageRelativePath: target.packageRelativePath,
+    branchName: target.branchName,
+    reportRelativePath: target.reportRelativePath,
+    status: 'draft',
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+  const workPackageMarkdown = buildHandoffWorkPackageMarkdown(target);
+  fs.mkdirSync(path.dirname(target.packageAbsolutePath), { recursive: true });
+  fs.writeFileSync(target.packageAbsolutePath, workPackageMarkdown, 'utf8');
+  const updatedMetadata: HandoffArtifactMetadataV1 = {
+    ...target.metadata,
+    dispatchPackage,
+    updatedAt: timestamp,
+  };
+  fs.writeFileSync(
+    target.metadataPath.absolutePath,
+    `${JSON.stringify(updatedMetadata, null, 2)}\n`,
+    'utf8',
+  );
+  return {
+    ...target,
+    metadata: updatedMetadata,
+    dispatchPackage,
+  };
+}
+
+export function resolveHandoffWorkPackageOpenPath(
+  repoRoot: string,
+  markdownRelativePath: unknown,
+): HandoffArtifactOpenPath {
+  const { metadata } = readRequiredHandoffArtifactMetadataForMarkdown(
+    repoRoot,
+    markdownRelativePath,
+  );
+  const dispatchPackage = metadata.dispatchPackage;
+  if (!dispatchPackage) {
+    throw new Error('Handoff artifact does not have a work package yet.');
+  }
+  const packageRelativePath = normalizedHandoffWorkPackageRelativePath(
+    dispatchPackage.packageRelativePath,
+  );
+  const resolvedRoot = path.resolve(repoRoot);
+  const absolutePath = path.resolve(resolvedRoot, ...packageRelativePath.split('/'));
+  assertPathInsideRepo(resolvedRoot, absolutePath);
+  if (!fs.existsSync(absolutePath) || !fs.statSync(absolutePath).isFile()) {
+    throw new Error(`Handoff work package does not exist: ${packageRelativePath}`);
+  }
+  return {
+    repoRoot: resolvedRoot,
+    relativePath: packageRelativePath,
+    filename: path.posix.basename(packageRelativePath),
+    absolutePath,
+  };
+}
+
+export function buildHandoffWorkPackagePrompt(
+  repoRoot: string,
+  markdownRelativePath: unknown,
+): HandoffWorkPackagePrompt {
+  const { markdown, metadata } = readRequiredHandoffArtifactMetadataForMarkdown(
+    repoRoot,
+    markdownRelativePath,
+  );
+  const dispatchPackage = metadata.dispatchPackage;
+  if (!dispatchPackage) {
+    throw new Error('Create a handoff work package before copying its executor prompt.');
+  }
+  const packageRelativePath = normalizedHandoffWorkPackageRelativePath(
+    dispatchPackage.packageRelativePath,
+  );
+  const resolvedRoot = path.resolve(repoRoot);
+  const packageAbsolutePath = path.resolve(resolvedRoot, ...packageRelativePath.split('/'));
+  assertPathInsideRepo(resolvedRoot, packageAbsolutePath);
+  if (!fs.existsSync(packageAbsolutePath) || !fs.statSync(packageAbsolutePath).isFile()) {
+    throw new Error(`Handoff work package does not exist: ${packageRelativePath}`);
+  }
+  const prompt = [
+    'You are executing a Pixel Agents repo-centered handoff work package.',
+    '',
+    'cwd:',
+    `  ${resolvedRoot}`,
+    '',
+    'Work package:',
+    `  ${packageRelativePath}`,
+    '',
+    'Source handoff:',
+    `  ${markdown.relativePath}`,
+    '',
+    'Begin by reading the work package Markdown, then read the source handoff it references:',
+    `  ${packageRelativePath}`,
+    `  ${markdown.relativePath}`,
+    '',
+    'Branch:',
+    `  ${dispatchPackage.branchName}`,
+    '',
+    'Report:',
+    `  ${dispatchPackage.reportRelativePath}`,
+    '',
+    'Inspect relevant source before editing. If blocked, write the report and stop without dirty cross-branch changes. If work is completed, commit on the executor branch.',
+    '',
+    'Testing expectations are documented in the work package. Run at minimum npm run build plus targeted webview/server tests for touched files, then git diff --check.',
+    '',
+    'Do NOT push, merge, --amend, rebase, stash, reset, clean, or delete files.',
+  ].join('\n');
+  if (prompt.length > HANDOFF_WORK_PACKAGE_PROMPT_MAX_LENGTH) {
+    throw new Error('Generated handoff work-package prompt exceeded the safe size limit.');
+  }
+  return {
+    markdown,
+    metadata,
+    dispatchPackage: {
+      ...dispatchPackage,
+      packageRelativePath,
+    },
+    prompt,
+  };
+}
+
+export function updateHandoffDispatchStatus(
+  repoRoot: string,
+  markdownRelativePath: unknown,
+  nextStatusValue: unknown,
+  nowMs = Date.now(),
+): HandoffDispatchStatusUpdateResult {
+  const nextStatus = handoffDispatchStatus(nextStatusValue);
+  if (!nextStatus) {
+    throw new Error(
+      'Handoff dispatch status must be draft, ready, dispatched, completed, or blocked.',
+    );
+  }
+  const { markdown, metadataPath, metadata } = readRequiredHandoffArtifactMetadataForMarkdown(
+    repoRoot,
+    markdownRelativePath,
+  );
+  if (!metadata.dispatchPackage) {
+    throw new Error('Handoff artifact does not have a work package yet.');
+  }
+  const previousStatus = metadata.dispatchPackage.status;
+  const timestamp = isoTimestampFromMs(nowMs);
+  const dispatchPackage: HandoffDispatchPackageV1 = {
+    ...metadata.dispatchPackage,
+    status: nextStatus,
+    updatedAt: timestamp,
+  };
+  const updatedMetadata: HandoffArtifactMetadataV1 = {
+    ...metadata,
+    dispatchPackage,
+    updatedAt: timestamp,
+  };
+  fs.writeFileSync(
+    metadataPath.absolutePath,
+    `${JSON.stringify(updatedMetadata, null, 2)}\n`,
+    'utf8',
+  );
+  return {
+    markdown,
+    metadataPath,
+    metadata: updatedMetadata,
+    previousStatus,
+    nextStatus,
+    dispatchPackage,
+  };
+}
+
 export function parseHandoffArtifactMetadata(
   value: unknown,
 ): HandoffArtifactMetadataV1 | undefined {
@@ -430,11 +693,16 @@ export function parseHandoffArtifactMetadata(
   const agentName = safeHandoffMetadataText(record.agentName);
   const sessionId = safeHandoffMetadataToken(record.sessionId);
   const runId = safeHandoffMetadataToken(record.runId);
+  const dispatchPackage = handoffDispatchPackage(record.dispatchPackage);
+  if (record.dispatchPackage !== undefined && !dispatchPackage) {
+    return undefined;
+  }
   if (providerId) metadata.providerId = providerId;
   if (projectName) metadata.projectName = projectName;
   if (agentName) metadata.agentName = agentName;
   if (sessionId) metadata.sessionId = sessionId;
   if (runId) metadata.runId = runId;
+  if (dispatchPackage) metadata.dispatchPackage = dispatchPackage;
   return metadata;
 }
 
@@ -550,6 +818,68 @@ function normalizedHandoffMetadataRelativePath(relativePath: unknown): string {
   return normalized;
 }
 
+function normalizedHandoffWorkPackageRelativePath(relativePath: unknown): string {
+  if (typeof relativePath !== 'string' || !relativePath.trim()) {
+    throw new Error('A handoff work-package path is required.');
+  }
+  const raw = relativePath.trim();
+  if (
+    raw.includes('\\') ||
+    /^[A-Za-z]:/.test(raw) ||
+    path.isAbsolute(raw) ||
+    raw.startsWith('//') ||
+    raw.includes('\0')
+  ) {
+    throw new Error('Handoff work-package paths must be repo-relative Markdown paths.');
+  }
+  const normalized = path.posix.normalize(raw);
+  if (
+    normalized === '.' ||
+    normalized.startsWith('../') ||
+    normalized === '..' ||
+    normalized.startsWith('/') ||
+    !normalized.startsWith(`${HANDOFF_WORK_PACKAGE_RELATIVE_DIR}/`) ||
+    path.posix.dirname(normalized) !== HANDOFF_WORK_PACKAGE_RELATIVE_DIR ||
+    path.posix.extname(normalized).toLowerCase() !== '.md'
+  ) {
+    throw new Error(
+      `Handoff work packages must be Markdown files under ${HANDOFF_WORK_PACKAGE_RELATIVE_DIR}.`,
+    );
+  }
+  return normalized;
+}
+
+function normalizedHandoffReportRelativePath(relativePath: unknown): string {
+  if (typeof relativePath !== 'string' || !relativePath.trim()) {
+    throw new Error('A handoff report path is required.');
+  }
+  const raw = relativePath.trim();
+  if (
+    raw.includes('\\') ||
+    /^[A-Za-z]:/.test(raw) ||
+    path.isAbsolute(raw) ||
+    raw.startsWith('//') ||
+    raw.includes('\0')
+  ) {
+    throw new Error('Handoff report paths must be repo-relative Markdown paths.');
+  }
+  const normalized = path.posix.normalize(raw);
+  if (
+    normalized === '.' ||
+    normalized.startsWith('../') ||
+    normalized === '..' ||
+    normalized.startsWith('/') ||
+    !normalized.startsWith(`${HANDOFF_DISPATCH_REPORTS_RELATIVE_DIR}/`) ||
+    path.posix.dirname(normalized) !== HANDOFF_DISPATCH_REPORTS_RELATIVE_DIR ||
+    path.posix.extname(normalized).toLowerCase() !== '.md'
+  ) {
+    throw new Error(
+      `Handoff reports must be Markdown files under ${HANDOFF_DISPATCH_REPORTS_RELATIVE_DIR}.`,
+    );
+  }
+  return normalized;
+}
+
 export function readHandoffArtifactMetadataForMarkdown(
   repoRoot: string,
   markdownRelativePath: string,
@@ -570,6 +900,95 @@ export function readHandoffArtifactMetadataForMarkdown(
   } catch {
     return undefined;
   }
+}
+
+function readRequiredHandoffArtifactMetadataForMarkdown(
+  repoRoot: string,
+  markdownRelativePath: unknown,
+): {
+  markdown: HandoffArtifactOpenPath;
+  metadataPath: HandoffArtifactMetadataPath;
+  metadata: HandoffArtifactMetadataV1;
+} {
+  const markdown = resolveHandoffArtifactOpenPath(repoRoot, markdownRelativePath);
+  if (!fs.existsSync(markdown.absolutePath) || !fs.statSync(markdown.absolutePath).isFile()) {
+    throw new Error(`Handoff artifact does not exist: ${markdown.relativePath}`);
+  }
+  const metadataRelativePath = getHandoffArtifactMetadataRelativePath(markdown.relativePath);
+  const metadataPath = resolveHandoffArtifactMetadataPath(repoRoot, metadataRelativePath);
+  if (
+    !fs.existsSync(metadataPath.absolutePath) ||
+    !fs.statSync(metadataPath.absolutePath).isFile()
+  ) {
+    throw new Error(`Handoff metadata sidecar does not exist: ${metadataPath.relativePath}`);
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(fs.readFileSync(metadataPath.absolutePath, 'utf8')) as unknown;
+  } catch {
+    throw new Error(`Handoff metadata sidecar is malformed: ${metadataPath.relativePath}`);
+  }
+  const metadata = parseHandoffArtifactMetadata(parsed);
+  if (!metadata) {
+    throw new Error(`Handoff metadata sidecar is invalid: ${metadataPath.relativePath}`);
+  }
+  if (
+    metadata.markdownRelativePath !== markdown.relativePath ||
+    metadata.artifactId !== artifactIdFromMarkdownRelativePath(markdown.relativePath)
+  ) {
+    throw new Error('Handoff metadata sidecar does not match the Markdown artifact.');
+  }
+  return { markdown, metadataPath, metadata };
+}
+
+function buildHandoffWorkPackageMarkdown(target: HandoffWorkPackageTarget): string {
+  return [
+    `# ${target.metadata.title} Work Package`,
+    '',
+    'You are executing a repo-centered Pixel Agents handoff work package.',
+    '',
+    'cwd:',
+    `  ${target.markdown.repoRoot}`,
+    '',
+    'Source handoff:',
+    `  ${target.markdown.relativePath}`,
+    '',
+    'Branch from CURRENT main:',
+    '  git checkout main',
+    '  git pull --ff-only origin main',
+    '  git status --short --branch',
+    '  # If the worktree is dirty, stop and report the exact status.',
+    `  git checkout -b ${target.branchName}`,
+    '',
+    'Begin by reading:',
+    `  ${target.markdown.relativePath}`,
+    '',
+    'Then inspect relevant source files before editing. Do not assume the handoff is complete.',
+    '',
+    'Implementation rules:',
+    '- Keep the patch scoped to the handoff artifact and this work package.',
+    '- Do not embed or copy raw transcripts, raw tool output, credentials, or absolute private paths.',
+    `- Write the executor report to: ${target.reportRelativePath}`,
+    '- If blocked, write a clear report and stop without dirty cross-branch changes.',
+    '- If the work is completed, commit on the executor branch.',
+    '',
+    'Testing expectations:',
+    '- Run at minimum: npm run build',
+    '- Run targeted tests based on touched files:',
+    '  - npm run test:webview for webview-ui changes',
+    '  - npm run test:server for src/server/helper changes',
+    '  - npm test when changes cross both areas or risk is broad',
+    '- Run git diff --check before committing.',
+    '',
+    'Do NOT push, merge, --amend, rebase, stash, reset, clean, or delete files.',
+    '',
+    'Blocked-flow rules:',
+    '- Keep the handoff draft visible/editable for the supervisor.',
+    '- Do not make unrelated changes while blocked.',
+    '- Report exact blockers, validation attempted, and remaining state.',
+    '',
+  ].join('\n');
 }
 
 function readHandoffMarkdownTitle(absolutePath: string): string | undefined {
@@ -643,11 +1062,70 @@ export function handoffArtifactLocalStatus(value: unknown): HandoffArtifactLocal
   return undefined;
 }
 
+export function handoffDispatchStatus(value: unknown): HandoffDispatchStatus | undefined {
+  if (
+    value === 'draft' ||
+    value === 'ready' ||
+    value === 'dispatched' ||
+    value === 'completed' ||
+    value === 'blocked'
+  ) {
+    return value;
+  }
+  return undefined;
+}
+
+function handoffDispatchPackage(value: unknown): HandoffDispatchPackageV1 | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'object' || value === null) return undefined;
+  const record = value as Record<string, unknown>;
+  let packageRelativePath: string;
+  let reportRelativePath: string;
+  let branchName: string;
+  try {
+    packageRelativePath = normalizedHandoffWorkPackageRelativePath(record.packageRelativePath);
+    reportRelativePath = normalizedHandoffReportRelativePath(record.reportRelativePath);
+    branchName = safeDispatchBranchName(record.branchName);
+  } catch {
+    return undefined;
+  }
+  const status = handoffDispatchStatus(record.status);
+  const createdAt = isoTimestamp(record.createdAt);
+  const updatedAt = isoTimestamp(record.updatedAt);
+  if (!branchName || !status || !createdAt || !updatedAt) return undefined;
+  return {
+    packageRelativePath,
+    branchName,
+    reportRelativePath,
+    status,
+    createdAt,
+    updatedAt,
+  };
+}
+
+function safeDispatchBranchName(value: unknown): string {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  if (
+    raw.startsWith(HANDOFF_DISPATCH_BRANCH_PREFIX) &&
+    /^product\/handoff-[a-z0-9][a-z0-9._-]{0,127}$/.test(raw) &&
+    !raw.includes('..') &&
+    !raw.includes('\\')
+  ) {
+    return raw;
+  }
+  throw new Error('Handoff dispatch branch names must be safe product/handoff-* names.');
+}
+
 function isoTimestamp(value: unknown): string | undefined {
   if (typeof value !== 'string' || !value.trim()) return undefined;
   const timestamp = Date.parse(value);
   if (!Number.isFinite(timestamp)) return undefined;
   return new Date(timestamp).toISOString();
+}
+
+function isoTimestampFromMs(timestampMs: number): string {
+  const timestamp = new Date(timestampMs);
+  return Number.isFinite(timestamp.getTime()) ? timestamp.toISOString() : new Date().toISOString();
 }
 
 function timestampMs(value: string | undefined): number | undefined {

@@ -42,6 +42,9 @@ export const HANDOFF_DISPATCH_BRANCH_PREFIX = 'product/handoff-';
 export const HANDOFF_DISPATCH_REPORTS_RELATIVE_DIR = 'docs/roadmap/supervision/reports';
 export const HANDOFF_DISPATCH_REPORT_SUFFIX = 'executor-report';
 export const HANDOFF_DISPATCH_PROMPT_MAX_LENGTH = 8_000;
+export const HANDOFF_WORK_PACKAGE_RELATIVE_DIR = 'docs/roadmap/supervision/work-packages/handoffs';
+export const HANDOFF_WORK_PACKAGE_SUFFIX = 'work-package';
+export const HANDOFF_WORK_PACKAGE_PROMPT_MAX_LENGTH = 8_000;
 
 // ── Settings Persistence (VS Code globalState keys) ─────────
 export const GLOBAL_KEY_SOUND_ENABLED = `${EXTENSION_NAME}.soundEnabled`;

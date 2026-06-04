@@ -7,15 +7,20 @@ import {
   buildHandoffArtifactMetadata,
   buildHandoffArtifactTarget,
   buildHandoffDispatchPrompt,
+  buildHandoffWorkPackagePrompt,
+  buildHandoffWorkPackageTarget,
+  createHandoffWorkPackage,
   extractHandoffMarkdownTitle,
   formatHandoffTimestamp,
   getHandoffArtifactMetadataRelativePath,
   parseHandoffArtifactMetadata,
   resolveHandoffArtifactMetadataPath,
   resolveHandoffArtifactOpenPath,
+  resolveHandoffWorkPackageOpenPath,
   safeHandoffFilenamePart,
   scanHandoffArtifacts,
   updateHandoffArtifactStatus,
+  updateHandoffDispatchStatus,
 } from '../../src/handoffArtifacts.js';
 
 describe('handoff artifact path safety', () => {
@@ -518,5 +523,243 @@ describe('handoff artifact path safety', () => {
     expect(() =>
       updateHandoffArtifactStatus(repoRoot, 'docs/agent-handoffs/review.md', 'published'),
     ).toThrow(/status must be draft, reviewed, or stale/);
+  });
+
+  it('creates a repo-local handoff work package and tracks it in metadata', () => {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pixel-handoff-work-package-'));
+    try {
+      const target = buildHandoffArtifactTarget(
+        repoRoot,
+        { project: 'Pixel Agents Multi' },
+        Date.UTC(2026, 5, 4, 7, 7),
+      );
+      const handoffMarkdown = '# Dispatch source\n\nRaw prompt: do not copy this body';
+      fs.mkdirSync(path.dirname(target.absolutePath), { recursive: true });
+      fs.writeFileSync(target.absolutePath, handoffMarkdown, 'utf8');
+      const metadata = buildHandoffArtifactMetadata(
+        target,
+        {
+          title: 'Queue W11-B',
+          providerId: 'codex',
+          projectName: 'Pixel Agents Multi',
+          sessionId: 'session-123',
+          runId: 'W11-B',
+        },
+        Date.UTC(2026, 5, 4, 7, 7),
+      );
+      fs.writeFileSync(
+        target.metadataAbsolutePath,
+        `${JSON.stringify(metadata, null, 2)}\n`,
+        'utf8',
+      );
+
+      const workPackage = createHandoffWorkPackage(
+        repoRoot,
+        target.relativePath,
+        Date.UTC(2026, 5, 4, 8, 30),
+      );
+      const sidecar = JSON.parse(fs.readFileSync(target.metadataAbsolutePath, 'utf8')) as {
+        dispatchPackage?: {
+          packageRelativePath?: string;
+          branchName?: string;
+          reportRelativePath?: string;
+          status?: string;
+          createdAt?: string;
+          updatedAt?: string;
+        };
+      };
+      const workPackageMarkdown = fs.readFileSync(workPackage.packageAbsolutePath, 'utf8');
+
+      expect(workPackage.packageRelativePath).toBe(
+        'docs/roadmap/supervision/work-packages/handoffs/queue-w11-b-work-package.md',
+      );
+      expect(workPackage.branchName).toBe('product/handoff-queue-w11-b');
+      expect(workPackage.reportRelativePath).toBe(
+        'docs/roadmap/supervision/reports/queue-w11-b-executor-report.md',
+      );
+      expect(sidecar.dispatchPackage).toMatchObject({
+        packageRelativePath: workPackage.packageRelativePath,
+        branchName: workPackage.branchName,
+        reportRelativePath: workPackage.reportRelativePath,
+        status: 'draft',
+        createdAt: '2026-06-04T08:30:00.000Z',
+        updatedAt: '2026-06-04T08:30:00.000Z',
+      });
+      expect(workPackageMarkdown).toContain(`Source handoff:\n  ${target.relativePath}`);
+      expect(workPackageMarkdown).toContain('git checkout -b product/handoff-queue-w11-b');
+      expect(workPackageMarkdown).toContain('npm run build');
+      expect(workPackageMarkdown).toContain(
+        'Do NOT push, merge, --amend, rebase, stash, reset, clean, or delete files.',
+      );
+      expect(workPackageMarkdown).not.toContain('Raw prompt: do not copy');
+      expect(fs.readFileSync(target.absolutePath, 'utf8')).toBe(handoffMarkdown);
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('opens and prompts from an existing handoff work package without embedding the handoff body', () => {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pixel-handoff-work-prompt-'));
+    try {
+      const target = buildHandoffArtifactTarget(
+        repoRoot,
+        { project: 'Prompt Package' },
+        Date.UTC(2026, 5, 4, 7, 7),
+      );
+      fs.mkdirSync(path.dirname(target.absolutePath), { recursive: true });
+      fs.writeFileSync(
+        target.absolutePath,
+        '# Prompt handoff\n\nTool output: private implementation dump',
+        'utf8',
+      );
+      const metadata = buildHandoffArtifactMetadata(
+        target,
+        { title: 'Prompt W11-B', projectName: 'Pixel Agents Multi' },
+        Date.UTC(2026, 5, 4, 7, 7),
+      );
+      fs.writeFileSync(
+        target.metadataAbsolutePath,
+        `${JSON.stringify(metadata, null, 2)}\n`,
+        'utf8',
+      );
+      const workPackage = createHandoffWorkPackage(
+        repoRoot,
+        target.relativePath,
+        Date.UTC(2026, 5, 4, 8, 30),
+      );
+
+      const openPath = resolveHandoffWorkPackageOpenPath(repoRoot, target.relativePath);
+      const prompt = buildHandoffWorkPackagePrompt(repoRoot, target.relativePath);
+
+      expect(openPath.relativePath).toBe(workPackage.packageRelativePath);
+      expect(prompt.prompt).toContain(workPackage.packageRelativePath);
+      expect(prompt.prompt).toContain(target.relativePath);
+      expect(prompt.prompt).toContain('product/handoff-prompt-w11-b');
+      expect(prompt.prompt).toContain(
+        'Do NOT push, merge, --amend, rebase, stash, reset, clean, or delete files.',
+      );
+      expect(prompt.prompt.length).toBeLessThanOrEqual(8_000);
+      expect(prompt.prompt).not.toContain('Tool output: private implementation dump');
+      expect(prompt.prompt).not.toContain(target.absolutePath);
+      fs.rmSync(workPackage.packageAbsolutePath);
+      expect(() => buildHandoffWorkPackagePrompt(repoRoot, target.relativePath)).toThrow(
+        /work package does not exist/,
+      );
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('updates handoff dispatch status in the sidecar without changing markdown files', () => {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pixel-handoff-dispatch-status-'));
+    try {
+      const target = buildHandoffArtifactTarget(
+        repoRoot,
+        { project: 'Status Package' },
+        Date.UTC(2026, 5, 4, 7, 7),
+      );
+      const handoffMarkdown = '# Status handoff\n\nEditable handoff body';
+      fs.mkdirSync(path.dirname(target.absolutePath), { recursive: true });
+      fs.writeFileSync(target.absolutePath, handoffMarkdown, 'utf8');
+      const metadata = buildHandoffArtifactMetadata(
+        target,
+        { title: 'Status W11-B', projectName: 'Pixel Agents Multi' },
+        Date.UTC(2026, 5, 4, 7, 7),
+      );
+      fs.writeFileSync(
+        target.metadataAbsolutePath,
+        `${JSON.stringify(metadata, null, 2)}\n`,
+        'utf8',
+      );
+      const workPackage = createHandoffWorkPackage(
+        repoRoot,
+        target.relativePath,
+        Date.UTC(2026, 5, 4, 8, 30),
+      );
+      const workPackageMarkdown = fs.readFileSync(workPackage.packageAbsolutePath, 'utf8');
+
+      const result = updateHandoffDispatchStatus(
+        repoRoot,
+        target.relativePath,
+        'dispatched',
+        Date.UTC(2026, 5, 4, 9, 45),
+      );
+      const parsed = parseHandoffArtifactMetadata(
+        JSON.parse(fs.readFileSync(target.metadataAbsolutePath, 'utf8')),
+      );
+
+      expect(result.previousStatus).toBe('draft');
+      expect(result.nextStatus).toBe('dispatched');
+      expect(result.dispatchPackage.status).toBe('dispatched');
+      expect(result.dispatchPackage.updatedAt).toBe('2026-06-04T09:45:00.000Z');
+      expect(parsed?.dispatchPackage?.status).toBe('dispatched');
+      expect(fs.readFileSync(target.absolutePath, 'utf8')).toBe(handoffMarkdown);
+      expect(fs.readFileSync(workPackage.packageAbsolutePath, 'utf8')).toBe(workPackageMarkdown);
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('parses legacy sidecars and rejects malformed dispatch package metadata safely', () => {
+    const legacy = {
+      schemaVersion: 1,
+      artifactId: '2026-06-04-1507-safe-handoff',
+      artifactType: 'handoff',
+      markdownRelativePath: 'docs/agent-handoffs/2026-06-04-1507-safe-handoff.md',
+      title: 'Safe handoff',
+      status: 'draft',
+      createdAt: '2026-06-04T07:07:00.000Z',
+      updatedAt: '2026-06-04T07:08:00.000Z',
+    };
+    const valid = {
+      ...legacy,
+      dispatchPackage: {
+        packageRelativePath:
+          'docs/roadmap/supervision/work-packages/handoffs/safe-handoff-work-package.md',
+        branchName: 'product/handoff-safe-handoff',
+        reportRelativePath: 'docs/roadmap/supervision/reports/safe-handoff-executor-report.md',
+        status: 'ready',
+        createdAt: '2026-06-04T07:09:00.000Z',
+        updatedAt: '2026-06-04T07:10:00.000Z',
+      },
+    };
+
+    expect(parseHandoffArtifactMetadata(legacy)?.dispatchPackage).toBeUndefined();
+    expect(parseHandoffArtifactMetadata(valid)?.dispatchPackage?.status).toBe('ready');
+    expect(
+      parseHandoffArtifactMetadata({
+        ...valid,
+        dispatchPackage: {
+          ...valid.dispatchPackage,
+          packageRelativePath: 'docs/agent-handoffs/escape.md',
+        },
+      }),
+    ).toBeUndefined();
+    expect(
+      parseHandoffArtifactMetadata({
+        ...valid,
+        dispatchPackage: {
+          ...valid.dispatchPackage,
+          branchName: 'main; rm -rf',
+        },
+      }),
+    ).toBeUndefined();
+  });
+
+  it('rejects unsafe work-package creation and dispatch status inputs', () => {
+    const repoRoot = path.resolve('C:/workspace/pixel-agents-multi');
+
+    expect(() =>
+      buildHandoffWorkPackageTarget(repoRoot, '../docs/agent-handoffs/escape.md'),
+    ).toThrow(/Markdown files under docs\/agent-handoffs/);
+    expect(() =>
+      buildHandoffWorkPackageTarget(
+        repoRoot,
+        'C:/workspace/pixel-agents-multi/docs/agent-handoffs/review.md',
+      ),
+    ).toThrow(/repo-relative/);
+    expect(() =>
+      updateHandoffDispatchStatus(repoRoot, 'docs/agent-handoffs/review.md', 'published'),
+    ).toThrow(/dispatch status must be draft, ready, dispatched, completed, or blocked/);
   });
 });

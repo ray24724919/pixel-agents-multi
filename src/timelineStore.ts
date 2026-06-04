@@ -27,6 +27,9 @@ export interface TimelineRecordV1 {
   artifactStatus?: string;
   previousStatus?: string;
   nextStatus?: string;
+  dispatchStatus?: string;
+  packageRelativePath?: string;
+  reportRelativePath?: string;
   timestamp: number;
   kind: string;
   title: string;
@@ -54,6 +57,9 @@ export interface TimelineRecordInput {
   artifactStatus?: unknown;
   previousStatus?: unknown;
   nextStatus?: unknown;
+  dispatchStatus?: unknown;
+  packageRelativePath?: unknown;
+  reportRelativePath?: unknown;
   timestamp?: unknown;
   kind?: unknown;
   title?: unknown;
@@ -147,6 +153,9 @@ export function createTimelineRecord(input: TimelineRecordInput): TimelineRecord
   const artifactStatus = stringValue(input.artifactStatus);
   const previousStatus = stringValue(input.previousStatus);
   const nextStatus = stringValue(input.nextStatus);
+  const dispatchStatus = stringValue(input.dispatchStatus);
+  const packageRelativePath = stringValue(input.packageRelativePath);
+  const reportRelativePath = stringValue(input.reportRelativePath);
   const summary = stringValue(input.summary);
   const statusAfter = lifecycleStatus(input.statusAfter);
   const severity = timelineSeverity(input.severity);
@@ -160,6 +169,9 @@ export function createTimelineRecord(input: TimelineRecordInput): TimelineRecord
   if (artifactStatus) record.artifactStatus = artifactStatus;
   if (previousStatus) record.previousStatus = previousStatus;
   if (nextStatus) record.nextStatus = nextStatus;
+  if (dispatchStatus) record.dispatchStatus = dispatchStatus;
+  if (packageRelativePath) record.packageRelativePath = packageRelativePath;
+  if (reportRelativePath) record.reportRelativePath = reportRelativePath;
   if (summary) record.summary = summary;
   if (statusAfter) record.statusAfter = statusAfter;
   if (severity) record.severity = severity;
@@ -193,6 +205,9 @@ function isTimelineRecordV1(value: unknown): value is TimelineRecordV1 {
     (record.artifactStatus === undefined || typeof record.artifactStatus === 'string') &&
     (record.previousStatus === undefined || typeof record.previousStatus === 'string') &&
     (record.nextStatus === undefined || typeof record.nextStatus === 'string') &&
+    (record.dispatchStatus === undefined || typeof record.dispatchStatus === 'string') &&
+    (record.packageRelativePath === undefined || typeof record.packageRelativePath === 'string') &&
+    (record.reportRelativePath === undefined || typeof record.reportRelativePath === 'string') &&
     (record.severity === undefined || timelineSeverity(record.severity) !== undefined) &&
     (record.source === undefined || timelineSource(record.source) !== undefined) &&
     (record.statusAfter === undefined || lifecycleStatus(record.statusAfter) !== undefined)

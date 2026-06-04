@@ -197,6 +197,52 @@ test('timeline page keeps handoff dispatch prompt history searchable', () => {
   assert.equal(model.events[0]?.artifactStatus, 'reviewed');
 });
 
+test('timeline page keeps handoff work package history searchable', () => {
+  const items = buildTimelinePageItems(
+    [],
+    [
+      event({
+        id: 'handoff-work-package-created',
+        agentId: 7,
+        providerId: 'codex',
+        projectName: 'pixel-agents',
+        artifactId: '2026-06-04-1507-pixel-handoff',
+        artifactStatus: 'reviewed',
+        dispatchStatus: 'ready',
+        packageRelativePath:
+          'docs/roadmap/supervision/work-packages/handoffs/pixel-handoff-work-package.md',
+        reportRelativePath: 'docs/roadmap/supervision/reports/pixel-handoff-executor-report.md',
+        timestamp: 470,
+        kind: 'handoff.dispatch_package_created',
+        title: 'Handoff work package created',
+        summary:
+          'pixel-handoff-work-package.md (docs/roadmap/supervision/work-packages/handoffs/pixel-handoff-work-package.md)',
+        severity: 'success',
+        source: 'user',
+      }),
+    ],
+    [],
+  );
+  const model = buildTimelinePageModel(items, {
+    ...defaultFilters,
+    searchQuery: 'handoff work package ready executor report',
+  });
+
+  assert.equal(items.length, 1);
+  assert.equal(model.events[0]?.id, 'timeline-handoff-work-package-created');
+  assert.equal(model.events[0]?.isActionLike, true);
+  assert.equal(model.events[0]?.category, 'other');
+  assert.equal(model.events[0]?.dispatchStatus, 'ready');
+  assert.equal(
+    model.events[0]?.packageRelativePath,
+    'docs/roadmap/supervision/work-packages/handoffs/pixel-handoff-work-package.md',
+  );
+  assert.equal(
+    model.events[0]?.reportRelativePath,
+    'docs/roadmap/supervision/reports/pixel-handoff-executor-report.md',
+  );
+});
+
 test('timeline page search spans event, agent, provider, and project text', () => {
   const items = buildTimelinePageItems(
     [
