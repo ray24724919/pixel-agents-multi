@@ -14,6 +14,7 @@ import {
   resolveHandoffArtifactOpenPath,
   safeHandoffFilenamePart,
   scanHandoffArtifacts,
+  updateHandoffArtifactStatus,
 } from '../../src/handoffArtifacts.js';
 
 describe('handoff artifact path safety', () => {
@@ -304,5 +305,117 @@ describe('handoff artifact path safety', () => {
         'C:/workspace/pixel-agents-multi/docs/agent-handoffs/review.handoff.json',
       ),
     ).toThrow(/repo-relative/);
+  });
+
+  it('updates handoff status in the metadata sidecar without changing markdown', () => {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pixel-handoff-status-'));
+    try {
+      const target = buildHandoffArtifactTarget(
+        repoRoot,
+        { project: 'Pixel Agents Multi' },
+        Date.UTC(2026, 5, 4, 7, 7),
+      );
+      const markdown = '# Handoff\n\nEditable body';
+      fs.mkdirSync(path.dirname(target.absolutePath), { recursive: true });
+      fs.writeFileSync(target.absolutePath, markdown, 'utf8');
+      const metadata = buildHandoffArtifactMetadata(
+        target,
+        {
+          title: 'Review me',
+          providerId: 'codex',
+          projectName: 'Pixel Agents Multi',
+        },
+        Date.UTC(2026, 5, 4, 7, 7),
+      );
+      fs.writeFileSync(
+        target.metadataAbsolutePath,
+        `${JSON.stringify(metadata, null, 2)}\n`,
+        'utf8',
+      );
+
+      const result = updateHandoffArtifactStatus(
+        repoRoot,
+        target.relativePath,
+        'reviewed',
+        Date.UTC(2026, 5, 4, 9, 30),
+      );
+      const updated = JSON.parse(fs.readFileSync(target.metadataAbsolutePath, 'utf8')) as {
+        status?: unknown;
+        updatedAt?: unknown;
+        createdAt?: unknown;
+        markdownRelativePath?: unknown;
+      };
+
+      expect(result.previousStatus).toBe('draft');
+      expect(result.nextStatus).toBe('reviewed');
+      expect(result.metadata.status).toBe('reviewed');
+      expect(result.metadataPath.relativePath).toBe(target.metadataRelativePath);
+      expect(updated.status).toBe('reviewed');
+      expect(updated.updatedAt).toBe('2026-06-04T09:30:00.000Z');
+      expect(updated.createdAt).toBe('2026-06-04T07:07:00.000Z');
+      expect(updated.markdownRelativePath).toBe(target.relativePath);
+      expect(fs.readFileSync(target.absolutePath, 'utf8')).toBe(markdown);
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects status updates when sidecar metadata is missing or mismatched', () => {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pixel-handoff-status-reject-'));
+    try {
+      const target = buildHandoffArtifactTarget(
+        repoRoot,
+        { project: 'Missing Metadata' },
+        Date.UTC(2026, 5, 4, 7, 7),
+      );
+      fs.mkdirSync(path.dirname(target.absolutePath), { recursive: true });
+      fs.writeFileSync(target.absolutePath, '# Handoff\n\nBody', 'utf8');
+
+      expect(() => updateHandoffArtifactStatus(repoRoot, target.relativePath, 'reviewed')).toThrow(
+        /metadata sidecar does not exist/,
+      );
+
+      fs.writeFileSync(
+        target.metadataAbsolutePath,
+        JSON.stringify({
+          schemaVersion: 1,
+          artifactId: '2026-06-04-0707-other-handoff',
+          artifactType: 'handoff',
+          markdownRelativePath: 'docs/agent-handoffs/2026-06-04-0707-other-handoff.md',
+          title: 'Other handoff',
+          status: 'draft',
+          createdAt: '2026-06-04T07:07:00.000Z',
+          updatedAt: '2026-06-04T07:07:00.000Z',
+        }),
+        'utf8',
+      );
+
+      expect(() => updateHandoffArtifactStatus(repoRoot, target.relativePath, 'reviewed')).toThrow(
+        /does not match/,
+      );
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects unsafe status update paths and invalid statuses', () => {
+    const repoRoot = path.resolve('C:/workspace/pixel-agents-multi');
+
+    expect(() =>
+      updateHandoffArtifactStatus(repoRoot, '../docs/agent-handoffs/escape.md', 'reviewed'),
+    ).toThrow(/Markdown files under docs\/agent-handoffs/);
+    expect(() =>
+      updateHandoffArtifactStatus(
+        repoRoot,
+        'C:/workspace/pixel-agents-multi/docs/review.md',
+        'reviewed',
+      ),
+    ).toThrow(/repo-relative/);
+    expect(() =>
+      updateHandoffArtifactStatus(repoRoot, 'docs/agent-handoffs/review.txt', 'reviewed'),
+    ).toThrow(/Markdown files under docs\/agent-handoffs/);
+    expect(() =>
+      updateHandoffArtifactStatus(repoRoot, 'docs/agent-handoffs/review.md', 'published'),
+    ).toThrow(/status must be draft, reviewed, or stale/);
   });
 });

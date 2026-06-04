@@ -3,7 +3,9 @@ import test from 'node:test';
 
 import {
   buildOpenHandoffArtifactMessage,
+  buildUpdateHandoffArtifactStatusMessage,
   handoffArtifactLibraryStateFromLoadedMessage,
+  handoffArtifactStatusActions,
   shouldRefreshHandoffArtifactsForMessage,
 } from '../src/components/handoffArtifactLibraryModel.ts';
 
@@ -101,9 +103,68 @@ test('handoff artifact open message sends only the repo-relative path', () => {
   assert.equal('metadataRelativePath' in message, false);
 });
 
+test('handoff artifact status actions expose local review workflow labels', () => {
+  const actions = handoffArtifactStatusActions({
+    artifactId: '2026-06-04-1507-pixel-handoff',
+    metadataRelativePath: 'docs/agent-handoffs/2026-06-04-1507-pixel-handoff.handoff.json',
+    status: 'draft',
+  });
+
+  assert.deepEqual(
+    actions.map((action) => ({
+      nextStatus: action.nextStatus,
+      label: action.label,
+      disabled: action.disabled,
+    })),
+    [
+      { nextStatus: 'reviewed', label: 'Mark reviewed', disabled: false },
+      { nextStatus: 'stale', label: 'Mark stale', disabled: false },
+      { nextStatus: 'draft', label: 'Reset draft', disabled: true },
+    ],
+  );
+});
+
+test('handoff artifact status actions are disabled for markdown-only artifacts', () => {
+  const actions = handoffArtifactStatusActions({ status: undefined });
+
+  assert.equal(
+    actions.every((action) => action.disabled),
+    true,
+  );
+});
+
+test('handoff artifact status update message sends only relative path and next status', () => {
+  const message = buildUpdateHandoffArtifactStatusMessage(
+    {
+      relativePath: 'docs/agent-handoffs/2026-06-04-1507-pixel-handoff.md',
+    },
+    'reviewed',
+    'status-1',
+  );
+
+  assert.ok(message);
+  assert.deepEqual(message, {
+    type: 'updateHandoffArtifactStatus',
+    requestId: 'status-1',
+    relativePath: 'docs/agent-handoffs/2026-06-04-1507-pixel-handoff.md',
+    nextStatus: 'reviewed',
+  });
+  assert.equal('path' in message, false);
+  assert.equal('absolutePath' in message, false);
+  assert.equal('metadataRelativePath' in message, false);
+});
+
 test('handoff artifact library refreshes after successful write acknowledgements', () => {
   assert.equal(shouldRefreshHandoffArtifactsForMessage({ type: 'handoffDraftWritten' }), true);
+  assert.equal(
+    shouldRefreshHandoffArtifactsForMessage({ type: 'handoffArtifactStatusUpdated' }),
+    true,
+  );
   assert.equal(shouldRefreshHandoffArtifactsForMessage({ type: 'handoffDraftWriteFailed' }), false);
+  assert.equal(
+    shouldRefreshHandoffArtifactsForMessage({ type: 'handoffArtifactStatusUpdateFailed' }),
+    false,
+  );
 });
 
 test('handoff artifact library preserves unavailable errors without crashing', () => {

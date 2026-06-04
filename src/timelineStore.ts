@@ -25,6 +25,8 @@ export interface TimelineRecordV1 {
   runId?: string;
   artifactId?: string;
   artifactStatus?: string;
+  previousStatus?: string;
+  nextStatus?: string;
   timestamp: number;
   kind: string;
   title: string;
@@ -50,6 +52,8 @@ export interface TimelineRecordInput {
   runId?: unknown;
   artifactId?: unknown;
   artifactStatus?: unknown;
+  previousStatus?: unknown;
+  nextStatus?: unknown;
   timestamp?: unknown;
   kind?: unknown;
   title?: unknown;
@@ -141,6 +145,8 @@ export function createTimelineRecord(input: TimelineRecordInput): TimelineRecord
   const runId = stringValue(input.runId);
   const artifactId = stringValue(input.artifactId);
   const artifactStatus = stringValue(input.artifactStatus);
+  const previousStatus = stringValue(input.previousStatus);
+  const nextStatus = stringValue(input.nextStatus);
   const summary = stringValue(input.summary);
   const statusAfter = lifecycleStatus(input.statusAfter);
   const severity = timelineSeverity(input.severity);
@@ -152,6 +158,8 @@ export function createTimelineRecord(input: TimelineRecordInput): TimelineRecord
   if (runId) record.runId = runId;
   if (artifactId) record.artifactId = artifactId;
   if (artifactStatus) record.artifactStatus = artifactStatus;
+  if (previousStatus) record.previousStatus = previousStatus;
+  if (nextStatus) record.nextStatus = nextStatus;
   if (summary) record.summary = summary;
   if (statusAfter) record.statusAfter = statusAfter;
   if (severity) record.severity = severity;
@@ -183,6 +191,8 @@ function isTimelineRecordV1(value: unknown): value is TimelineRecordV1 {
     timelineVisibility(record.visibility) !== undefined &&
     (record.artifactId === undefined || typeof record.artifactId === 'string') &&
     (record.artifactStatus === undefined || typeof record.artifactStatus === 'string') &&
+    (record.previousStatus === undefined || typeof record.previousStatus === 'string') &&
+    (record.nextStatus === undefined || typeof record.nextStatus === 'string') &&
     (record.severity === undefined || timelineSeverity(record.severity) !== undefined) &&
     (record.source === undefined || timelineSource(record.source) !== undefined) &&
     (record.statusAfter === undefined || lifecycleStatus(record.statusAfter) !== undefined)

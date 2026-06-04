@@ -42,6 +42,7 @@ export interface HandoffArtifactTarget {
 }
 
 export type HandoffArtifactStatus = 'draft' | 'published' | 'reviewed' | 'stale';
+export type HandoffArtifactLocalStatus = 'draft' | 'reviewed' | 'stale';
 
 export interface HandoffArtifactMetadataV1 {
   schemaVersion: typeof HANDOFF_ARTIFACT_METADATA_SCHEMA_VERSION;
@@ -86,6 +87,14 @@ export interface HandoffArtifactOpenPath {
 }
 
 export interface HandoffArtifactMetadataPath extends HandoffArtifactOpenPath {}
+
+export interface HandoffArtifactStatusUpdateResult {
+  markdown: HandoffArtifactOpenPath;
+  metadataPath: HandoffArtifactMetadataPath;
+  metadata: HandoffArtifactMetadataV1;
+  previousStatus: HandoffArtifactStatus;
+  nextStatus: HandoffArtifactLocalStatus;
+}
 
 export function buildHandoffArtifactTarget(
   repoRoot: string,
@@ -232,6 +241,71 @@ export function buildHandoffArtifactMetadata(
   if (sessionId) metadata.sessionId = sessionId;
   if (runId) metadata.runId = runId;
   return metadata;
+}
+
+export function updateHandoffArtifactStatus(
+  repoRoot: string,
+  markdownRelativePath: unknown,
+  nextStatusValue: unknown,
+  nowMs = Date.now(),
+): HandoffArtifactStatusUpdateResult {
+  const markdown = resolveHandoffArtifactOpenPath(repoRoot, markdownRelativePath);
+  const nextStatus = handoffArtifactLocalStatus(nextStatusValue);
+  if (!nextStatus) {
+    throw new Error('Handoff artifact status must be draft, reviewed, or stale.');
+  }
+  if (!fs.existsSync(markdown.absolutePath) || !fs.statSync(markdown.absolutePath).isFile()) {
+    throw new Error(`Handoff artifact does not exist: ${markdown.relativePath}`);
+  }
+
+  const metadataRelativePath = getHandoffArtifactMetadataRelativePath(markdown.relativePath);
+  const metadataPath = resolveHandoffArtifactMetadataPath(repoRoot, metadataRelativePath);
+  if (
+    !fs.existsSync(metadataPath.absolutePath) ||
+    !fs.statSync(metadataPath.absolutePath).isFile()
+  ) {
+    throw new Error(`Handoff metadata sidecar does not exist: ${metadataPath.relativePath}`);
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(fs.readFileSync(metadataPath.absolutePath, 'utf8')) as unknown;
+  } catch {
+    throw new Error(`Handoff metadata sidecar is malformed: ${metadataPath.relativePath}`);
+  }
+  const metadata = parseHandoffArtifactMetadata(parsed);
+  if (!metadata) {
+    throw new Error(`Handoff metadata sidecar is invalid: ${metadataPath.relativePath}`);
+  }
+  if (
+    metadata.markdownRelativePath !== markdown.relativePath ||
+    metadata.artifactId !== artifactIdFromMarkdownRelativePath(markdown.relativePath)
+  ) {
+    throw new Error('Handoff metadata sidecar does not match the Markdown artifact.');
+  }
+
+  const previousStatus = metadata.status;
+  const timestamp = new Date(nowMs);
+  const updatedAt = Number.isFinite(timestamp.getTime())
+    ? timestamp.toISOString()
+    : new Date().toISOString();
+  const updatedMetadata: HandoffArtifactMetadataV1 = {
+    ...metadata,
+    status: nextStatus,
+    updatedAt,
+  };
+  fs.writeFileSync(
+    metadataPath.absolutePath,
+    `${JSON.stringify(updatedMetadata, null, 2)}\n`,
+    'utf8',
+  );
+  return {
+    markdown,
+    metadataPath,
+    metadata: updatedMetadata,
+    previousStatus,
+    nextStatus,
+  };
 }
 
 export function parseHandoffArtifactMetadata(
@@ -476,6 +550,13 @@ function safeHandoffMarkdownRelativePath(value: unknown): string | undefined {
 
 function handoffArtifactStatus(value: unknown): HandoffArtifactStatus | undefined {
   if (value === 'draft' || value === 'published' || value === 'reviewed' || value === 'stale') {
+    return value;
+  }
+  return undefined;
+}
+
+export function handoffArtifactLocalStatus(value: unknown): HandoffArtifactLocalStatus | undefined {
+  if (value === 'draft' || value === 'reviewed' || value === 'stale') {
     return value;
   }
   return undefined;

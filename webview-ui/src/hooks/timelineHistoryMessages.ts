@@ -86,6 +86,8 @@ export function timelineEventForPersistence(value: unknown): PersistedTimelineEv
   const runId = stringValue(event.runId);
   const artifactId = stringValue(event.artifactId);
   const artifactStatus = stringValue(event.artifactStatus);
+  const previousStatus = stringValue(event.previousStatus);
+  const nextStatus = stringValue(event.nextStatus);
   const summary = stringValue(event.summary);
   const statusAfter = lifecycleStatus(event.statusAfter);
   const severity = timelineSeverity(event.severity);
@@ -97,6 +99,8 @@ export function timelineEventForPersistence(value: unknown): PersistedTimelineEv
   if (runId) out.runId = runId;
   if (artifactId) out.artifactId = artifactId;
   if (artifactStatus) out.artifactStatus = artifactStatus;
+  if (previousStatus) out.previousStatus = previousStatus;
+  if (nextStatus) out.nextStatus = nextStatus;
   if (summary) out.summary = summary;
   if (statusAfter) out.statusAfter = statusAfter;
   if (severity) out.severity = severity;
