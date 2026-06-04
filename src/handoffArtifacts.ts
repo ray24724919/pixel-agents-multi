@@ -10,6 +10,10 @@ import {
   HANDOFF_ARTIFACT_METADATA_SCHEMA_VERSION,
   HANDOFF_ARTIFACT_TITLE_SCAN_BYTES,
   HANDOFF_ARTIFACTS_RELATIVE_DIR,
+  HANDOFF_DISPATCH_BRANCH_PREFIX,
+  HANDOFF_DISPATCH_PROMPT_MAX_LENGTH,
+  HANDOFF_DISPATCH_REPORT_SUFFIX,
+  HANDOFF_DISPATCH_REPORTS_RELATIVE_DIR,
 } from './constants.js';
 
 export interface HandoffArtifactNamingInput {
@@ -94,6 +98,15 @@ export interface HandoffArtifactStatusUpdateResult {
   metadata: HandoffArtifactMetadataV1;
   previousStatus: HandoffArtifactStatus;
   nextStatus: HandoffArtifactLocalStatus;
+}
+
+export interface HandoffDispatchPrompt {
+  markdown: HandoffArtifactOpenPath;
+  metadata?: HandoffArtifactMetadataV1;
+  slug: string;
+  branchName: string;
+  reportRelativePath: string;
+  prompt: string;
 }
 
 export function buildHandoffArtifactTarget(
@@ -305,6 +318,74 @@ export function updateHandoffArtifactStatus(
     metadata: updatedMetadata,
     previousStatus,
     nextStatus,
+  };
+}
+
+export function buildHandoffDispatchPrompt(
+  repoRoot: string,
+  markdownRelativePath: unknown,
+): HandoffDispatchPrompt {
+  const markdown = resolveHandoffArtifactOpenPath(repoRoot, markdownRelativePath);
+  if (!fs.existsSync(markdown.absolutePath) || !fs.statSync(markdown.absolutePath).isFile()) {
+    throw new Error(`Handoff artifact does not exist: ${markdown.relativePath}`);
+  }
+
+  const metadata = readHandoffArtifactMetadataForMarkdown(repoRoot, markdown.relativePath);
+  const title = metadata?.title ?? readHandoffMarkdownTitle(markdown.absolutePath);
+  const slug = safeHandoffFilenamePart(
+    title ?? metadata?.artifactId ?? path.posix.basename(markdown.filename, '.md'),
+  );
+  const branchName = `${HANDOFF_DISPATCH_BRANCH_PREFIX}${slug}`;
+  const reportRelativePath = `${HANDOFF_DISPATCH_REPORTS_RELATIVE_DIR}/${slug}-${HANDOFF_DISPATCH_REPORT_SUFFIX}.md`;
+  const resolvedRoot = path.resolve(repoRoot);
+  const prompt = [
+    'You are executing a repo-centered Pixel Agents handoff.',
+    '',
+    'cwd:',
+    `  ${resolvedRoot}`,
+    '',
+    'Handoff artifact:',
+    `  ${markdown.relativePath}`,
+    '',
+    'Branch from CURRENT main:',
+    '  git checkout main',
+    '  git pull --ff-only origin main',
+    '  git status --short --branch',
+    '  # If the worktree is dirty, stop and report the exact status.',
+    `  git checkout -b ${branchName}`,
+    '',
+    'Begin by reading:',
+    `  ${markdown.relativePath}`,
+    '',
+    'Then inspect the relevant source files before editing. Do not assume the handoff is complete.',
+    '',
+    'Implementation rules:',
+    '- Keep the patch scoped to the handoff artifact.',
+    '- Do not include raw transcripts, raw tool output, credentials, or absolute private paths beyond the cwd above.',
+    `- Write the executor report to: ${reportRelativePath}`,
+    '- If blocked, write a clear report and stop without dirty cross-branch changes.',
+    '- If the work is completed, commit on the executor branch.',
+    '',
+    'Testing expectations:',
+    '- Run at minimum: npm run build',
+    '- Run targeted tests based on touched files:',
+    '  - npm run test:webview for webview-ui changes',
+    '  - npm run test:server for src/server/helper changes',
+    '  - npm test when changes cross both areas or risk is broad',
+    '- Run git diff --check before committing.',
+    '',
+    'Do NOT push, merge, --amend, rebase, stash, reset, clean, or delete files.',
+  ].join('\n');
+  if (prompt.length > HANDOFF_DISPATCH_PROMPT_MAX_LENGTH) {
+    throw new Error('Generated handoff dispatch prompt exceeded the safe size limit.');
+  }
+  return {
+    markdown,
+    metadata,
+    slug,
+    branchName,
+    reportRelativePath,
+    prompt,
   };
 }
 

@@ -2,10 +2,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  buildCreateHandoffDispatchPromptMessage,
   buildOpenHandoffArtifactMessage,
   buildUpdateHandoffArtifactStatusMessage,
+  canCreateHandoffDispatchPrompt,
   handoffArtifactLibraryStateFromLoadedMessage,
   handoffArtifactStatusActions,
+  handoffDispatchPromptStatusLabel,
   shouldRefreshHandoffArtifactsForMessage,
 } from '../src/components/handoffArtifactLibraryModel.ts';
 
@@ -152,6 +155,51 @@ test('handoff artifact status update message sends only relative path and next s
   assert.equal('path' in message, false);
   assert.equal('absolutePath' in message, false);
   assert.equal('metadataRelativePath' in message, false);
+});
+
+test('handoff artifact dispatch prompt message sends only the repo-relative path', () => {
+  const message = buildCreateHandoffDispatchPromptMessage(
+    {
+      relativePath: 'docs/agent-handoffs/2026-06-04-1507-pixel-handoff.md',
+    },
+    'dispatch-1',
+  );
+
+  assert.ok(message);
+  assert.deepEqual(message, {
+    type: 'createHandoffDispatchPrompt',
+    requestId: 'dispatch-1',
+    relativePath: 'docs/agent-handoffs/2026-06-04-1507-pixel-handoff.md',
+  });
+  assert.equal('path' in message, false);
+  assert.equal('absolutePath' in message, false);
+  assert.equal('prompt' in message, false);
+});
+
+test('handoff artifact dispatch prompt action requires a relative path', () => {
+  assert.equal(
+    canCreateHandoffDispatchPrompt({
+      relativePath: 'docs/agent-handoffs/2026-06-04-1507-pixel-handoff.md',
+    }),
+    true,
+  );
+  assert.equal(canCreateHandoffDispatchPrompt({ relativePath: '' }), false);
+});
+
+test('handoff artifact dispatch prompt feedback includes branch and report names', () => {
+  assert.equal(
+    handoffDispatchPromptStatusLabel(
+      'copied',
+      'product/handoff-pixel-review',
+      'docs/roadmap/supervision/reports/pixel-review-executor-report.md',
+      '',
+    ),
+    'Dispatch prompt copied: product/handoff-pixel-review / docs/roadmap/supervision/reports/pixel-review-executor-report.md',
+  );
+  assert.match(
+    handoffDispatchPromptStatusLabel('failed', '', '', 'Clipboard copy failed.'),
+    /Clipboard copy failed/,
+  );
 });
 
 test('handoff artifact library refreshes after successful write acknowledgements', () => {

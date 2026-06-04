@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildHandoffArtifactMetadata,
   buildHandoffArtifactTarget,
+  buildHandoffDispatchPrompt,
   extractHandoffMarkdownTitle,
   formatHandoffTimestamp,
   getHandoffArtifactMetadataRelativePath,
@@ -305,6 +306,106 @@ describe('handoff artifact path safety', () => {
         'C:/workspace/pixel-agents-multi/docs/agent-handoffs/review.handoff.json',
       ),
     ).toThrow(/repo-relative/);
+  });
+
+  it('builds a safe bounded executor dispatch prompt from handoff metadata', () => {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pixel-handoff-dispatch-'));
+    try {
+      const target = buildHandoffArtifactTarget(
+        repoRoot,
+        { project: 'Pixel Agents Multi' },
+        Date.UTC(2026, 5, 4, 7, 7),
+      );
+      fs.mkdirSync(path.dirname(target.absolutePath), { recursive: true });
+      fs.writeFileSync(
+        target.absolutePath,
+        '# Dispatch handoff\n\nRaw prompt: do not leak this body C:\\Users\\User\\secret.jsonl',
+        'utf8',
+      );
+      const metadata = buildHandoffArtifactMetadata(
+        target,
+        {
+          title: 'Dispatch W11-A',
+          providerId: 'codex',
+          projectName: 'Pixel Agents Multi',
+          sessionId: 'session-123',
+          runId: 'W11-A',
+        },
+        Date.UTC(2026, 5, 4, 7, 7),
+      );
+      fs.writeFileSync(
+        target.metadataAbsolutePath,
+        `${JSON.stringify(metadata, null, 2)}\n`,
+        'utf8',
+      );
+
+      const dispatch = buildHandoffDispatchPrompt(repoRoot, target.relativePath);
+
+      expect(dispatch.branchName).toBe('product/handoff-dispatch-w11-a');
+      expect(dispatch.reportRelativePath).toBe(
+        'docs/roadmap/supervision/reports/dispatch-w11-a-executor-report.md',
+      );
+      expect(dispatch.prompt).toContain(`cwd:\n  ${path.resolve(repoRoot)}`);
+      expect(dispatch.prompt).toContain(target.relativePath);
+      expect(dispatch.prompt).toContain('Begin by reading:');
+      expect(dispatch.prompt).toContain('git checkout -b product/handoff-dispatch-w11-a');
+      expect(dispatch.prompt).toContain('npm run build');
+      expect(dispatch.prompt).toContain(
+        'Do NOT push, merge, --amend, rebase, stash, reset, clean, or delete files.',
+      );
+      expect(dispatch.prompt.length).toBeLessThanOrEqual(8_000);
+      expect(dispatch.prompt).not.toContain('Raw prompt: do not leak');
+      expect(dispatch.prompt).not.toContain('secret.jsonl');
+      expect(dispatch.prompt).not.toContain(target.absolutePath);
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('derives conservative dispatch branch and report slugs from unsafe markdown titles', () => {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pixel-handoff-dispatch-slug-'));
+    try {
+      const target = buildHandoffArtifactTarget(
+        repoRoot,
+        { project: 'Fallback Project' },
+        Date.UTC(2026, 5, 4, 7, 7),
+      );
+      fs.mkdirSync(path.dirname(target.absolutePath), { recursive: true });
+      fs.writeFileSync(
+        target.absolutePath,
+        '# C:\\Users\\User\\secret\\Dispatch ..\\..\\Review\n\nBody',
+        'utf8',
+      );
+
+      const dispatch = buildHandoffDispatchPrompt(repoRoot, target.relativePath);
+
+      expect(dispatch.branchName).toMatch(/^product\/handoff-[a-z0-9._-]+$/);
+      expect(dispatch.branchName).not.toContain('..');
+      expect(dispatch.branchName).not.toContain(':');
+      expect(dispatch.branchName).not.toContain('\\');
+      expect(dispatch.reportRelativePath).toMatch(
+        /^docs\/roadmap\/supervision\/reports\/[a-z0-9._-]+-executor-report\.md$/,
+      );
+      expect(dispatch.reportRelativePath).not.toContain('..');
+      expect(dispatch.reportRelativePath).not.toContain(':');
+      expect(path.posix.basename(dispatch.reportRelativePath).length).toBeLessThanOrEqual(96);
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects unsafe dispatch prompt handoff paths', () => {
+    const repoRoot = path.resolve('C:/workspace/pixel-agents-multi');
+
+    expect(() => buildHandoffDispatchPrompt(repoRoot, '../docs/agent-handoffs/escape.md')).toThrow(
+      /Markdown files under docs\/agent-handoffs/,
+    );
+    expect(() =>
+      buildHandoffDispatchPrompt(repoRoot, 'C:/workspace/pixel-agents-multi/docs/review.md'),
+    ).toThrow(/repo-relative/);
+    expect(() => buildHandoffDispatchPrompt(repoRoot, 'docs/agent-handoffs/review.txt')).toThrow(
+      /Markdown files under docs\/agent-handoffs/,
+    );
   });
 
   it('updates handoff status in the metadata sidecar without changing markdown', () => {

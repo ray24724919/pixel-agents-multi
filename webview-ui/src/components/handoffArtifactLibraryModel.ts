@@ -48,6 +48,14 @@ export interface UpdateHandoffArtifactStatusMessage {
   nextStatus: HandoffArtifactLocalStatus;
 }
 
+export interface CreateHandoffDispatchPromptMessage {
+  type: 'createHandoffDispatchPrompt';
+  requestId: string;
+  relativePath: string;
+}
+
+export type HandoffDispatchPromptStatus = 'idle' | 'creating' | 'copied' | 'failed';
+
 export const initialHandoffArtifactLibraryState: HandoffArtifactLibraryState = {
   items: [],
   unavailable: false,
@@ -105,6 +113,42 @@ export function buildUpdateHandoffArtifactStatusMessage(
     relativePath: item.relativePath,
     nextStatus,
   };
+}
+
+export function canCreateHandoffDispatchPrompt(
+  item: Pick<HandoffArtifactLibraryItem, 'relativePath'>,
+): boolean {
+  return !!item.relativePath;
+}
+
+export function buildCreateHandoffDispatchPromptMessage(
+  item: Pick<HandoffArtifactLibraryItem, 'relativePath'>,
+  requestId: string,
+): CreateHandoffDispatchPromptMessage | undefined {
+  if (!requestId || !canCreateHandoffDispatchPrompt(item)) return undefined;
+  return {
+    type: 'createHandoffDispatchPrompt',
+    requestId,
+    relativePath: item.relativePath,
+  };
+}
+
+export function handoffDispatchPromptStatusLabel(
+  status: HandoffDispatchPromptStatus,
+  branchName: string,
+  reportRelativePath: string,
+  error: string,
+): string {
+  if (status === 'creating') return 'Creating dispatch prompt...';
+  if (status === 'copied') {
+    return `Dispatch prompt copied: ${branchName || 'executor branch'} / ${
+      reportRelativePath || 'executor report'
+    }`;
+  }
+  if (status === 'failed') {
+    return `Dispatch prompt failed: ${error || 'Could not copy dispatch prompt.'}`;
+  }
+  return 'Dispatch prompts reference handoff Markdown; they do not include the handoff body.';
 }
 
 export function shouldRefreshHandoffArtifactsForMessage(message: Record<string, unknown>): boolean {
