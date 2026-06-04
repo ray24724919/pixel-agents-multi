@@ -5,6 +5,7 @@ import {
   type ReactNode,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 
@@ -45,7 +46,11 @@ import {
   delegationTotalCount,
   delegationWorkerLabel,
 } from './delegationModel.js';
-import { buildHandoffDraftPageModel, type HandoffDraftPageModel } from './handoffDraftPageModel.js';
+import {
+  buildHandoffDraftPageModel,
+  buildHandoffDraftWriteMessage,
+  type HandoffDraftPageModel,
+} from './handoffDraftPageModel.js';
 import { isPausedStatus, pauseActionLabel } from './pauseResume.js';
 import {
   buildTimelinePageItems,
@@ -99,6 +104,7 @@ type StatusFilter = AgentListStatusFilter;
 type ProjectFilter = 'all' | string;
 type TeamFilter = 'all' | string;
 type UsagePane = 'live' | 'history';
+type HandoffWriteStatus = 'idle' | 'writing' | 'written' | 'failed';
 
 interface AgentCenterSurfaceProps {
   activePage: AgentCenterPage;
@@ -1388,6 +1394,10 @@ function TimelineDashboard({
   const [replaySpeed, setReplaySpeed] = useState<number>(1);
   const [isHandoffPreviewOpen, setIsHandoffPreviewOpen] = useState(false);
   const [handoffCopyStatus, setHandoffCopyStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const [handoffWriteStatus, setHandoffWriteStatus] = useState<HandoffWriteStatus>('idle');
+  const [handoffWrittenPath, setHandoffWrittenPath] = useState('');
+  const [handoffWriteError, setHandoffWriteError] = useState('');
+  const handoffWriteRequestIdRef = useRef('');
   const replayState = useMemo(
     () => resolveTimelineReplaySelection(replaySessions, replaySessionId, replayCursor),
     [replayCursor, replaySessionId, replaySessions],
@@ -1425,7 +1435,42 @@ function TimelineDashboard({
       setIsHandoffPreviewOpen(false);
     }
     setHandoffCopyStatus('idle');
+    setHandoffWriteStatus('idle');
+    setHandoffWrittenPath('');
+    setHandoffWriteError('');
   }, [handoffPageModel, isHandoffPreviewOpen]);
+
+  useEffect(() => {
+    const handler = (event: MessageEvent) => {
+      if (typeof event.data !== 'object' || event.data === null) return;
+      const message = event.data as Record<string, unknown>;
+      if (
+        (message.type !== 'handoffDraftWritten' && message.type !== 'handoffDraftWriteFailed') ||
+        message.requestId !== handoffWriteRequestIdRef.current
+      ) {
+        return;
+      }
+      if (message.type === 'handoffDraftWritten') {
+        setHandoffWriteStatus('written');
+        setHandoffWrittenPath(
+          typeof message.relativePath === 'string'
+            ? message.relativePath
+            : typeof message.path === 'string'
+              ? message.path
+              : '',
+        );
+        setHandoffWriteError('');
+        return;
+      }
+      setHandoffWriteStatus('failed');
+      setHandoffWrittenPath('');
+      setHandoffWriteError(
+        typeof message.error === 'string' ? message.error : 'Could not write handoff draft.',
+      );
+    };
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
+  }, []);
 
   useEffect(() => {
     if (!isReplayPlaying || !replayState.session) return;
@@ -1478,6 +1523,21 @@ function TimelineDashboard({
     void copyTextToClipboard(markdown)
       .then(() => setHandoffCopyStatus('copied'))
       .catch(() => setHandoffCopyStatus('failed'));
+  };
+  const writeHandoffDraft = () => {
+    const requestId = `handoff-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const message = buildHandoffDraftWriteMessage(handoffPageModel, requestId);
+    if (!message) {
+      setHandoffWriteStatus('failed');
+      setHandoffWriteError('No handoff draft is available to write.');
+      return;
+    }
+    handoffWriteRequestIdRef.current = requestId;
+    setIsHandoffPreviewOpen(true);
+    setHandoffWriteStatus('writing');
+    setHandoffWrittenPath('');
+    setHandoffWriteError('');
+    vscode.postMessage(message);
   };
 
   return (
@@ -1564,8 +1624,12 @@ function TimelineDashboard({
         model={handoffPageModel}
         isPreviewOpen={isHandoffPreviewOpen}
         copyStatus={handoffCopyStatus}
+        writeStatus={handoffWriteStatus}
+        writtenPath={handoffWrittenPath}
+        writeError={handoffWriteError}
         onCreate={createHandoffPreview}
         onCopy={copyHandoffMarkdown}
+        onWrite={writeHandoffDraft}
         onClose={() => setIsHandoffPreviewOpen(false)}
       />
 
@@ -1916,15 +1980,23 @@ function HandoffDraftPanel({
   model,
   isPreviewOpen,
   copyStatus,
+  writeStatus,
+  writtenPath,
+  writeError,
   onCreate,
   onCopy,
+  onWrite,
   onClose,
 }: {
   model: HandoffDraftPageModel;
   isPreviewOpen: boolean;
   copyStatus: 'idle' | 'copied' | 'failed';
+  writeStatus: HandoffWriteStatus;
+  writtenPath: string;
+  writeError: string;
   onCreate: () => void;
   onCopy: () => void;
+  onWrite: () => void;
   onClose: () => void;
 }) {
   const draft = model.draft;
@@ -1981,6 +2053,14 @@ function HandoffDraftPanel({
             <Button variant="default" size="sm" onClick={onCopy}>
               Copy Markdown
             </Button>
+            <Button
+              variant={!draft || writeStatus === 'writing' ? 'disabled' : 'default'}
+              size="sm"
+              disabled={!draft || writeStatus === 'writing'}
+              onClick={onWrite}
+            >
+              {writeStatus === 'writing' ? 'Writing...' : 'Write to Repo'}
+            </Button>
             <Button variant="ghost" size="sm" onClick={onClose}>
               Close Preview
             </Button>
@@ -1994,6 +2074,17 @@ function HandoffDraftPanel({
               }`}
             >
               {handoffCopyStatusLabel(copyStatus)}
+            </div>
+            <div
+              className={`break-words text-xs ${
+                writeStatus === 'failed'
+                  ? 'text-status-error'
+                  : writeStatus === 'written'
+                    ? 'text-status-waiting'
+                    : 'text-text-muted'
+              }`}
+            >
+              {handoffWriteStatusLabel(writeStatus, writtenPath, writeError)}
             </div>
           </div>
         </div>
@@ -2278,7 +2369,18 @@ function handoffDraftNoticeText(model: HandoffDraftPageModel): string | undefine
 function handoffCopyStatusLabel(status: 'idle' | 'copied' | 'failed'): string {
   if (status === 'copied') return 'Markdown copied';
   if (status === 'failed') return 'Clipboard copy failed';
-  return 'Preview only; no files are written.';
+  return 'Preview ready; copy or write locally.';
+}
+
+function handoffWriteStatusLabel(
+  status: HandoffWriteStatus,
+  writtenPath: string,
+  error: string,
+): string {
+  if (status === 'writing') return 'Writing editable Markdown into docs/agent-handoffs/...';
+  if (status === 'written') return `Written and opened: ${writtenPath || 'handoff draft'}`;
+  if (status === 'failed') return `Write failed: ${error || 'Could not write handoff draft.'}`;
+  return 'Repo write creates an editable Markdown file; nothing is staged or committed.';
 }
 
 function formatProxyUsd(value: number): string {

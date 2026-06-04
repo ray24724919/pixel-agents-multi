@@ -82,6 +82,7 @@ import {
   startStaleExternalAgentCheck,
   syncClaudeAgentMetadata,
 } from './fileWatcher.js';
+import { buildHandoffArtifactTarget } from './handoffArtifacts.js';
 import type { LayoutWatcher } from './layoutPersistence.js';
 import { readLayoutFromFile, watchLayoutFile, writeLayoutToFile } from './layoutPersistence.js';
 import { getExtensionConfigValue, isExtensionConfigExplicitlyConfigured } from './settings.js';
@@ -276,6 +277,49 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         `[Pixel Agents] Timeline history persist failed: ${
           error instanceof Error ? error.message : String(error)
         }`,
+      );
+    }
+  }
+
+  private async writeHandoffDraftFromWebview(message: Record<string, unknown>): Promise<void> {
+    const requestId = typeof message.requestId === 'string' ? message.requestId : undefined;
+    try {
+      const markdown = typeof message.markdown === 'string' ? message.markdown : '';
+      if (!markdown.trim()) {
+        throw new Error('No handoff markdown was supplied.');
+      }
+      const repoRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (!repoRoot) {
+        throw new Error('Open a repository workspace before writing a handoff draft.');
+      }
+      const target = buildHandoffArtifactTarget(repoRoot, {
+        project: message.project,
+        agentName: message.agentName,
+        title: message.title,
+      });
+      await fs.promises.mkdir(path.dirname(target.absolutePath), { recursive: true });
+      await fs.promises.writeFile(target.absolutePath, markdown, 'utf8');
+      const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(target.absolutePath));
+      await vscode.window.showTextDocument(doc, { preview: false });
+      this.webview?.postMessage({
+        type: 'handoffDraftWritten',
+        requestId,
+        path: target.relativePath,
+        relativePath: target.relativePath,
+        filename: target.filename,
+      });
+      vscode.window.showInformationMessage(
+        `Pixel Agents: Handoff draft written to ${target.relativePath}`,
+      );
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.webview?.postMessage({
+        type: 'handoffDraftWriteFailed',
+        requestId,
+        error: errorMessage,
+      });
+      vscode.window.showErrorMessage(
+        `Pixel Agents: Failed to write handoff draft: ${errorMessage}`,
       );
     }
   }
@@ -1283,6 +1327,12 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         this.postTimelineHistoryLoaded();
       } else if (message.type === 'persistTimelineEvent') {
         this.persistTimelineEventFromWebview(message.event);
+      } else if (message.type === 'writeHandoffDraft') {
+        await this.writeHandoffDraftFromWebview(
+          typeof message === 'object' && message !== null
+            ? (message as Record<string, unknown>)
+            : {},
+        );
       } else if (message.type === 'saveLayout') {
         this.layoutWatcher?.markOwnWrite();
         writeLayoutToFile(message.layout as Record<string, unknown>);

@@ -29,6 +29,12 @@ export const TIMELINE_STORE_FILE_NAME = 'timeline-v1.jsonl';
 export const TIMELINE_RECORD_SCHEMA_VERSION = 1;
 export const TIMELINE_HISTORY_MAX_RECORDS = 500;
 
+// Repo-centered handoff artifacts
+export const HANDOFF_ARTIFACTS_RELATIVE_DIR = 'docs/agent-handoffs';
+export const HANDOFF_ARTIFACT_FILENAME_SUFFIX = 'handoff';
+export const HANDOFF_ARTIFACT_FALLBACK_SLUG = 'agent';
+export const HANDOFF_ARTIFACT_MAX_SLUG_LENGTH = 64;
+
 // ── Settings Persistence (VS Code globalState keys) ─────────
 export const GLOBAL_KEY_SOUND_ENABLED = `${EXTENSION_NAME}.soundEnabled`;
 export const GLOBAL_KEY_LAST_SEEN_VERSION = `${EXTENSION_NAME}.lastSeenVersion`;
