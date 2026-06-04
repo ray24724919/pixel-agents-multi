@@ -1,0 +1,769 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pixel Agents Multi Development Timeline</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0f1117;
+        --panel: #171a24;
+        --panel-2: #202433;
+        --panel-3: #272c3f;
+        --text: #f5f7ff;
+        --muted: #b8bfd8;
+        --subtle: #858ca8;
+        --line: #404862;
+        --accent: #66aaff;
+        --accent-2: #37d6a3;
+        --accent-3: #f6c76a;
+        --danger: #ff6b7a;
+        --shadow: #070910;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        background:
+          linear-gradient(180deg, rgba(102, 170, 255, 0.12), transparent 360px),
+          var(--bg);
+        color: var(--text);
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+        line-height: 1.65;
+      }
+
+      a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+
+      a:hover {
+        text-decoration: underline;
+      }
+
+      .page {
+        display: grid;
+        grid-template-columns: 280px minmax(0, 1fr);
+        min-height: 100vh;
+      }
+
+      aside {
+        position: sticky;
+        top: 0;
+        height: 100vh;
+        padding: 28px 22px;
+        border-right: 1px solid var(--line);
+        background: rgba(15, 17, 23, 0.92);
+        backdrop-filter: blur(12px);
+        overflow: auto;
+      }
+
+      main {
+        padding: 48px min(6vw, 72px) 80px;
+      }
+
+      .brand {
+        margin-bottom: 28px;
+      }
+
+      .brand .label {
+        color: var(--accent-2);
+        font-size: 12px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .brand h1 {
+        margin: 8px 0 4px;
+        font-size: 26px;
+        line-height: 1.2;
+      }
+
+      .brand p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      nav {
+        display: grid;
+        gap: 7px;
+      }
+
+      nav a {
+        padding: 9px 10px;
+        border: 1px solid transparent;
+        color: var(--muted);
+        text-decoration: none;
+        font-size: 14px;
+      }
+
+      nav a:hover {
+        border-color: var(--line);
+        background: var(--panel);
+        color: var(--text);
+      }
+
+      .hero {
+        padding: 34px;
+        border: 1px solid var(--line);
+        background:
+          linear-gradient(135deg, rgba(102, 170, 255, 0.18), transparent 46%),
+          linear-gradient(180deg, rgba(55, 214, 163, 0.08), transparent),
+          var(--panel);
+        box-shadow: 8px 8px 0 var(--shadow);
+      }
+
+      .hero .eyebrow {
+        margin: 0 0 10px;
+        color: var(--accent-2);
+        font-size: 13px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      h2,
+      h3 {
+        line-height: 1.25;
+      }
+
+      h2 {
+        margin: 48px 0 18px;
+        font-size: 28px;
+      }
+
+      h3 {
+        margin: 0 0 10px;
+        font-size: 18px;
+      }
+
+      .hero h2 {
+        margin: 0;
+        font-size: clamp(32px, 5vw, 54px);
+      }
+
+      .hero p {
+        max-width: 920px;
+        color: var(--muted);
+        font-size: 17px;
+      }
+
+      .summary-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 14px;
+        margin-top: 24px;
+      }
+
+      .stat,
+      .panel,
+      .timeline-card,
+      .version-card {
+        border: 1px solid var(--line);
+        background: var(--panel);
+      }
+
+      .stat {
+        padding: 16px;
+      }
+
+      .stat .value {
+        color: var(--accent);
+        font-size: 24px;
+        font-weight: 750;
+      }
+
+      .stat .label {
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .panel {
+        padding: 22px;
+      }
+
+      .panel p:first-child {
+        margin-top: 0;
+      }
+
+      .timeline {
+        display: grid;
+        gap: 16px;
+      }
+
+      .timeline-card {
+        display: grid;
+        grid-template-columns: 130px minmax(0, 1fr);
+        gap: 18px;
+        padding: 20px;
+      }
+
+      .date {
+        color: var(--accent-2);
+        font-weight: 700;
+      }
+
+      .tag-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin: 12px 0;
+      }
+
+      .tag {
+        display: inline-flex;
+        align-items: center;
+        min-height: 24px;
+        padding: 2px 8px;
+        border: 1px solid var(--line);
+        background: var(--panel-2);
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .tag.important {
+        border-color: rgba(102, 170, 255, 0.5);
+        color: var(--accent);
+      }
+
+      .tag.release {
+        border-color: rgba(55, 214, 163, 0.55);
+        color: var(--accent-2);
+      }
+
+      ul {
+        padding-left: 20px;
+      }
+
+      li {
+        margin: 7px 0;
+      }
+
+      .columns {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 16px;
+      }
+
+      .version-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .version-card {
+        padding: 18px;
+      }
+
+      .version-card strong {
+        display: block;
+        color: var(--accent-3);
+        margin-bottom: 8px;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        border: 1px solid var(--line);
+        background: var(--panel);
+      }
+
+      th,
+      td {
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--line);
+        text-align: left;
+        vertical-align: top;
+      }
+
+      th {
+        background: var(--panel-2);
+        color: var(--accent);
+        font-size: 13px;
+        text-transform: uppercase;
+      }
+
+      td {
+        color: var(--muted);
+      }
+
+      code {
+        padding: 2px 5px;
+        background: var(--panel-3);
+        color: var(--text);
+        font-family:
+          "Cascadia Code", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+        font-size: 0.92em;
+      }
+
+      .note {
+        color: var(--muted);
+      }
+
+      .callout {
+        border-left: 4px solid var(--accent);
+        padding: 14px 16px;
+        background: rgba(102, 170, 255, 0.08);
+        color: var(--muted);
+      }
+
+      footer {
+        margin-top: 48px;
+        padding-top: 22px;
+        border-top: 1px solid var(--line);
+        color: var(--subtle);
+        font-size: 13px;
+      }
+
+      @media (max-width: 980px) {
+        .page {
+          display: block;
+        }
+
+        aside {
+          position: relative;
+          height: auto;
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+        }
+
+        main {
+          padding: 28px 18px 54px;
+        }
+
+        .summary-grid,
+        .version-grid,
+        .columns,
+        .timeline-card {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <aside>
+        <div class="brand">
+          <div class="label">Pixel Agents Multi</div>
+          <h1>開發時間線</h1>
+          <p>2026-05-27 起的接手清理、功能新增、版本狀態與可追溯紀錄。</p>
+        </div>
+        <nav aria-label="章節導覽">
+          <a href="#overview">總覽</a>
+          <a href="#timeline">時間線</a>
+          <a href="#versions">版本與本機安裝</a>
+          <a href="#capabilities">能力地圖</a>
+          <a href="#traceability">可追溯文件</a>
+          <a href="#next">下一步</a>
+        </nav>
+      </aside>
+
+      <main>
+        <section id="overview" class="hero">
+          <p class="eyebrow">Owner-facing development record</p>
+          <h2>從搬機後修復，到本地 AI agent cockpit。</h2>
+          <p>
+            這份 HTML 用來記錄 2026-05-27 supervisor / executor 接手清理後
+            Pixel Agents Multi 的每一波主要進展：provider 顯示與採用修復、Windows 私有版發行、Agent Center、
+            Usage Intelligence、Timeline、Delegation、Session Replay，以及目前正在鋪路的
+            Handoff 工作流。
+          </p>
+
+          <div class="summary-grid">
+            <div class="stat">
+              <div class="value">2026-05-27</div>
+              <div class="label">接手清理主線起點</div>
+            </div>
+            <div class="stat">
+              <div class="value">1.3.0</div>
+              <div class="label">目前本機 VSIX 版本</div>
+            </div>
+            <div class="stat">
+              <div class="value">7620874</div>
+              <div class="label">目前 main HEAD</div>
+            </div>
+            <div class="stat">
+              <div class="value">97 / 239</div>
+              <div class="label">最新 webview / server 測試數</div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h3>目前狀態</h3>
+          <ul>
+            <li><code>main</code> 已同步 <code>origin/main</code>。</li>
+            <li>最新本機安裝驗證為 <code>raychen.pixel-agents-multi@1.3.0</code>。</li>
+            <li>私有 fork 與 public <code>pixel-agents</code> 已透過 release identity 分離。</li>
+            <li>接手清理主線從 <code>cleanup-baseline-2026-05-27</code> 開始。</li>
+            <li>目前最新功能主線是 W9：Replay navigation polish 與 Handoff draft model。</li>
+          </ul>
+        </section>
+
+        <h2 id="timeline">時間線</h2>
+        <section class="timeline" aria-label="Development timeline">
+          <article class="timeline-card">
+            <div>
+              <div class="date">2026-05-27</div>
+              <div class="tag-row">
+                <span class="tag important">Cleanup baseline</span>
+                <span class="tag">W1</span>
+              </div>
+            </div>
+            <div>
+              <h3>接手清理主線啟動</h3>
+              <p class="note">
+                這是本報告採用的正式起點。Git 上有
+                <code>cleanup-baseline-2026-05-27</code> checkpoint，接著開始用
+                supervisor / executor work-package 方式修復 fork 的 multi-provider 主線。
+              </p>
+              <ul>
+                <li>建立 W1 executor instructions 與 cleanup framework。</li>
+                <li>W1-A restore Claude launcher provider selection。</li>
+                <li>W1-B Codex thread follow-on，讓 Codex agents 保持綁定 cwd threads。</li>
+                <li>W1-C wave 1 corrections，修正第一波 provider/launcher regressions。</li>
+                <li>確立「one work-package = one branch / one commit / report file」的協作方式。</li>
+              </ul>
+            </div>
+          </article>
+
+          <article class="timeline-card">
+            <div>
+              <div class="date">2026-05-27 至 2026-05-29</div>
+              <div class="tag-row">
+                <span class="tag">W2</span>
+                <span class="tag important">Agent lifecycle</span>
+              </div>
+            </div>
+            <div>
+              <h3>Agent 採用、狀態與安全操作基礎</h3>
+              <p class="note">
+                這一波讓 Codex / Claude agents 更可靠地顯示，並建立 Hide、Archive、Kill
+                的語意。
+              </p>
+              <ul>
+                <li>Codex external sync，支援同 cwd 多 thread 與外部 thread 採用。</li>
+                <li>Claude chat-mode filter，避免非工作型聊天污染 agent 列表。</li>
+                <li>Pause / Resume、Hide / Archive / Kill action model。</li>
+                <li>No-workspace fallback，支援不開資料夾時當跨專案狀態板使用。</li>
+                <li>Provider discovery 與 Codex no-workspace fallback review 後修正。</li>
+                <li>開始把 executor 報告固定寫入 <code>docs/roadmap/supervision/reports/</code>。</li>
+              </ul>
+            </div>
+          </article>
+
+          <article class="timeline-card">
+            <div>
+              <div class="date">2026-06-01</div>
+              <div class="tag-row">
+                <span class="tag release">Windows</span>
+                <span class="tag important">Stabilization</span>
+              </div>
+            </div>
+            <div>
+              <h3>搬到新 Windows 主機後的穩定化</h3>
+              <p class="note">
+                先處理 PATH、Node、VS Code extension host、工作樹乾淨度與 executor
+                派工方式，讓專案能在新機器上正常 build、test、package、install。
+              </p>
+              <ul>
+                <li>修復 Windows provider adoption 與路徑衝突。</li>
+                <li>建立 Windows release QA 與 final handoff 檢查流程。</li>
+                <li>處理 Usage tab 空白 regression 與 Claude live visibility guard。</li>
+                <li>完成 W2-G seating invariants 與 W2-H token usage accuracy。</li>
+                <li>開始使用獨立 worktree 讓 executor 平行工作，避免髒工作樹互相污染。</li>
+              </ul>
+            </div>
+          </article>
+
+          <article class="timeline-card">
+            <div>
+              <div class="date">2026-06-02</div>
+              <div class="tag-row">
+                <span class="tag">W4</span>
+                <span class="tag release">Private release</span>
+              </div>
+            </div>
+            <div>
+              <h3>私有 extension identity 與產品規格化</h3>
+              <p class="note">
+                這一波把 fork 從 public Pixel Agents 分開，並把 Agent Center、Usage
+                Intelligence、Team/Lab Mode 寫成產品規格。
+              </p>
+              <ul>
+                <li>新增 release verification scripts：identity、VSIX contents、installed extension。</li>
+                <li>私有 extension id 固定為 <code>raychen.pixel-agents-multi</code>。</li>
+                <li>VSIX 名稱固定為 <code>pixel-agents-multi-&lt;version&gt;.vsix</code>。</li>
+                <li>資料目錄切到 <code>~/.pixel-agents-multi</code>，避免和 public extension 混用。</li>
+                <li>建立 Agent Center 2.0、Usage Intelligence、Team/Lab Mode 長期設計文件。</li>
+                <li>加入 Codex thread title sync，CLI 改名後 webview 也能同步更新。</li>
+              </ul>
+            </div>
+          </article>
+
+          <article class="timeline-card">
+            <div>
+              <div class="date">2026-06-02</div>
+              <div class="tag-row">
+                <span class="tag">W5</span>
+                <span class="tag important">Agent Center</span>
+              </div>
+            </div>
+            <div>
+              <h3>Agent Center 從面板變成控制台</h3>
+              <p class="note">
+                Office 不再是唯一入口，Agent Center 開始承擔管理、使用量和 timeline
+                的頁面級導航。
+              </p>
+              <ul>
+                <li>新增 Agent Center navigation shell，Office、Agents、Usage、Timeline 成為頁面級 destinations。</li>
+                <li>Agents page 支援 provider、status、project、team、search、sort。</li>
+                <li>Usage Intelligence live page 顯示 provider、project、ledger、token mix、quota signals。</li>
+                <li>Timeline page 管理事件歷史、搜尋、篩選、retained action history。</li>
+                <li>移除重複 Agents toolbar button，讓 UI 上下入口不重複。</li>
+              </ul>
+            </div>
+          </article>
+
+          <article class="timeline-card">
+            <div>
+              <div class="date">2026-06-02 至 2026-06-03</div>
+              <div class="tag-row">
+                <span class="tag">W6</span>
+                <span class="tag important">Usage History</span>
+              </div>
+            </div>
+            <div>
+              <h3>Usage 從即時摘要走向本地歷史</h3>
+              <p class="note">
+                使用量不再只存在當下畫面，開始有 append-only local store、ingestion、
+                read model、webview bridge 與 History UI。
+              </p>
+              <ul>
+                <li>建立 <code>~/.pixel-agents-multi/usage/usage-v1.jsonl</code>。</li>
+                <li>支援 usage delta、artifact estimate、rate-limit snapshot。</li>
+                <li>加入 durable dedupe，避免 cumulative provider snapshots 重複計算。</li>
+                <li>Usage History page 支援 Live / History segmented view。</li>
+                <li>CSV copy 預設 redacted paths，不輸出 raw transcript path。</li>
+              </ul>
+            </div>
+          </article>
+
+          <article class="timeline-card">
+            <div>
+              <div class="date">2026-06-03</div>
+              <div class="tag-row">
+                <span class="tag">W7</span>
+                <span class="tag important">Delegation</span>
+              </div>
+            </div>
+            <div>
+              <h3>Supervisor / child-agent 可視化</h3>
+              <p class="note">
+                這一波解決「主 supervisor 派 subagents 後，畫面卻像 idle」的產品問題。
+              </p>
+              <ul>
+                <li>新增 delegation visibility foundation，辨識 supervisor 正在帶 team 工作。</li>
+                <li>Delegation timeline events：started、progress、completed、failed、cancelled。</li>
+                <li>Office delegation visuals，讓 supervisor 和子代理的工作關係在畫面上可見。</li>
+                <li>Codex spawn delegation visuals live QA，修正 current Codex spawn_agent 顯示。</li>
+                <li>Delegation regression hardening，避免 unrelated <code>agent_id</code> tool output 被誤判。</li>
+              </ul>
+            </div>
+          </article>
+
+          <article class="timeline-card">
+            <div>
+              <div class="date">2026-06-03</div>
+              <div class="tag-row">
+                <span class="tag">W8</span>
+                <span class="tag important">Timeline Replay</span>
+              </div>
+            </div>
+            <div>
+              <h3>Timeline 持久化與 Session Replay MVP</h3>
+              <p class="note">
+                Timeline 從 in-memory UI 變成可持久化、可回放的 normalized event stream。
+              </p>
+              <ul>
+                <li>建立 <code>~/.pixel-agents-multi/timeline/timeline-v1.jsonl</code>。</li>
+                <li>Timeline page 讀取 persisted history，保留 removed/hidden/killed agents 的 action history。</li>
+                <li>Session Replay MVP：用 normalized timeline events 重建狀態與事件游標。</li>
+                <li>Event row 可直接 cue replay session/frame，current frame 會在 event list 標記。</li>
+                <li>Overlay label 改成 project、agent name、status 三行，狀態點移到第三行。</li>
+                <li>最新微調：第一行改為 <code>project (provider)</code>，前兩行使用藍色字。</li>
+              </ul>
+            </div>
+          </article>
+
+          <article class="timeline-card">
+            <div>
+              <div class="date">2026-06-04</div>
+              <div class="tag-row">
+                <span class="tag">W9</span>
+                <span class="tag important">Handoff foundation</span>
+              </div>
+            </div>
+            <div>
+              <h3>Replay 打磨與 Handoff 模型</h3>
+              <p class="note">
+                這一波開始把「看得到歷史」推向「能產出可交接成果」。
+              </p>
+              <ul>
+                <li>Replay navigation polish：First、Last、ArrowLeft、ArrowRight、Home、End、Space。</li>
+                <li>Replay controls 對 empty / single-frame sessions 會正確 disabled。</li>
+                <li>Handoff draft model：從 normalized Timeline + Usage 產生安全 Markdown draft。</li>
+                <li>Handoff redaction：遮蔽 absolute local paths、raw prompt、raw tool output、credentials。</li>
+                <li>目前 W9-C 尚未開始，下一步是把 Handoff model 接到 Timeline/Replay UI。</li>
+              </ul>
+            </div>
+          </article>
+        </section>
+
+        <h2 id="versions">版本與本機安裝</h2>
+        <section class="version-grid">
+          <div class="version-card">
+            <strong>Extension identity</strong>
+            <p><code>raychen.pixel-agents-multi</code></p>
+            <p class="note">私有 fork 身分，避免和 public <code>pablodelucca.pixel-agents</code> 混淆。</p>
+          </div>
+          <div class="version-card">
+            <strong>VSIX package</strong>
+            <p><code>pixel-agents-multi-1.3.0.vsix</code></p>
+            <p class="note">本機 release 流程會 build、verify、package、install、verify installed。</p>
+          </div>
+          <div class="version-card">
+            <strong>Latest verified install</strong>
+            <p><code>raychen.pixel-agents-multi@1.3.0</code></p>
+            <p class="note">VS Code 需要 reload window 才會載入剛安裝的新版 webview。</p>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h3>常用 release 指令</h3>
+          <p class="note">目前推薦用 repo 腳本，不手動敲散落的 build/package/install 指令。</p>
+          <ul>
+            <li><code>npm run build</code>：type-check、lint、extension build、webview build。</li>
+            <li><code>npm run release:local</code>：build、identity verify、VSIX verify、package、install、installed verify。</li>
+            <li><code>npm run verify:installed</code>：確認 VS Code 裝的是私有版，不是 public Pixel Agents。</li>
+          </ul>
+        </section>
+
+        <h2 id="capabilities">能力地圖</h2>
+        <section class="columns">
+          <div class="panel">
+            <h3>現在已經有的能力</h3>
+            <ul>
+              <li>Codex、Claude Code、Claude Cowork / Desktop visibility。</li>
+              <li>跨 cwd Codex external thread adoption 與 no-workspace fallback。</li>
+              <li>Agent Center page shell：Office、Agents、Usage、Timeline。</li>
+              <li>Usage Intelligence live + persisted history。</li>
+              <li>Timeline persisted history + Session Replay MVP。</li>
+              <li>Supervisor delegation visibility 與 office visual markers。</li>
+              <li>安全 action model：Hide、Archive、Kill、Pause、Resume。</li>
+              <li>本機私有 VSIX 發行與安裝驗證。</li>
+            </ul>
+          </div>
+          <div class="panel">
+            <h3>還在產品化中的能力</h3>
+            <ul>
+              <li>Handoff UI：從 replay/session/timeline 產生可複製 Markdown draft。</li>
+              <li>Usage charts：更清楚的 provider/model/project trend 視覺化。</li>
+              <li>Build identity UI：在 extension 內顯示 version、commit、installed source。</li>
+              <li>更完整的 replay export 或 bug-report bundle，但仍需保持 redaction。</li>
+              <li>Team/Lab Mode：目前只有 architecture，應等本地 handoff 完善後再做。</li>
+            </ul>
+          </div>
+        </section>
+
+        <h2 id="traceability">可追溯文件</h2>
+        <section class="panel">
+          <p>
+            下面是目前最重要的追溯入口。每個工作包的細節、檔案改動與測試結果仍保留在
+            supervision reports 中。
+          </p>
+          <table>
+            <thead>
+              <tr>
+                <th>主題</th>
+                <th>文件</th>
+                <th>用途</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Cleanup baseline</td>
+                <td><a href="roadmap/supervision/cleanup-framework.md">cleanup-framework.md</a></td>
+                <td>2026-05-27 接手清理框架、guardrails、work-package 標準格式。</td>
+              </tr>
+              <tr>
+                <td>整體 roadmap</td>
+                <td><a href="roadmap/visual-agent-control-room-roadmap.md">visual-agent-control-room-roadmap.md</a></td>
+                <td>長期 build order、phase 狀態、風險與 future work。</td>
+              </tr>
+              <tr>
+                <td>Release identity</td>
+                <td><a href="release-identity.md">release-identity.md</a></td>
+                <td>私有 extension id、VSIX 名稱、資料路徑與 public extension 分離規則。</td>
+              </tr>
+              <tr>
+                <td>Agent Center 2.0</td>
+                <td><a href="roadmap/product/agent-center-2-product-spec.md">agent-center-2-product-spec.md</a></td>
+                <td>Agent Center 頁面、Agents/Usage/Timeline acceptance criteria。</td>
+              </tr>
+              <tr>
+                <td>Usage Intelligence</td>
+                <td><a href="roadmap/product/usage-intelligence-spec.md">usage-intelligence-spec.md</a></td>
+                <td>使用量資料來源、exact/estimated/proxy 標記、history/export 原則。</td>
+              </tr>
+              <tr>
+                <td>Team/Lab Mode</td>
+                <td><a href="roadmap/product/team-lab-mode-architecture.md">team-lab-mode-architecture.md</a></td>
+                <td>未來小團隊協作、handoff、repo-centered sharing 與 privacy stance。</td>
+              </tr>
+              <tr>
+                <td>W9-A</td>
+                <td><a href="roadmap/supervision/reports/W9-A-replay-navigation-polish-report.md">W9-A report</a></td>
+                <td>Replay navigation polish、keyboard controls、test count。</td>
+              </tr>
+              <tr>
+                <td>W9-B</td>
+                <td><a href="roadmap/supervision/reports/W9-B-handoff-draft-model-report.md">W9-B report</a></td>
+                <td>Handoff draft model、redaction helper、usage summary mapping。</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <h2 id="next">下一步</h2>
+        <section class="panel">
+          <h3>建議下一包：W9-C Handoff UI</h3>
+          <p>
+            W9-B 已經完成 model-only foundation，下一步應該把它接到 Timeline / Session
+            Replay 頁面，提供 <code>Create Handoff</code>、Markdown preview、Copy Markdown
+            與 copy success/failure state。
+          </p>
+          <div class="callout">
+            Product rule: Handoff 應該維持 local-only、user-reviewed、redacted by default。
+            不要在 W9-C 加 filesystem write、git operation、sync、raw transcript export。
+          </div>
+        </section>
+
+        <footer>
+          Generated for Pixel Agents Multi on 2026-06-04. Keep this page updated after each merged
+          work package, local VSIX install, or release identity change.
+        </footer>
+      </main>
+    </div>
+  </body>
+</html>
