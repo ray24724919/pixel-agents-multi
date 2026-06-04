@@ -747,22 +747,34 @@
                 <td><a href="roadmap/supervision/reports/W9-C-handoff-ui-report.md">W9-C report</a></td>
                 <td>Timeline / Session Replay 的 Create Handoff UI、Markdown preview、copy state。</td>
               </tr>
+              <tr>
+                <td>W9-D</td>
+                <td><a href="roadmap/supervision/reports/W9-D-build-identity-ui-report.md">W9-D report</a></td>
+                <td>Build / Release Identity UI、private fork identity display、copyable diagnostics。</td>
+              </tr>
+              <tr>
+                <td>W9-E</td>
+                <td><a href="roadmap/supervision/reports/W9-E-active-workseat-fix-report.md">W9-E report</a></td>
+                <td>Active workseat restore fix、valid workstation replay after reload、office seating regression coverage。</td>
+              </tr>
             </tbody>
           </table>
         </section>
 
         <h2 id="next">下一步</h2>
         <section class="panel">
-          <h3>建議下一包：W9-D Build Identity 或 Usage Charts</h3>
+          <h3>建議下一包：W10-A Repo-Centered Handoff Artifact Writing</h3>
           <p>
-            W9-C 已經把 Handoff model 接到 Timeline / Session Replay UI。下一步可以補
-            extension 內的 build identity 顯示，降低「我現在看到的是不是舊版」的混亂；
-            或者接 Usage charts，讓 usage history 更像可讀的分析頁。
+            W9-D/W9-E 已經補上 local release visibility 與 reload 後 active workseat restore。
+            下一個功能包建議進入 W10-A：把 W9-B/W9-C 的 safe handoff draft 推進到
+            repo-centered artifact writing，讓使用者可以在本機、review-first 的流程中產生
+            redacted handoff notes。
           </p>
           <div class="callout">
             Product rule: 後續若擴充 Handoff，仍應維持 local-only、user-reviewed、
             redacted by default。不要把 raw transcript export 或自動 git operation
-            放進預設路徑。
+            放進預設路徑。W10-A 應優先寫入 repo-centered artifact，而不是 cloud sync
+            或 transcript surveillance。
           </div>
         </section>
 
