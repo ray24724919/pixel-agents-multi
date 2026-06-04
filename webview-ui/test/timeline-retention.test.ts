@@ -10,5 +10,7 @@ test('agent removal retains action timeline events for supervisor history', () =
   assert.equal(shouldRetainTimelineEventAfterAgentRemoval('delegation.started'), true);
   assert.equal(shouldRetainTimelineEventAfterAgentRemoval('delegation.completed'), true);
   assert.equal(shouldRetainTimelineEventAfterAgentRemoval('delegation.failed'), true);
+  assert.equal(shouldRetainTimelineEventAfterAgentRemoval('handoff.generated'), true);
+  assert.equal(shouldRetainTimelineEventAfterAgentRemoval('handoff.opened'), true);
   assert.equal(shouldRetainTimelineEventAfterAgentRemoval('tool.started'), false);
 });

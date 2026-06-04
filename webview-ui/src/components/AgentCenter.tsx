@@ -47,6 +47,14 @@ import {
   delegationWorkerLabel,
 } from './delegationModel.js';
 import {
+  buildOpenHandoffArtifactMessage,
+  type HandoffArtifactLibraryItem,
+  type HandoffArtifactLibraryState,
+  handoffArtifactLibraryStateFromLoadedMessage,
+  initialHandoffArtifactLibraryState,
+  shouldRefreshHandoffArtifactsForMessage,
+} from './handoffArtifactLibraryModel.js';
+import {
   buildHandoffDraftPageModel,
   buildHandoffDraftWriteMessage,
   type HandoffDraftPageModel,
@@ -105,6 +113,7 @@ type ProjectFilter = 'all' | string;
 type TeamFilter = 'all' | string;
 type UsagePane = 'live' | 'history';
 type HandoffWriteStatus = 'idle' | 'writing' | 'written' | 'failed';
+type HandoffOpenStatus = 'idle' | 'opening' | 'opened' | 'failed';
 
 interface AgentCenterSurfaceProps {
   activePage: AgentCenterPage;
@@ -1398,6 +1407,13 @@ function TimelineDashboard({
   const [handoffWrittenPath, setHandoffWrittenPath] = useState('');
   const [handoffWriteError, setHandoffWriteError] = useState('');
   const handoffWriteRequestIdRef = useRef('');
+  const [handoffLibraryState, setHandoffLibraryState] = useState<HandoffArtifactLibraryState>(
+    initialHandoffArtifactLibraryState,
+  );
+  const [handoffOpenStatus, setHandoffOpenStatus] = useState<HandoffOpenStatus>('idle');
+  const [handoffOpenedPath, setHandoffOpenedPath] = useState('');
+  const [handoffOpenError, setHandoffOpenError] = useState('');
+  const handoffOpenRequestIdRef = useRef('');
   const replayState = useMemo(
     () => resolveTimelineReplaySelection(replaySessions, replaySessionId, replayCursor),
     [replayCursor, replaySessionId, replaySessions],
@@ -1406,6 +1422,9 @@ function TimelineDashboard({
     () => buildHandoffDraftPageModel({ timelineEvents: model.events, replayState }),
     [model.events, replayState],
   );
+  const refreshHandoffArtifacts = () => {
+    vscode.postMessage({ type: 'refreshHandoffArtifacts' });
+  };
 
   useEffect(() => {
     if (replaySessions.length === 0) {
@@ -1444,13 +1463,17 @@ function TimelineDashboard({
     const handler = (event: MessageEvent) => {
       if (typeof event.data !== 'object' || event.data === null) return;
       const message = event.data as Record<string, unknown>;
-      if (
-        (message.type !== 'handoffDraftWritten' && message.type !== 'handoffDraftWriteFailed') ||
-        message.requestId !== handoffWriteRequestIdRef.current
-      ) {
+      if (message.type === 'handoffArtifactsLoaded') {
+        setHandoffLibraryState(handoffArtifactLibraryStateFromLoadedMessage(message));
         return;
       }
-      if (message.type === 'handoffDraftWritten') {
+      if (shouldRefreshHandoffArtifactsForMessage(message)) {
+        refreshHandoffArtifacts();
+      }
+      if (
+        message.type === 'handoffDraftWritten' &&
+        message.requestId === handoffWriteRequestIdRef.current
+      ) {
         setHandoffWriteStatus('written');
         setHandoffWrittenPath(
           typeof message.relativePath === 'string'
@@ -1462,14 +1485,49 @@ function TimelineDashboard({
         setHandoffWriteError('');
         return;
       }
-      setHandoffWriteStatus('failed');
-      setHandoffWrittenPath('');
-      setHandoffWriteError(
-        typeof message.error === 'string' ? message.error : 'Could not write handoff draft.',
-      );
+      if (
+        message.type === 'handoffDraftWriteFailed' &&
+        message.requestId === handoffWriteRequestIdRef.current
+      ) {
+        setHandoffWriteStatus('failed');
+        setHandoffWrittenPath('');
+        setHandoffWriteError(
+          typeof message.error === 'string' ? message.error : 'Could not write handoff draft.',
+        );
+        return;
+      }
+      if (
+        message.type === 'handoffArtifactOpened' &&
+        message.requestId === handoffOpenRequestIdRef.current
+      ) {
+        setHandoffOpenStatus('opened');
+        setHandoffOpenedPath(
+          typeof message.relativePath === 'string'
+            ? message.relativePath
+            : typeof message.path === 'string'
+              ? message.path
+              : '',
+        );
+        setHandoffOpenError('');
+        return;
+      }
+      if (
+        message.type === 'handoffArtifactOpenFailed' &&
+        message.requestId === handoffOpenRequestIdRef.current
+      ) {
+        setHandoffOpenStatus('failed');
+        setHandoffOpenedPath('');
+        setHandoffOpenError(
+          typeof message.error === 'string' ? message.error : 'Could not open handoff artifact.',
+        );
+      }
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
+  }, []);
+
+  useEffect(() => {
+    refreshHandoffArtifacts();
   }, []);
 
   useEffect(() => {
@@ -1537,6 +1595,20 @@ function TimelineDashboard({
     setHandoffWriteStatus('writing');
     setHandoffWrittenPath('');
     setHandoffWriteError('');
+    vscode.postMessage(message);
+  };
+  const openHandoffArtifact = (item: HandoffArtifactLibraryItem) => {
+    const requestId = `handoff-open-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const message = buildOpenHandoffArtifactMessage(item, requestId);
+    if (!message) {
+      setHandoffOpenStatus('failed');
+      setHandoffOpenError('No handoff artifact path is available.');
+      return;
+    }
+    handoffOpenRequestIdRef.current = requestId;
+    setHandoffOpenStatus('opening');
+    setHandoffOpenedPath('');
+    setHandoffOpenError('');
     vscode.postMessage(message);
   };
 
@@ -1631,6 +1703,15 @@ function TimelineDashboard({
         onCopy={copyHandoffMarkdown}
         onWrite={writeHandoffDraft}
         onClose={() => setIsHandoffPreviewOpen(false)}
+      />
+
+      <HandoffArtifactLibraryPanel
+        state={handoffLibraryState}
+        openStatus={handoffOpenStatus}
+        openedPath={handoffOpenedPath}
+        openError={handoffOpenError}
+        onRefresh={refreshHandoffArtifacts}
+        onOpen={openHandoffArtifact}
       />
 
       <section className="grid gap-3 border border-border bg-btn-bg p-3 md:grid-cols-2 xl:grid-cols-[minmax(220px,1fr)_150px_160px_180px] 2xl:grid-cols-[minmax(220px,1fr)_150px_160px_180px_160px_170px_220px_220px_auto]">
@@ -2093,6 +2174,90 @@ function HandoffDraftPanel({
   );
 }
 
+function HandoffArtifactLibraryPanel({
+  state,
+  openStatus,
+  openedPath,
+  openError,
+  onRefresh,
+  onOpen,
+}: {
+  state: HandoffArtifactLibraryState;
+  openStatus: HandoffOpenStatus;
+  openedPath: string;
+  openError: string;
+  onRefresh: () => void;
+  onOpen: (item: HandoffArtifactLibraryItem) => void;
+}) {
+  return (
+    <section className="border border-border bg-bg">
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border bg-btn-bg p-4">
+        <div className="min-w-0">
+          <div className="text-sm uppercase tracking-wide text-accent-bright">Recent Handoffs</div>
+          <div className="mt-1 break-words text-xs text-text-muted">
+            docs/agent-handoffs / newest local Markdown artifacts
+          </div>
+          <div className="mt-2 text-xs text-text-muted">{handoffLibraryStatusLabel(state)}</div>
+        </div>
+        <Button variant="default" size="sm" onClick={onRefresh}>
+          Refresh
+        </Button>
+      </div>
+      <div className="grid gap-3 p-4">
+        {state.unavailable ? (
+          <div className="border border-status-error bg-btn-bg p-3 text-xs text-status-error">
+            {state.error ?? 'Recent handoffs are unavailable.'}
+          </div>
+        ) : state.items.length === 0 ? (
+          <div className="border border-border bg-btn-bg p-3 text-xs text-text-muted">
+            No handoff Markdown files found yet. Written handoffs will appear here.
+          </div>
+        ) : (
+          <div className="grid gap-2">
+            {state.items.map((item) => (
+              <div
+                key={item.relativePath}
+                className="grid gap-3 border border-border bg-btn-bg p-3 md:grid-cols-[minmax(0,1fr)_auto]"
+              >
+                <div className="min-w-0">
+                  <div className="truncate text-sm text-text">{item.displayTitle}</div>
+                  <div className="mt-1 break-words text-xs text-text-muted">
+                    {item.displayDetail}
+                  </div>
+                  <div className="mt-1 break-words font-mono text-xs text-text-muted">
+                    {item.relativePath}
+                  </div>
+                </div>
+                <div className="flex items-start justify-end">
+                  <Button
+                    variant={openStatus === 'opening' ? 'disabled' : 'default'}
+                    size="sm"
+                    disabled={openStatus === 'opening'}
+                    onClick={() => onOpen(item)}
+                  >
+                    Open
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        <div
+          className={`break-words text-xs ${
+            openStatus === 'failed'
+              ? 'text-status-error'
+              : openStatus === 'opened'
+                ? 'text-status-waiting'
+                : 'text-text-muted'
+          }`}
+        >
+          {handoffOpenStatusLabel(openStatus, openedPath, openError)}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function TimelineFilterSelect({
   label,
   value,
@@ -2239,9 +2404,14 @@ function TimelineSeverityPill({ severity }: { severity: TimelineSeverity }) {
 }
 
 function TimelineHistoryPill({ event }: { event: TimelinePageItem }) {
+  const label = event.kind.startsWith('handoff.')
+    ? 'Handoff'
+    : event.isDelegationLike
+      ? 'Delegation'
+      : 'Action';
   return (
     <span className="shrink-0 border border-accent bg-btn-bg px-2 py-1 text-xs uppercase tracking-wide text-accent-bright">
-      {event.isDelegationLike ? 'Delegation' : 'Action'}
+      {label}
     </span>
   );
 }
@@ -2350,6 +2520,15 @@ function timelineHistoryStatusText(timelineHistory: TimelineHistoryState): strin
   )}`;
 }
 
+function handoffLibraryStatusLabel(state: HandoffArtifactLibraryState): string {
+  if (state.unavailable) return 'Recent handoffs unavailable';
+  if (state.loadedAtMs === undefined) return 'Recent handoffs loading';
+  const noun = state.items.length === 1 ? 'handoff' : 'handoffs';
+  return `${state.items.length.toLocaleString()} recent ${noun} / refreshed ${formatRelative(
+    state.loadedAtMs,
+  )}`;
+}
+
 function usageHistoryCopyLabel(status: 'idle' | 'copied' | 'failed'): string {
   if (status === 'copied') return 'CSV copied';
   if (status === 'failed') return 'Copy failed';
@@ -2381,6 +2560,17 @@ function handoffWriteStatusLabel(
   if (status === 'written') return `Written and opened: ${writtenPath || 'handoff draft'}`;
   if (status === 'failed') return `Write failed: ${error || 'Could not write handoff draft.'}`;
   return 'Repo write creates an editable Markdown file; nothing is staged or committed.';
+}
+
+function handoffOpenStatusLabel(
+  status: HandoffOpenStatus,
+  openedPath: string,
+  error: string,
+): string {
+  if (status === 'opening') return 'Opening handoff Markdown in VS Code...';
+  if (status === 'opened') return `Opened: ${openedPath || 'handoff artifact'}`;
+  if (status === 'failed') return `Open failed: ${error || 'Could not open handoff artifact.'}`;
+  return 'Open reads only validated repo-local Markdown handoffs.';
 }
 
 function formatProxyUsd(value: number): string {

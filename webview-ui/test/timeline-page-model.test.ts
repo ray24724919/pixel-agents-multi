@@ -118,6 +118,47 @@ test('timeline page keeps delegation history for supervisors that are no longer 
   assert.equal(items[0]?.isDelegationLike, true);
 });
 
+test('timeline page keeps handoff artifact history for agents that are no longer visible', () => {
+  const items = buildTimelinePageItems(
+    [],
+    [
+      event({
+        id: 'handoff-generated',
+        agentId: 7,
+        providerId: 'codex',
+        projectName: 'pixel-agents',
+        sessionId: 'session-handoff',
+        timestamp: 450,
+        kind: 'handoff.generated',
+        title: 'Handoff generated',
+        summary:
+          '2026-06-04-1507-pixel-handoff.md (docs/agent-handoffs/2026-06-04-1507-pixel-handoff.md)',
+        severity: 'success',
+        source: 'user',
+      }),
+      event({
+        id: 'tool-7',
+        agentId: 7,
+        timestamp: 350,
+        kind: 'tool.started',
+        title: 'Hidden tool event',
+      }),
+    ],
+    [],
+  );
+  const model = buildTimelinePageModel(items, {
+    ...defaultFilters,
+    searchQuery: 'handoff repo pixel',
+  });
+
+  assert.equal(items.length, 1);
+  assert.equal(model.events[0]?.id, 'timeline-handoff-generated');
+  assert.equal(model.events[0]?.agentName, 'Agent #7');
+  assert.equal(model.events[0]?.isActionLike, true);
+  assert.equal(model.events[0]?.category, 'other');
+  assert.equal(model.counts.actionLike, 1);
+});
+
 test('timeline page search spans event, agent, provider, and project text', () => {
   const items = buildTimelinePageItems(
     [
