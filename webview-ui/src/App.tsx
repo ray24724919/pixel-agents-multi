@@ -85,6 +85,7 @@ function App() {
     externalAssetDirectories,
     lastSeenVersion,
     extensionVersion,
+    buildIdentity,
     watchAllSessions,
     setWatchAllSessions,
     alwaysShowLabels,
@@ -622,6 +623,7 @@ function App() {
         onToggleDebugMode={handleToggleDebugMode}
         alwaysShowOverlay={alwaysShowOverlay}
         onToggleAlwaysShowOverlay={handleToggleAlwaysShowOverlay}
+        buildIdentity={buildIdentity}
         externalAssetDirectories={externalAssetDirectories}
         watchAllSessions={watchAllSessions}
         onToggleWatchAllSessions={() => {

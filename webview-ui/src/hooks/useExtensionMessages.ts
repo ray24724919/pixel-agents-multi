@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
+  type BuildIdentity,
+  DEFAULT_BUILD_IDENTITY,
+  normalizeBuildIdentity,
+} from '../components/buildIdentityModel.js';
+import {
   buildDelegationSummaries,
   type DelegationAgentContext,
   type DelegationSummary,
@@ -42,6 +47,7 @@ import {
   usageHistoryStateFromLoadedMessage,
 } from './usageHistoryMessages.js';
 
+export type { BuildIdentity } from '../components/buildIdentityModel.js';
 export type { TimelineHistoryState } from './timelineHistoryMessages.js';
 export type { UsageHistoryState } from './usageHistoryMessages.js';
 
@@ -166,6 +172,7 @@ interface ExtensionMessageState {
   externalAssetDirectories: string[];
   lastSeenVersion: string;
   extensionVersion: string;
+  buildIdentity: BuildIdentity;
   watchAllSessions: boolean;
   setWatchAllSessions: (v: boolean) => void;
   alwaysShowLabels: boolean;
@@ -320,6 +327,7 @@ export function useExtensionMessages(
   const [externalAssetDirectories, setExternalAssetDirectories] = useState<string[]>([]);
   const [lastSeenVersion, setLastSeenVersion] = useState('');
   const [extensionVersion, setExtensionVersion] = useState('');
+  const [buildIdentity, setBuildIdentity] = useState<BuildIdentity>(DEFAULT_BUILD_IDENTITY);
   const [watchAllSessions, setWatchAllSessions] = useState(false);
   const [alwaysShowLabels, setAlwaysShowLabels] = useState(false);
   const [hooksEnabled, setHooksEnabled] = useState(true);
@@ -1080,6 +1088,7 @@ export function useExtensionMessages(
         if (typeof msg.extensionVersion === 'string') {
           setExtensionVersion(msg.extensionVersion as string);
         }
+        setBuildIdentity(normalizeBuildIdentity(msg.buildIdentity));
       } else if (msg.type === 'externalAssetDirectoriesUpdated') {
         if (Array.isArray(msg.dirs)) {
           setExternalAssetDirectories(msg.dirs as string[]);
@@ -1157,6 +1166,7 @@ export function useExtensionMessages(
     externalAssetDirectories,
     lastSeenVersion,
     extensionVersion,
+    buildIdentity,
     watchAllSessions,
     setWatchAllSessions,
     alwaysShowLabels,
