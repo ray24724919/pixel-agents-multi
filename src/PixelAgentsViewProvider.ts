@@ -50,12 +50,15 @@ import {
 import { readConfig, writeConfig } from './configPersistence.js';
 import {
   CONFIG_SECTION,
+  DISPLAY_NAME,
+  EXTENSION_ID,
   GLOBAL_KEY_ALWAYS_SHOW_LABELS,
   GLOBAL_KEY_HOOKS_ENABLED,
   GLOBAL_KEY_HOOKS_INFO_SHOWN,
   GLOBAL_KEY_LAST_SEEN_VERSION,
   GLOBAL_KEY_SOUND_ENABLED,
   GLOBAL_KEY_WATCH_ALL_SESSIONS,
+  LAYOUT_FILE_DIR,
   LAYOUT_REVISION_KEY,
   WORKSPACE_KEY_AGENT_SEATS,
   WORKSPACE_KEY_ARCHIVED_AGENTS,
@@ -147,6 +150,47 @@ function codexAgentMatchesThread(agent: AgentState, thread: CodexThread): boolea
   const agentTranscript = codexPathKey(agent.jsonlFile);
   const threadTranscript = codexPathKey(thread.rolloutPath);
   return !!agentTranscript && !!threadTranscript && agentTranscript === threadTranscript;
+}
+
+function runtimeSourceForExtensionMode(mode: vscode.ExtensionMode): string {
+  switch (mode) {
+    case vscode.ExtensionMode.Development:
+      return 'development';
+    case vscode.ExtensionMode.Production:
+      return 'production';
+    case vscode.ExtensionMode.Test:
+      return 'test';
+    default:
+      return 'unknown';
+  }
+}
+
+function buildReleaseIdentity(context: vscode.ExtensionContext): {
+  extensionId: string;
+  displayName: string;
+  packageVersion: string;
+  dataRoot: string;
+  buildCommit: string;
+  runtimeSource: string;
+} {
+  const packageJson = context.extension.packageJSON as {
+    publisher?: string;
+    name?: string;
+    displayName?: string;
+    version?: string;
+  };
+  const extensionId =
+    packageJson.publisher && packageJson.name
+      ? `${packageJson.publisher}.${packageJson.name}`
+      : EXTENSION_ID;
+  return {
+    extensionId,
+    displayName: packageJson.displayName ?? DISPLAY_NAME,
+    packageVersion: packageJson.version ?? 'unknown',
+    dataRoot: `~/${LAYOUT_FILE_DIR}`,
+    buildCommit: 'unknown',
+    runtimeSource: runtimeSourceForExtensionMode(context.extensionMode),
+  };
 }
 
 export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
@@ -1360,6 +1404,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
           hooksEnabled,
           hooksInfoShown,
           externalAssetDirectories: config.externalAssetDirectories,
+          buildIdentity: buildReleaseIdentity(this.context),
         });
 
         // Send workspace folders to webview (only when multi-root)
