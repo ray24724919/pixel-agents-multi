@@ -29,6 +29,13 @@ test('handoff artifact library model builds display items from safe metadata', (
         modifiedAt: 1_780_000_000_000,
         sizeBytes: 1536,
         title: 'Pixel handoff',
+        artifactId: '2026-06-04-1507-pixel-handoff',
+        metadataRelativePath: 'docs/agent-handoffs/2026-06-04-1507-pixel-handoff.handoff.json',
+        status: 'draft',
+        createdAt: '2026-06-04T07:07:00.000Z',
+        updatedAt: '2026-06-04T07:08:00.000Z',
+        providerId: 'codex',
+        projectName: 'Pixel Agents Multi',
         absolutePath: 'C:\\Users\\User\\secret.md',
       },
     ],
@@ -37,12 +44,42 @@ test('handoff artifact library model builds display items from safe metadata', (
 
   assert.equal(state.items.length, 1);
   assert.equal(state.items[0]?.displayTitle, 'Pixel handoff');
+  assert.equal(state.items[0]?.artifactId, '2026-06-04-1507-pixel-handoff');
+  assert.equal(
+    state.items[0]?.metadataRelativePath,
+    'docs/agent-handoffs/2026-06-04-1507-pixel-handoff.handoff.json',
+  );
+  assert.equal(state.items[0]?.status, 'draft');
+  assert.equal(state.items[0]?.statusLabel, 'Draft');
+  assert.equal(state.items[0]?.providerId, 'codex');
+  assert.equal(state.items[0]?.projectName, 'Pixel Agents Multi');
   assert.equal(
     state.items[0]?.relativePath,
     'docs/agent-handoffs/2026-06-04-1507-pixel-handoff.md',
   );
   assert.match(state.items[0]?.displayDetail ?? '', /1\.5 KB/);
+  assert.match(state.items[0]?.displayDetail ?? '', /Draft/);
   assert.equal('absolutePath' in (state.items[0] ?? {}), false);
+});
+
+test('handoff artifact library model falls back for markdown-only handoffs', () => {
+  const state = handoffArtifactLibraryStateFromLoadedMessage({
+    type: 'handoffArtifactsLoaded',
+    artifacts: [
+      {
+        relativePath: 'docs/agent-handoffs/2026-06-04-1507-pixel-handoff.md',
+        filename: '2026-06-04-1507-pixel-handoff.md',
+        modifiedAt: 1_780_000_000_000,
+        sizeBytes: 512,
+      },
+    ],
+    loadedAtMs: 1_780_000_000_100,
+  });
+
+  assert.equal(state.items[0]?.displayTitle, '2026-06-04-1507-pixel-handoff.md');
+  assert.equal(state.items[0]?.statusLabel, 'Markdown only');
+  assert.equal(state.items[0]?.artifactId, undefined);
+  assert.match(state.items[0]?.displayDetail ?? '', /Markdown only/);
 });
 
 test('handoff artifact open message sends only the repo-relative path', () => {
@@ -61,6 +98,7 @@ test('handoff artifact open message sends only the repo-relative path', () => {
   });
   assert.equal('path' in message, false);
   assert.equal('absolutePath' in message, false);
+  assert.equal('metadataRelativePath' in message, false);
 });
 
 test('handoff artifact library refreshes after successful write acknowledgements', () => {

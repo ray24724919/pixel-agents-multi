@@ -4,9 +4,13 @@ import * as path from 'path';
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildHandoffArtifactMetadata,
   buildHandoffArtifactTarget,
   extractHandoffMarkdownTitle,
   formatHandoffTimestamp,
+  getHandoffArtifactMetadataRelativePath,
+  parseHandoffArtifactMetadata,
+  resolveHandoffArtifactMetadataPath,
   resolveHandoffArtifactOpenPath,
   safeHandoffFilenamePart,
   scanHandoffArtifacts,
@@ -25,6 +29,10 @@ describe('handoff artifact path safety', () => {
 
     expect(target.relativeDir).toBe('docs/agent-handoffs');
     expect(target.filename).toBe('2026-06-04-1507-pixel-agents-multi-handoff.md');
+    expect(target.artifactId).toBe('2026-06-04-1507-pixel-agents-multi-handoff');
+    expect(target.metadataRelativePath).toBe(
+      'docs/agent-handoffs/2026-06-04-1507-pixel-agents-multi-handoff.handoff.json',
+    );
     expect(target.absolutePath).toBe(
       path.resolve(repoRoot, 'docs/agent-handoffs', target.filename),
     );
@@ -94,6 +102,133 @@ describe('handoff artifact path safety', () => {
     }
   });
 
+  it('writes and reads sidecar metadata when present in the handoff library', () => {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pixel-handoff-metadata-'));
+    try {
+      const target = buildHandoffArtifactTarget(
+        repoRoot,
+        { project: 'Pixel Agents Multi' },
+        new Date(2026, 5, 4, 15, 7).getTime(),
+      );
+      fs.mkdirSync(path.dirname(target.absolutePath), { recursive: true });
+      fs.writeFileSync(target.absolutePath, '# Markdown fallback title\n\nBody', 'utf8');
+      const metadata = buildHandoffArtifactMetadata(
+        target,
+        {
+          title: 'Reviewed W10-C handoff',
+          providerId: 'codex',
+          projectName: 'Pixel Agents Multi',
+          agentName: 'Codex Lead',
+          sessionId: 'session-123',
+          runId: 'W10-C',
+        },
+        Date.UTC(2026, 5, 4, 7, 7),
+      );
+      fs.writeFileSync(
+        target.metadataAbsolutePath,
+        `${JSON.stringify(metadata, null, 2)}\n`,
+        'utf8',
+      );
+
+      const summaries = scanHandoffArtifacts(repoRoot);
+
+      expect(summaries).toHaveLength(1);
+      expect(summaries[0]?.title).toBe('Reviewed W10-C handoff');
+      expect(summaries[0]?.artifactId).toBe(target.artifactId);
+      expect(summaries[0]?.metadataRelativePath).toBe(target.metadataRelativePath);
+      expect(summaries[0]?.status).toBe('draft');
+      expect(summaries[0]?.providerId).toBe('codex');
+      expect(summaries[0]?.projectName).toBe('Pixel Agents Multi');
+      expect(summaries[0]?.sessionId).toBe('session-123');
+      expect(summaries[0]?.runId).toBe('W10-C');
+      expect(summaries[0]?.createdAt).toBe('2026-06-04T07:07:00.000Z');
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('falls back to markdown headings when sidecar metadata is malformed', () => {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pixel-handoff-bad-metadata-'));
+    try {
+      const target = buildHandoffArtifactTarget(repoRoot, { project: 'Bad Metadata' });
+      fs.mkdirSync(path.dirname(target.absolutePath), { recursive: true });
+      fs.writeFileSync(target.absolutePath, '# Fallback title\n\nBody', 'utf8');
+      fs.writeFileSync(
+        target.metadataAbsolutePath,
+        JSON.stringify({
+          schemaVersion: 999,
+          artifactId: target.artifactId,
+          artifactType: 'handoff',
+          markdownRelativePath: target.relativePath,
+          title: 'Bad sidecar title',
+          status: 'draft',
+          createdAt: '2026-06-04T00:00:00.000Z',
+          updatedAt: '2026-06-04T00:00:00.000Z',
+        }),
+        'utf8',
+      );
+
+      const summaries = scanHandoffArtifacts(repoRoot);
+
+      expect(summaries).toHaveLength(1);
+      expect(summaries[0]?.title).toBe('Fallback title');
+      expect(summaries[0]?.artifactId).toBeUndefined();
+      expect(summaries[0]?.status).toBeUndefined();
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('builds draft metadata without raw paths or unsafe prompt-like title text', () => {
+    const repoRoot = path.resolve('/workspace/project');
+    const target = buildHandoffArtifactTarget(repoRoot, { project: 'Safe Project' });
+
+    const metadata = buildHandoffArtifactMetadata(target, {
+      title: 'Raw prompt: read C:\\Users\\User\\secret\\transcript.jsonl sk-secret0000',
+      projectName: 'C:\\Users\\User\\repo',
+      providerId: 'codex',
+      agentName: 'Codex C:\\Users\\User\\agent',
+      sessionId: 'session-123',
+      runId: 'run-123',
+    });
+
+    expect(metadata.schemaVersion).toBe(1);
+    expect(metadata.artifactId).toBe(target.artifactId);
+    expect(metadata.markdownRelativePath).toBe(target.relativePath);
+    expect(metadata.status).toBe('draft');
+    expect(metadata.title).toBe('[redacted content]');
+    expect(metadata.projectName).toBe('[redacted path]');
+    expect(metadata.agentName).toBe('Codex [redacted path]');
+    expect(JSON.stringify(metadata)).not.toContain('C:\\Users\\User');
+    expect(JSON.stringify(metadata)).not.toContain('sk-secret0000');
+  });
+
+  it('parses only valid local handoff metadata schema', () => {
+    const valid = {
+      schemaVersion: 1,
+      artifactId: '2026-06-04-1507-safe-handoff',
+      artifactType: 'handoff',
+      markdownRelativePath: 'docs/agent-handoffs/2026-06-04-1507-safe-handoff.md',
+      title: 'Safe handoff',
+      status: 'draft',
+      createdAt: '2026-06-04T07:07:00.000Z',
+      updatedAt: '2026-06-04T07:08:00.000Z',
+    };
+
+    expect(parseHandoffArtifactMetadata(valid)?.artifactId).toBe('2026-06-04-1507-safe-handoff');
+    expect(parseHandoffArtifactMetadata({ ...valid, status: 'deleted' })).toBeUndefined();
+    expect(
+      parseHandoffArtifactMetadata({
+        ...valid,
+        markdownRelativePath: 'docs/agent-handoffs/../escape.md',
+      }),
+    ).toBeUndefined();
+    expect(
+      parseHandoffArtifactMetadata({ ...valid, artifactId: 'different-artifact-id' }),
+    ).toBeUndefined();
+    expect(parseHandoffArtifactMetadata({ ...valid, createdAt: 'not a date' })).toBeUndefined();
+  });
+
   it('extracts the first safe markdown heading for library titles', () => {
     expect(
       extractHandoffMarkdownTitle(
@@ -134,5 +269,40 @@ describe('handoff artifact path safety', () => {
     expect(() => resolveHandoffArtifactOpenPath(repoRoot, 'docs/not-handoffs/review.md')).toThrow(
       /Markdown files under docs\/agent-handoffs/,
     );
+  });
+
+  it('validates metadata sidecar paths as repo-relative handoff JSON only', () => {
+    const repoRoot = path.resolve('C:/workspace/pixel-agents-multi');
+    expect(
+      getHandoffArtifactMetadataRelativePath(
+        'docs/agent-handoffs/2026-01-03-0900-gamma-handoff.md',
+      ),
+    ).toBe('docs/agent-handoffs/2026-01-03-0900-gamma-handoff.handoff.json');
+    const target = resolveHandoffArtifactMetadataPath(
+      repoRoot,
+      'docs/agent-handoffs/2026-01-03-0900-gamma-handoff.handoff.json',
+    );
+
+    expect(target.relativePath).toBe(
+      'docs/agent-handoffs/2026-01-03-0900-gamma-handoff.handoff.json',
+    );
+    expect(() =>
+      resolveHandoffArtifactMetadataPath(
+        repoRoot,
+        'docs/agent-handoffs/2026-01-03-0900-gamma-handoff.json',
+      ),
+    ).toThrow(/metadata must be JSON files under docs\/agent-handoffs/);
+    expect(() =>
+      resolveHandoffArtifactMetadataPath(
+        repoRoot,
+        'docs/agent-handoffs/nested/2026-01-03-0900-gamma-handoff.handoff.json',
+      ),
+    ).toThrow(/metadata must be JSON files under docs\/agent-handoffs/);
+    expect(() =>
+      resolveHandoffArtifactMetadataPath(
+        repoRoot,
+        'C:/workspace/pixel-agents-multi/docs/agent-handoffs/review.handoff.json',
+      ),
+    ).toThrow(/repo-relative/);
   });
 });

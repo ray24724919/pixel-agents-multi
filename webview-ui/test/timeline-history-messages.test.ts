@@ -34,6 +34,8 @@ test('timeline history loaded messages normalize safe persisted events', () => {
         projectName: 'docs',
         sessionId: 'session-1',
         runId: 'W8-A',
+        artifactId: '2026-06-04-1507-safe-handoff',
+        artifactStatus: 'draft',
         timestamp: 500,
         kind: 'delegation.started',
         title: 'Delegation started',
@@ -52,6 +54,8 @@ test('timeline history loaded messages normalize safe persisted events', () => {
   assert.equal(events[0]?.id, 'persisted-1');
   assert.equal(events[0]?.providerId, 'claude');
   assert.equal(events[0]?.statusAfter, 'tool_running');
+  assert.equal(events[0]?.artifactId, '2026-06-04-1507-safe-handoff');
+  assert.equal(events[0]?.artifactStatus, 'draft');
   assert.equal('payload' in events[0]!, false);
   assert.doesNotMatch(JSON.stringify(events[0]), /rawPrompt|do not keep/);
 });

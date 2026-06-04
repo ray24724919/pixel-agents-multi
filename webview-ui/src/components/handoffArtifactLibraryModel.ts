@@ -4,8 +4,20 @@ export interface HandoffArtifactLibraryItem {
   modifiedAt: number;
   sizeBytes: number;
   title?: string;
+  artifactId?: string;
+  artifactType?: string;
+  metadataRelativePath?: string;
+  status?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  providerId?: string;
+  projectName?: string;
+  agentName?: string;
+  sessionId?: string;
+  runId?: string;
   displayTitle: string;
   displayDetail: string;
+  statusLabel: string;
 }
 
 export interface HandoffArtifactLibraryState {
@@ -68,15 +80,52 @@ function handoffArtifactItemFromUnknown(value: unknown): HandoffArtifactLibraryI
     return undefined;
   }
   const title = stringValue(record.title);
+  const status = stringValue(record.status);
+  const createdAt = stringValue(record.createdAt);
+  const updatedAt = stringValue(record.updatedAt);
+  const artifactId = stringValue(record.artifactId);
+  const artifactType = stringValue(record.artifactType);
+  const metadataRelativePath = stringValue(record.metadataRelativePath);
+  const providerId = stringValue(record.providerId);
+  const projectName = stringValue(record.projectName);
+  const agentName = stringValue(record.agentName);
+  const sessionId = stringValue(record.sessionId);
+  const runId = stringValue(record.runId);
+  const statusLabel = handoffStatusLabel(status);
+  const updatedAtMs = updatedAt ? Date.parse(updatedAt) : undefined;
+  const updatedLabel =
+    updatedAtMs !== undefined && Number.isFinite(updatedAtMs)
+      ? `updated ${formatDateTime(updatedAtMs)}`
+      : formatDateTime(modifiedAt);
   return {
     relativePath,
     filename,
     modifiedAt,
     sizeBytes,
     title,
+    artifactId,
+    artifactType,
+    metadataRelativePath,
+    status,
+    createdAt,
+    updatedAt,
+    providerId,
+    projectName,
+    agentName,
+    sessionId,
+    runId,
     displayTitle: title ?? filename,
-    displayDetail: `${filename} / ${formatBytes(sizeBytes)} / ${formatDateTime(modifiedAt)}`,
+    displayDetail: `${statusLabel} / ${filename} / ${formatBytes(sizeBytes)} / ${updatedLabel}`,
+    statusLabel,
   };
+}
+
+function handoffStatusLabel(status: string | undefined): string {
+  if (status === 'published') return 'Published';
+  if (status === 'reviewed') return 'Reviewed';
+  if (status === 'stale') return 'Stale';
+  if (status === 'draft') return 'Draft';
+  return 'Markdown only';
 }
 
 function formatBytes(value: number): string {

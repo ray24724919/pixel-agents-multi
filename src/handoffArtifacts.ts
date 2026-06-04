@@ -6,6 +6,8 @@ import {
   HANDOFF_ARTIFACT_FILENAME_SUFFIX,
   HANDOFF_ARTIFACT_LIBRARY_MAX_ITEMS,
   HANDOFF_ARTIFACT_MAX_SLUG_LENGTH,
+  HANDOFF_ARTIFACT_METADATA_EXTENSION,
+  HANDOFF_ARTIFACT_METADATA_SCHEMA_VERSION,
   HANDOFF_ARTIFACT_TITLE_SCAN_BYTES,
   HANDOFF_ARTIFACTS_RELATIVE_DIR,
 } from './constants.js';
@@ -17,12 +19,44 @@ export interface HandoffArtifactNamingInput {
   timestampMs?: number;
 }
 
+export interface HandoffArtifactMetadataInput {
+  title?: unknown;
+  providerId?: unknown;
+  projectName?: unknown;
+  agentName?: unknown;
+  sessionId?: unknown;
+  runId?: unknown;
+  status?: unknown;
+}
+
 export interface HandoffArtifactTarget {
   repoRoot: string;
   relativeDir: string;
   relativePath: string;
   filename: string;
   absolutePath: string;
+  artifactId: string;
+  metadataRelativePath: string;
+  metadataFilename: string;
+  metadataAbsolutePath: string;
+}
+
+export type HandoffArtifactStatus = 'draft' | 'published' | 'reviewed' | 'stale';
+
+export interface HandoffArtifactMetadataV1 {
+  schemaVersion: typeof HANDOFF_ARTIFACT_METADATA_SCHEMA_VERSION;
+  artifactId: string;
+  artifactType: 'handoff';
+  markdownRelativePath: string;
+  title: string;
+  status: HandoffArtifactStatus;
+  createdAt: string;
+  updatedAt: string;
+  providerId?: string;
+  projectName?: string;
+  agentName?: string;
+  sessionId?: string;
+  runId?: string;
 }
 
 export interface HandoffArtifactSummary {
@@ -31,6 +65,17 @@ export interface HandoffArtifactSummary {
   modifiedAt: number;
   sizeBytes: number;
   title?: string;
+  artifactId?: string;
+  artifactType?: 'handoff';
+  metadataRelativePath?: string;
+  status?: HandoffArtifactStatus;
+  createdAt?: string;
+  updatedAt?: string;
+  providerId?: string;
+  projectName?: string;
+  agentName?: string;
+  sessionId?: string;
+  runId?: string;
 }
 
 export interface HandoffArtifactOpenPath {
@@ -39,6 +84,8 @@ export interface HandoffArtifactOpenPath {
   filename: string;
   absolutePath: string;
 }
+
+export interface HandoffArtifactMetadataPath extends HandoffArtifactOpenPath {}
 
 export function buildHandoffArtifactTarget(
   repoRoot: string,
@@ -49,14 +96,26 @@ export function buildHandoffArtifactTarget(
   const timestamp = formatHandoffTimestamp(input.timestampMs ?? nowMs);
   const slug = safeHandoffFilenamePart(input.project ?? input.agentName ?? input.title);
   const filename = `${timestamp}-${slug}-${HANDOFF_ARTIFACT_FILENAME_SUFFIX}.md`;
+  const artifactId = artifactIdFromMarkdownFilename(filename);
+  const metadataFilename = `${artifactId}${HANDOFF_ARTIFACT_METADATA_EXTENSION}`;
   const absolutePath = path.resolve(resolvedRoot, HANDOFF_ARTIFACTS_RELATIVE_DIR, filename);
+  const metadataAbsolutePath = path.resolve(
+    resolvedRoot,
+    HANDOFF_ARTIFACTS_RELATIVE_DIR,
+    metadataFilename,
+  );
   assertPathInsideRepo(resolvedRoot, absolutePath);
+  assertPathInsideRepo(resolvedRoot, metadataAbsolutePath);
   return {
     repoRoot: resolvedRoot,
     relativeDir: HANDOFF_ARTIFACTS_RELATIVE_DIR,
     relativePath: `${HANDOFF_ARTIFACTS_RELATIVE_DIR}/${filename}`,
     filename,
     absolutePath,
+    artifactId,
+    metadataRelativePath: `${HANDOFF_ARTIFACTS_RELATIVE_DIR}/${metadataFilename}`,
+    metadataFilename,
+    metadataAbsolutePath,
   };
 }
 
@@ -79,12 +138,26 @@ export function scanHandoffArtifacts(
       continue;
     }
     const stat = fs.statSync(absolutePath);
+    const metadata = readHandoffArtifactMetadataForMarkdown(repoRoot, relativePath);
     summaries.push({
       relativePath,
       filename: entry.name,
-      modifiedAt: stat.mtimeMs,
+      modifiedAt: timestampMs(metadata?.updatedAt) ?? stat.mtimeMs,
       sizeBytes: stat.size,
-      title: readHandoffMarkdownTitle(absolutePath),
+      title: metadata?.title ?? readHandoffMarkdownTitle(absolutePath),
+      artifactId: metadata?.artifactId,
+      artifactType: metadata?.artifactType,
+      metadataRelativePath: metadata
+        ? getHandoffArtifactMetadataRelativePath(metadata.markdownRelativePath)
+        : undefined,
+      status: metadata?.status,
+      createdAt: metadata?.createdAt,
+      updatedAt: metadata?.updatedAt,
+      providerId: metadata?.providerId,
+      projectName: metadata?.projectName,
+      agentName: metadata?.agentName,
+      sessionId: metadata?.sessionId,
+      runId: metadata?.runId,
     });
   }
   return summaries
@@ -106,6 +179,115 @@ export function resolveHandoffArtifactOpenPath(
     filename: path.posix.basename(safeRelativePath),
     absolutePath,
   };
+}
+
+export function resolveHandoffArtifactMetadataPath(
+  repoRoot: string,
+  relativePath: unknown,
+): HandoffArtifactMetadataPath {
+  const safeRelativePath = normalizedHandoffMetadataRelativePath(relativePath);
+  const resolvedRoot = path.resolve(repoRoot);
+  const absolutePath = path.resolve(resolvedRoot, ...safeRelativePath.split('/'));
+  assertPathInsideRepo(resolvedRoot, absolutePath);
+  return {
+    repoRoot: resolvedRoot,
+    relativePath: safeRelativePath,
+    filename: path.posix.basename(safeRelativePath),
+    absolutePath,
+  };
+}
+
+export function buildHandoffArtifactMetadata(
+  target: HandoffArtifactTarget,
+  input: HandoffArtifactMetadataInput,
+  nowMs = Date.now(),
+): HandoffArtifactMetadataV1 {
+  const timestamp = new Date(nowMs);
+  const isoTimestamp = Number.isFinite(timestamp.getTime())
+    ? timestamp.toISOString()
+    : new Date().toISOString();
+  const title =
+    safeHandoffMetadataText(input.title) ??
+    safeHandoffMetadataText(input.projectName) ??
+    safeHandoffMetadataText(target.filename) ??
+    'Handoff draft';
+  const metadata: HandoffArtifactMetadataV1 = {
+    schemaVersion: HANDOFF_ARTIFACT_METADATA_SCHEMA_VERSION,
+    artifactId: target.artifactId,
+    artifactType: 'handoff',
+    markdownRelativePath: target.relativePath,
+    title,
+    status: handoffArtifactStatus(input.status) ?? 'draft',
+    createdAt: isoTimestamp,
+    updatedAt: isoTimestamp,
+  };
+  const providerId = safeHandoffMetadataToken(input.providerId);
+  const projectName = safeHandoffMetadataText(input.projectName);
+  const agentName = safeHandoffMetadataText(input.agentName);
+  const sessionId = safeHandoffMetadataToken(input.sessionId);
+  const runId = safeHandoffMetadataToken(input.runId);
+  if (providerId) metadata.providerId = providerId;
+  if (projectName) metadata.projectName = projectName;
+  if (agentName) metadata.agentName = agentName;
+  if (sessionId) metadata.sessionId = sessionId;
+  if (runId) metadata.runId = runId;
+  return metadata;
+}
+
+export function parseHandoffArtifactMetadata(
+  value: unknown,
+): HandoffArtifactMetadataV1 | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const record = value as Record<string, unknown>;
+  if (record.schemaVersion !== HANDOFF_ARTIFACT_METADATA_SCHEMA_VERSION) return undefined;
+  if (record.artifactType !== 'handoff') return undefined;
+  const artifactId = safeArtifactId(record.artifactId);
+  const markdownRelativePath = safeHandoffMarkdownRelativePath(record.markdownRelativePath);
+  const title = safeHandoffMetadataText(record.title);
+  const status = handoffArtifactStatus(record.status);
+  const createdAt = isoTimestamp(record.createdAt);
+  const updatedAt = isoTimestamp(record.updatedAt);
+  if (!artifactId || !markdownRelativePath || !title || !status || !createdAt || !updatedAt) {
+    return undefined;
+  }
+  let markdownArtifactId: string;
+  try {
+    markdownArtifactId = artifactIdFromMarkdownRelativePath(markdownRelativePath);
+  } catch {
+    return undefined;
+  }
+  if (artifactId !== markdownArtifactId) {
+    return undefined;
+  }
+
+  const metadata: HandoffArtifactMetadataV1 = {
+    schemaVersion: HANDOFF_ARTIFACT_METADATA_SCHEMA_VERSION,
+    artifactId,
+    artifactType: 'handoff',
+    markdownRelativePath,
+    title,
+    status,
+    createdAt,
+    updatedAt,
+  };
+  const providerId = safeHandoffMetadataToken(record.providerId);
+  const projectName = safeHandoffMetadataText(record.projectName);
+  const agentName = safeHandoffMetadataText(record.agentName);
+  const sessionId = safeHandoffMetadataToken(record.sessionId);
+  const runId = safeHandoffMetadataToken(record.runId);
+  if (providerId) metadata.providerId = providerId;
+  if (projectName) metadata.projectName = projectName;
+  if (agentName) metadata.agentName = agentName;
+  if (sessionId) metadata.sessionId = sessionId;
+  if (runId) metadata.runId = runId;
+  return metadata;
+}
+
+export function getHandoffArtifactMetadataRelativePath(markdownRelativePath: unknown): string {
+  const safeMarkdownRelativePath = normalizedHandoffRelativePath(markdownRelativePath);
+  const filename = path.posix.basename(safeMarkdownRelativePath);
+  const artifactId = artifactIdFromMarkdownFilename(filename);
+  return `${HANDOFF_ARTIFACTS_RELATIVE_DIR}/${artifactId}${HANDOFF_ARTIFACT_METADATA_EXTENSION}`;
 }
 
 export function safeHandoffFilenamePart(value: unknown): string {
@@ -181,6 +363,60 @@ function normalizedHandoffRelativePath(relativePath: unknown): string {
   return normalized;
 }
 
+function normalizedHandoffMetadataRelativePath(relativePath: unknown): string {
+  if (typeof relativePath !== 'string' || !relativePath.trim()) {
+    throw new Error('A handoff artifact metadata path is required.');
+  }
+  const raw = relativePath.trim();
+  if (
+    raw.includes('\\') ||
+    /^[A-Za-z]:/.test(raw) ||
+    path.isAbsolute(raw) ||
+    raw.startsWith('//') ||
+    raw.includes('\0')
+  ) {
+    throw new Error('Handoff artifact metadata paths must be repo-relative JSON paths.');
+  }
+  const normalized = path.posix.normalize(raw);
+  if (
+    normalized === '.' ||
+    normalized.startsWith('../') ||
+    normalized === '..' ||
+    normalized.startsWith('/') ||
+    !normalized.startsWith(`${HANDOFF_ARTIFACTS_RELATIVE_DIR}/`) ||
+    path.posix.dirname(normalized) !== HANDOFF_ARTIFACTS_RELATIVE_DIR ||
+    !normalized.endsWith(HANDOFF_ARTIFACT_METADATA_EXTENSION)
+  ) {
+    throw new Error(
+      `Handoff artifact metadata must be JSON files under ${HANDOFF_ARTIFACTS_RELATIVE_DIR}.`,
+    );
+  }
+  safeArtifactId(path.posix.basename(normalized, HANDOFF_ARTIFACT_METADATA_EXTENSION), true);
+  return normalized;
+}
+
+export function readHandoffArtifactMetadataForMarkdown(
+  repoRoot: string,
+  markdownRelativePath: string,
+): HandoffArtifactMetadataV1 | undefined {
+  let metadataTarget: HandoffArtifactMetadataPath;
+  try {
+    const metadataRelativePath = getHandoffArtifactMetadataRelativePath(markdownRelativePath);
+    metadataTarget = resolveHandoffArtifactMetadataPath(repoRoot, metadataRelativePath);
+  } catch {
+    return undefined;
+  }
+  if (!fs.existsSync(metadataTarget.absolutePath)) return undefined;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(metadataTarget.absolutePath, 'utf8')) as unknown;
+    const metadata = parseHandoffArtifactMetadata(parsed);
+    if (!metadata || metadata.markdownRelativePath !== markdownRelativePath) return undefined;
+    return metadata;
+  } catch {
+    return undefined;
+  }
+}
+
 function readHandoffMarkdownTitle(absolutePath: string): string | undefined {
   let fd: number;
   try {
@@ -198,7 +434,12 @@ function readHandoffMarkdownTitle(absolutePath: string): string | undefined {
 }
 
 function safeHandoffTitle(value: string): string | undefined {
-  const title = value
+  return safeHandoffMetadataText(value);
+}
+
+function safeHandoffMetadataText(value: unknown): string | undefined {
+  if (typeof value !== 'string' && typeof value !== 'number') return undefined;
+  const title = String(value)
     .replace(/\\\\\?\\[^\s)]+/g, '[redacted path]')
     .replace(/[A-Za-z]:\\[^\s)]+/g, '[redacted path]')
     .replace(/\\\\[^\s)]+/g, '[redacted path]')
@@ -213,8 +454,68 @@ function safeHandoffTitle(value: string): string | undefined {
     .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, '[redacted secret]')
     .replace(/[\u0000-\u001f\u007f]/g, ' ')
     .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 240)
     .trim();
   return title || undefined;
+}
+
+function safeHandoffMetadataToken(value: unknown): string | undefined {
+  const text = safeHandoffMetadataText(value);
+  if (!text || text.includes('[redacted')) return undefined;
+  return text.slice(0, 160);
+}
+
+function safeHandoffMarkdownRelativePath(value: unknown): string | undefined {
+  try {
+    return normalizedHandoffRelativePath(value);
+  } catch {
+    return undefined;
+  }
+}
+
+function handoffArtifactStatus(value: unknown): HandoffArtifactStatus | undefined {
+  if (value === 'draft' || value === 'published' || value === 'reviewed' || value === 'stale') {
+    return value;
+  }
+  return undefined;
+}
+
+function isoTimestamp(value: unknown): string | undefined {
+  if (typeof value !== 'string' || !value.trim()) return undefined;
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return undefined;
+  return new Date(timestamp).toISOString();
+}
+
+function timestampMs(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : undefined;
+}
+
+function artifactIdFromMarkdownRelativePath(markdownRelativePath: string): string {
+  return artifactIdFromMarkdownFilename(path.posix.basename(markdownRelativePath));
+}
+
+function artifactIdFromMarkdownFilename(filename: string): string {
+  const basename = path.posix.basename(filename, '.md');
+  const artifactId = safeArtifactId(basename);
+  if (!artifactId) {
+    throw new Error('Handoff artifact id must be a safe filename-derived identifier.');
+  }
+  return artifactId;
+}
+
+function safeArtifactId(value: unknown, shouldThrow = false): string | undefined {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  if (/^[a-z0-9][a-z0-9._-]{0,127}$/.test(raw) && !raw.includes('..')) {
+    return raw;
+  }
+  if (shouldThrow) {
+    throw new Error('Handoff artifact id must be a safe repo-local identifier.');
+  }
+  return undefined;
 }
 
 function assertPathInsideRepo(repoRoot: string, targetPath: string): void {

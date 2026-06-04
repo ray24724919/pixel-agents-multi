@@ -83,7 +83,9 @@ import {
   syncClaudeAgentMetadata,
 } from './fileWatcher.js';
 import {
+  buildHandoffArtifactMetadata,
   buildHandoffArtifactTarget,
+  readHandoffArtifactMetadataForMarkdown,
   resolveHandoffArtifactOpenPath,
   scanHandoffArtifacts,
 } from './handoffArtifacts.js';
@@ -296,13 +298,36 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       if (!repoRoot) {
         throw new Error('Open a repository workspace before writing a handoff draft.');
       }
-      const target = buildHandoffArtifactTarget(repoRoot, {
-        project: message.project,
-        agentName: message.agentName,
-        title: message.title,
-      });
+      const nowMs = Date.now();
+      const target = buildHandoffArtifactTarget(
+        repoRoot,
+        {
+          project: message.project,
+          agentName: message.agentName,
+          title: message.title,
+        },
+        nowMs,
+      );
+      const metadata = buildHandoffArtifactMetadata(
+        target,
+        {
+          title: message.title,
+          providerId: message.providerId,
+          projectName: message.project,
+          agentName: message.agentName,
+          sessionId: message.sessionId,
+          runId: message.runId,
+          status: 'draft',
+        },
+        nowMs,
+      );
       await fs.promises.mkdir(path.dirname(target.absolutePath), { recursive: true });
       await fs.promises.writeFile(target.absolutePath, markdown, 'utf8');
+      await fs.promises.writeFile(
+        target.metadataAbsolutePath,
+        `${JSON.stringify(metadata, null, 2)}\n`,
+        'utf8',
+      );
       const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(target.absolutePath));
       await vscode.window.showTextDocument(doc, { preview: false });
       this.webview?.postMessage({
@@ -311,10 +336,15 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         path: target.relativePath,
         relativePath: target.relativePath,
         filename: target.filename,
+        artifactId: metadata.artifactId,
+        metadataRelativePath: target.metadataRelativePath,
+        status: metadata.status,
       });
       this.postHandoffTimelineEvent('handoff.generated', target.relativePath, {
         ...message,
         filename: target.filename,
+        artifactId: metadata.artifactId,
+        artifactStatus: metadata.status,
       });
       this.postHandoffArtifactsLoaded();
       vscode.window.showInformationMessage(
@@ -375,8 +405,15 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         relativePath: target.relativePath,
         filename: target.filename,
       });
+      const metadata = readHandoffArtifactMetadataForMarkdown(repoRoot, target.relativePath);
       this.postHandoffTimelineEvent('handoff.opened', target.relativePath, {
         filename: target.filename,
+        artifactId: metadata?.artifactId,
+        artifactStatus: metadata?.status,
+        providerId: metadata?.providerId,
+        project: metadata?.projectName,
+        sessionId: metadata?.sessionId,
+        runId: metadata?.runId,
       });
     } catch (error) {
       this.webview?.postMessage({
@@ -397,17 +434,25 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       typeof metadata.filename === 'string' && metadata.filename.trim()
         ? metadata.filename.trim()
         : path.posix.basename(relativePath);
+    const artifactId = typeof metadata.artifactId === 'string' ? metadata.artifactId : undefined;
+    const artifactStatus =
+      typeof metadata.artifactStatus === 'string' ? metadata.artifactStatus : undefined;
+    const summaryParts = [relativePath, artifactId, artifactStatus].filter(
+      (part): part is string => typeof part === 'string' && part.trim().length > 0,
+    );
     postAgentTimelineEvent(this.webview, {
       agentId: typeof metadata.agentId === 'number' ? metadata.agentId : 0,
       kind,
       title: kind === 'handoff.generated' ? 'Handoff generated' : 'Handoff opened',
-      summary: `${filename} (${relativePath})`,
+      summary: `${filename} (${summaryParts.join(' / ')})`,
       severity: 'success',
       source: 'user',
       providerId: typeof metadata.providerId === 'string' ? metadata.providerId : undefined,
       projectName: typeof metadata.project === 'string' ? metadata.project : undefined,
       sessionId: typeof metadata.sessionId === 'string' ? metadata.sessionId : undefined,
       runId: typeof metadata.runId === 'string' ? metadata.runId : undefined,
+      artifactId,
+      artifactStatus,
     });
   }
 

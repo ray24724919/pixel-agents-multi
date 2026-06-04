@@ -37,6 +37,8 @@ export interface TimelineSourceEvent {
   projectName?: string;
   sessionId?: string;
   runId?: string;
+  artifactId?: string;
+  artifactStatus?: string;
   timestamp: number;
   kind: string;
   title: string;
@@ -70,6 +72,8 @@ export interface TimelinePageItem {
   statusAfter?: TimelineLifecycleStatus;
   sessionId?: string;
   runId?: string;
+  artifactId?: string;
+  artifactStatus?: string;
   category: TimelineCategory;
   isActionLike: boolean;
   isDelegationLike: boolean;
@@ -142,6 +146,8 @@ export function buildTimelinePageItems(
       statusAfter: event.statusAfter,
       sessionId: event.sessionId,
       runId: event.runId,
+      artifactId: event.artifactId,
+      artifactStatus: event.artifactStatus,
       category,
       isActionLike,
       isDelegationLike,
@@ -379,6 +385,8 @@ function buildTimelineSearchText(event: TimelinePageItem): string {
     event.severity,
     event.sessionId,
     event.runId,
+    event.artifactId,
+    event.artifactStatus,
     event.isActionLike ? 'action' : undefined,
     event.isDelegationLike ? 'delegation delegate worker supervising' : undefined,
     isHandoffTimelineKind(event.kind) ? 'handoff artifact note repo review' : undefined,

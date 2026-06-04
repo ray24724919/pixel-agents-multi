@@ -2220,7 +2220,14 @@ function HandoffArtifactLibraryPanel({
                 className="grid gap-3 border border-border bg-btn-bg p-3 md:grid-cols-[minmax(0,1fr)_auto]"
               >
                 <div className="min-w-0">
-                  <div className="truncate text-sm text-text">{item.displayTitle}</div>
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
+                    <span className="min-w-[120px] max-w-full truncate text-sm text-text">
+                      {item.displayTitle}
+                    </span>
+                    <span className="shrink-0 border border-border bg-bg px-2 py-1 text-xs uppercase tracking-wide text-text-muted">
+                      {item.statusLabel}
+                    </span>
+                  </div>
                   <div className="mt-1 break-words text-xs text-text-muted">
                     {item.displayDetail}
                   </div>
@@ -2377,6 +2384,8 @@ function TimelineEventRow({
           <span>{event.source}</span>
           {event.sessionId && <span className="truncate">{event.sessionId}</span>}
           {event.runId && <span className="truncate">{event.runId}</span>}
+          {event.artifactId && <span className="truncate">{event.artifactId}</span>}
+          {event.artifactStatus && <span className="truncate">{event.artifactStatus}</span>}
         </div>
       </div>
       <div className="min-w-0">

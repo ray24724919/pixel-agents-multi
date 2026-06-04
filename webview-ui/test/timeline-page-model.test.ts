@@ -128,6 +128,8 @@ test('timeline page keeps handoff artifact history for agents that are no longer
         providerId: 'codex',
         projectName: 'pixel-agents',
         sessionId: 'session-handoff',
+        artifactId: '2026-06-04-1507-pixel-handoff',
+        artifactStatus: 'draft',
         timestamp: 450,
         kind: 'handoff.generated',
         title: 'Handoff generated',
@@ -148,7 +150,7 @@ test('timeline page keeps handoff artifact history for agents that are no longer
   );
   const model = buildTimelinePageModel(items, {
     ...defaultFilters,
-    searchQuery: 'handoff repo pixel',
+    searchQuery: 'handoff repo pixel draft',
   });
 
   assert.equal(items.length, 1);
@@ -156,6 +158,8 @@ test('timeline page keeps handoff artifact history for agents that are no longer
   assert.equal(model.events[0]?.agentName, 'Agent #7');
   assert.equal(model.events[0]?.isActionLike, true);
   assert.equal(model.events[0]?.category, 'other');
+  assert.equal(model.events[0]?.artifactId, '2026-06-04-1507-pixel-handoff');
+  assert.equal(model.events[0]?.artifactStatus, 'draft');
   assert.equal(model.counts.actionLike, 1);
 });
 

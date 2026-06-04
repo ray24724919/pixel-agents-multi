@@ -112,6 +112,8 @@ export interface AgentTimelineEvent {
   projectName?: string;
   sessionId?: string;
   runId?: string;
+  artifactId?: string;
+  artifactStatus?: string;
   timestamp: number;
   kind: string;
   title: string;
@@ -974,6 +976,8 @@ export function useExtensionMessages(
             projectName: raw.projectName,
             sessionId: raw.sessionId,
             runId: raw.runId,
+            artifactId: raw.artifactId,
+            artifactStatus: raw.artifactStatus,
             timestamp: Number.isFinite(timestamp) ? timestamp : Date.now(),
             kind: raw.kind ?? raw.type ?? 'event',
             title: raw.title ?? raw.summary ?? raw.kind ?? raw.type ?? 'Event',

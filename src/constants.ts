@@ -36,6 +36,8 @@ export const HANDOFF_ARTIFACT_FALLBACK_SLUG = 'agent';
 export const HANDOFF_ARTIFACT_MAX_SLUG_LENGTH = 64;
 export const HANDOFF_ARTIFACT_LIBRARY_MAX_ITEMS = 25;
 export const HANDOFF_ARTIFACT_TITLE_SCAN_BYTES = 16 * 1024;
+export const HANDOFF_ARTIFACT_METADATA_SCHEMA_VERSION = 1;
+export const HANDOFF_ARTIFACT_METADATA_EXTENSION = '.handoff.json';
 
 // ── Settings Persistence (VS Code globalState keys) ─────────
 export const GLOBAL_KEY_SOUND_ENABLED = `${EXTENSION_NAME}.soundEnabled`;
