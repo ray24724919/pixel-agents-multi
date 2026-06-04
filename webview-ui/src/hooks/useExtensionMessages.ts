@@ -90,6 +90,11 @@ export interface AgentLifecycleState {
   updatedAt: number;
 }
 
+export interface AgentOfficeActivityState {
+  active: boolean;
+  toolName?: string | null;
+}
+
 export interface AgentLifecycleEvent extends AgentLifecycleState {
   receivedAt: number;
 }
@@ -143,6 +148,23 @@ interface FurnitureAsset {
 export interface WorkspaceFolder {
   name: string;
   path: string;
+}
+
+export function lifecycleStatusDrivesOfficeWork(status: AgentLifecycleStatus): boolean {
+  return status === 'thinking' || status === 'tool_running';
+}
+
+function lifecycleStatusStopsOfficeWork(status: AgentLifecycleStatus): boolean {
+  return (
+    status === 'completed' || status === 'idle' || status === 'waiting_user' || status === 'error'
+  );
+}
+
+export function resolveRestoredAgentInitialActive(
+  persistedInitialActive: boolean | undefined,
+  latestActivity: AgentOfficeActivityState | undefined,
+): boolean {
+  return latestActivity?.active ?? persistedInitialActive ?? false;
 }
 
 interface ExtensionMessageState {
@@ -354,6 +376,7 @@ export function useExtensionMessages(
       }
     >
   >(new Map());
+  const latestAgentOfficeActivityRef = useRef<Record<number, AgentOfficeActivityState>>({});
 
   useEffect(() => {
     if (!layoutReady) return;
@@ -432,9 +455,46 @@ export function useExtensionMessages(
     // Buffer agents from existingAgents until layout is loaded.
     let pendingAgents: PendingAgent[] = [];
 
+    const rememberAgentOfficeActivity = (
+      id: number,
+      active: boolean,
+      toolName?: string | null,
+    ): void => {
+      const previous = latestAgentOfficeActivityRef.current[id];
+      latestAgentOfficeActivityRef.current[id] = {
+        active,
+        toolName: active ? (toolName ?? previous?.toolName ?? null) : null,
+      };
+    };
+
+    const applyStoredAgentOfficeActivity = (os: OfficeState, id: number): void => {
+      const activity = latestAgentOfficeActivityRef.current[id];
+      if (!activity || !os.characters.has(id)) return;
+      if (activity.active) {
+        if (activity.toolName) {
+          os.setAgentTool(id, activity.toolName);
+        }
+        os.setAgentActive(id, true);
+      } else {
+        os.setAgentTool(id, null);
+        os.setAgentActive(id, false);
+      }
+    };
+
+    const setAgentOfficeActivity = (
+      os: OfficeState,
+      id: number,
+      active: boolean,
+      toolName?: string | null,
+    ): void => {
+      rememberAgentOfficeActivity(id, active, toolName);
+      applyStoredAgentOfficeActivity(os, id);
+    };
+
     const addRestoredAgent = (os: OfficeState, p: PendingAgent) => {
       // Ignore persisted seatId during restore. Refresh should reshuffle agents
       // instead of reproducing stale stacked seating from a previous layout/run.
+      const latestActivity = latestAgentOfficeActivityRef.current[p.id];
       os.addAgent(
         p.id,
         p.palette,
@@ -442,7 +502,7 @@ export function useExtensionMessages(
         undefined,
         true,
         p.folderName,
-        p.initialActive,
+        resolveRestoredAgentInitialActive(p.initialActive, latestActivity),
         true,
       );
       const ch = os.characters.get(p.id);
@@ -451,6 +511,7 @@ export function useExtensionMessages(
         ch.agentName = p.agentName;
         ch.providerId = p.providerId;
       }
+      applyStoredAgentOfficeActivity(os, p.id);
     };
 
     const queuePendingAgent = (p: PendingAgent) => {
@@ -551,6 +612,7 @@ export function useExtensionMessages(
             ch.teamName = teamName ?? parentCh?.teamName;
             ch.agentName = teammateName;
           }
+          setAgentOfficeActivity(os, id, true);
         } else {
           os.addAgent(id, undefined, undefined, undefined, undefined, folderName);
           const ch = os.characters.get(id);
@@ -558,10 +620,12 @@ export function useExtensionMessages(
             ch.agentName = agentName;
             ch.providerId = providerId;
           }
+          setAgentOfficeActivity(os, id, true);
         }
         saveAgentSeats(os);
       } else if (msg.type === 'agentClosed' || msg.type === 'agentArchived') {
         const id = msg.id as number;
+        delete latestAgentOfficeActivityRef.current[id];
         delegationTransitionHintsRef.current.push({
           supervisorAgentId: id,
           reason: 'cancelled',
@@ -744,8 +808,7 @@ export function useExtensionMessages(
           };
         });
         const toolName = (msg.toolName as string | undefined) ?? extractToolName(status);
-        os.setAgentTool(id, toolName);
-        os.setAgentActive(id, true);
+        setAgentOfficeActivity(os, id, true, toolName);
         // Don't clear the permission bubble if the hook already confirmed permission is needed
         if (!permissionActive) {
           os.clearPermissionBubble(id);
@@ -810,8 +873,7 @@ export function useExtensionMessages(
           os.removeAllSubagents(id);
           setSubagentCharacters((prev) => prev.filter((s) => s.parentAgentId !== id));
         }
-        os.setAgentTool(id, null);
-        os.setAgentActive(id, false);
+        setAgentOfficeActivity(os, id, false);
         os.clearPermissionBubble(id);
       } else if (msg.type === 'agentSelected') {
         const id = msg.id as number;
@@ -829,7 +891,7 @@ export function useExtensionMessages(
           }
           return { ...prev, [id]: status };
         });
-        os.setAgentActive(id, status === 'active');
+        setAgentOfficeActivity(os, id, status === 'active');
         if (status === 'waiting') {
           os.showWaitingBubble(id);
           playDoneSound();
@@ -853,26 +915,19 @@ export function useExtensionMessages(
         setAgentLifecycleEvents((prev) =>
           [{ ...lifecycle, receivedAt: Date.now() }, ...prev].slice(0, 30),
         );
-        if (lifecycle.status === 'thinking' || lifecycle.status === 'tool_running') {
-          os.setAgentActive(lifecycle.id, true);
+        if (lifecycleStatusDrivesOfficeWork(lifecycle.status)) {
+          setAgentOfficeActivity(os, lifecycle.id, true, lifecycle.toolName);
         } else if (lifecycle.status === 'paused') {
           os.clearPermissionBubble(lifecycle.id);
-        } else if (
-          lifecycle.status === 'completed' ||
-          lifecycle.status === 'idle' ||
-          lifecycle.status === 'waiting_user' ||
-          lifecycle.status === 'error'
-        ) {
-          os.setAgentTool(lifecycle.id, null);
-          os.setAgentActive(lifecycle.id, false);
+        } else if (lifecycleStatusStopsOfficeWork(lifecycle.status)) {
+          setAgentOfficeActivity(os, lifecycle.id, false);
         }
         if (lifecycle.status === 'completed') {
           window.setTimeout(() => {
             setAgentLifecycleStatuses((prev) => {
               const current = prev[lifecycle.id];
               if (!current || current.updatedAt !== lifecycle.updatedAt) return prev;
-              os.setAgentTool(lifecycle.id, null);
-              os.setAgentActive(lifecycle.id, false);
+              setAgentOfficeActivity(os, lifecycle.id, false);
               return {
                 ...prev,
                 [lifecycle.id]: {

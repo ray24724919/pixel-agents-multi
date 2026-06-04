@@ -224,6 +224,19 @@ test('restore can randomize seating instead of reusing a persisted preference', 
   assert.equal(ch.seatId, 'sofa:1');
 });
 
+test('active restore starts at a workstation instead of an idle rest seat', () => {
+  const state = new OfficeState(makeLayout([...workstationFurniture(), ...loungeFurniture()]));
+
+  state.addAgent(1, 0, 0, 'sofa', true, undefined, true, true);
+
+  const ch = state.characters.get(1)!;
+  const seat = ch.seatId ? state.seats.get(ch.seatId) : undefined;
+  assert.equal(ch.isActive, true);
+  assert.equal(ch.state, CharacterState.TYPE);
+  assert.equal(seat?.seatKind, 'work');
+  assert.equal(seat?.zoneSource, 'workstation');
+});
+
 test('refresh randomizes top-level seats without stacking active or idle agents', () => {
   const state = new OfficeState(
     makeLayout(
