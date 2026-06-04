@@ -33,6 +33,21 @@ export interface OpenHandoffArtifactMessage {
   relativePath: string;
 }
 
+export type HandoffArtifactLocalStatus = 'draft' | 'reviewed' | 'stale';
+
+export interface HandoffArtifactStatusAction {
+  nextStatus: HandoffArtifactLocalStatus;
+  label: string;
+  disabled: boolean;
+}
+
+export interface UpdateHandoffArtifactStatusMessage {
+  type: 'updateHandoffArtifactStatus';
+  requestId: string;
+  relativePath: string;
+  nextStatus: HandoffArtifactLocalStatus;
+}
+
 export const initialHandoffArtifactLibraryState: HandoffArtifactLibraryState = {
   items: [],
   unavailable: false,
@@ -65,8 +80,45 @@ export function buildOpenHandoffArtifactMessage(
   };
 }
 
+export function handoffArtifactStatusActions(
+  item: Pick<HandoffArtifactLibraryItem, 'artifactId' | 'metadataRelativePath' | 'status'>,
+): HandoffArtifactStatusAction[] {
+  const canUpdate = !!item.artifactId && !!item.metadataRelativePath;
+  return (['reviewed', 'stale', 'draft'] as const).map((nextStatus) => ({
+    nextStatus,
+    label: handoffArtifactStatusActionLabel(nextStatus),
+    disabled: !canUpdate || item.status === nextStatus,
+  }));
+}
+
+export function buildUpdateHandoffArtifactStatusMessage(
+  item: Pick<HandoffArtifactLibraryItem, 'relativePath'>,
+  nextStatus: HandoffArtifactLocalStatus,
+  requestId: string,
+): UpdateHandoffArtifactStatusMessage | undefined {
+  if (!requestId || !item.relativePath || !isLocalHandoffArtifactStatus(nextStatus)) {
+    return undefined;
+  }
+  return {
+    type: 'updateHandoffArtifactStatus',
+    requestId,
+    relativePath: item.relativePath,
+    nextStatus,
+  };
+}
+
 export function shouldRefreshHandoffArtifactsForMessage(message: Record<string, unknown>): boolean {
-  return message.type === 'handoffDraftWritten';
+  return message.type === 'handoffDraftWritten' || message.type === 'handoffArtifactStatusUpdated';
+}
+
+function handoffArtifactStatusActionLabel(status: HandoffArtifactLocalStatus): string {
+  if (status === 'reviewed') return 'Mark reviewed';
+  if (status === 'stale') return 'Mark stale';
+  return 'Reset draft';
+}
+
+function isLocalHandoffArtifactStatus(value: unknown): value is HandoffArtifactLocalStatus {
+  return value === 'draft' || value === 'reviewed' || value === 'stale';
 }
 
 function handoffArtifactItemFromUnknown(value: unknown): HandoffArtifactLibraryItem | undefined {

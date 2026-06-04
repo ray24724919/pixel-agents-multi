@@ -88,6 +88,7 @@ import {
   readHandoffArtifactMetadataForMarkdown,
   resolveHandoffArtifactOpenPath,
   scanHandoffArtifacts,
+  updateHandoffArtifactStatus,
 } from './handoffArtifacts.js';
 import type { LayoutWatcher } from './layoutPersistence.js';
 import { readLayoutFromFile, watchLayoutFile, writeLayoutToFile } from './layoutPersistence.js';
@@ -425,8 +426,63 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  private async updateHandoffArtifactStatusFromWebview(
+    message: Record<string, unknown>,
+  ): Promise<void> {
+    const requestId = typeof message.requestId === 'string' ? message.requestId : undefined;
+    try {
+      const repoRoot = this.getHandoffRepoRoot();
+      if (!repoRoot) {
+        throw new Error('Open a repository workspace before updating handoff artifacts.');
+      }
+      const result = updateHandoffArtifactStatus(
+        repoRoot,
+        message.relativePath,
+        message.nextStatus,
+      );
+      this.webview?.postMessage({
+        type: 'handoffArtifactStatusUpdated',
+        requestId,
+        relativePath: result.markdown.relativePath,
+        filename: result.markdown.filename,
+        artifactId: result.metadata.artifactId,
+        metadataRelativePath: result.metadataPath.relativePath,
+        previousStatus: result.previousStatus,
+        nextStatus: result.nextStatus,
+        status: result.metadata.status,
+      });
+      this.postHandoffTimelineEvent('handoff.status_changed', result.markdown.relativePath, {
+        filename: result.markdown.filename,
+        artifactId: result.metadata.artifactId,
+        artifactStatus: result.metadata.status,
+        previousStatus: result.previousStatus,
+        nextStatus: result.nextStatus,
+        providerId: result.metadata.providerId,
+        project: result.metadata.projectName,
+        sessionId: result.metadata.sessionId,
+        runId: result.metadata.runId,
+      });
+      this.postHandoffArtifactsLoaded();
+      vscode.window.showInformationMessage(
+        `Pixel Agents: Handoff status updated to ${result.nextStatus}: ${result.markdown.relativePath}`,
+      );
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.webview?.postMessage({
+        type: 'handoffArtifactStatusUpdateFailed',
+        requestId,
+        relativePath: typeof message.relativePath === 'string' ? message.relativePath : undefined,
+        nextStatus: typeof message.nextStatus === 'string' ? message.nextStatus : undefined,
+        error: errorMessage,
+      });
+      vscode.window.showErrorMessage(
+        `Pixel Agents: Failed to update handoff status: ${errorMessage}`,
+      );
+    }
+  }
+
   private postHandoffTimelineEvent(
-    kind: 'handoff.generated' | 'handoff.opened',
+    kind: 'handoff.generated' | 'handoff.opened' | 'handoff.status_changed',
     relativePath: string,
     metadata: Record<string, unknown> = {},
   ): void {
@@ -437,13 +493,24 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     const artifactId = typeof metadata.artifactId === 'string' ? metadata.artifactId : undefined;
     const artifactStatus =
       typeof metadata.artifactStatus === 'string' ? metadata.artifactStatus : undefined;
-    const summaryParts = [relativePath, artifactId, artifactStatus].filter(
+    const previousStatus =
+      typeof metadata.previousStatus === 'string' ? metadata.previousStatus : undefined;
+    const nextStatus = typeof metadata.nextStatus === 'string' ? metadata.nextStatus : undefined;
+    const statusChange =
+      previousStatus && nextStatus ? `${previousStatus} -> ${nextStatus}` : undefined;
+    const summaryParts = [relativePath, artifactId, statusChange ?? artifactStatus].filter(
       (part): part is string => typeof part === 'string' && part.trim().length > 0,
     );
+    const title =
+      kind === 'handoff.generated'
+        ? 'Handoff generated'
+        : kind === 'handoff.opened'
+          ? 'Handoff opened'
+          : 'Handoff status changed';
     postAgentTimelineEvent(this.webview, {
       agentId: typeof metadata.agentId === 'number' ? metadata.agentId : 0,
       kind,
-      title: kind === 'handoff.generated' ? 'Handoff generated' : 'Handoff opened',
+      title,
       summary: `${filename} (${summaryParts.join(' / ')})`,
       severity: 'success',
       source: 'user',
@@ -453,6 +520,8 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       runId: typeof metadata.runId === 'string' ? metadata.runId : undefined,
       artifactId,
       artifactStatus,
+      previousStatus,
+      nextStatus,
     });
   }
 
@@ -1467,6 +1536,12 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         this.postHandoffArtifactsLoaded();
       } else if (message.type === 'openHandoffArtifact') {
         await this.openHandoffArtifactFromWebview(
+          typeof message === 'object' && message !== null
+            ? (message as Record<string, unknown>)
+            : {},
+        );
+      } else if (message.type === 'updateHandoffArtifactStatus') {
+        await this.updateHandoffArtifactStatusFromWebview(
           typeof message === 'object' && message !== null
             ? (message as Record<string, unknown>)
             : {},

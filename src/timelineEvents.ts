@@ -16,7 +16,8 @@ export type TimelineEventKind =
   | 'action.archive'
   | 'action.kill'
   | 'handoff.generated'
-  | 'handoff.opened';
+  | 'handoff.opened'
+  | 'handoff.status_changed';
 
 export type TimelineEventSeverity = 'info' | 'success' | 'warning' | 'error';
 
@@ -38,6 +39,8 @@ export interface TimelineEvent {
   runId?: string;
   artifactId?: string;
   artifactStatus?: string;
+  previousStatus?: string;
+  nextStatus?: string;
   visibility: TimelineEventVisibility;
 }
 

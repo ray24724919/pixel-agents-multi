@@ -48,9 +48,12 @@ import {
 } from './delegationModel.js';
 import {
   buildOpenHandoffArtifactMessage,
+  buildUpdateHandoffArtifactStatusMessage,
   type HandoffArtifactLibraryItem,
   type HandoffArtifactLibraryState,
   handoffArtifactLibraryStateFromLoadedMessage,
+  type HandoffArtifactLocalStatus,
+  handoffArtifactStatusActions,
   initialHandoffArtifactLibraryState,
   shouldRefreshHandoffArtifactsForMessage,
 } from './handoffArtifactLibraryModel.js';
@@ -114,6 +117,7 @@ type TeamFilter = 'all' | string;
 type UsagePane = 'live' | 'history';
 type HandoffWriteStatus = 'idle' | 'writing' | 'written' | 'failed';
 type HandoffOpenStatus = 'idle' | 'opening' | 'opened' | 'failed';
+type HandoffStatusUpdateStatus = 'idle' | 'updating' | 'updated' | 'failed';
 
 interface AgentCenterSurfaceProps {
   activePage: AgentCenterPage;
@@ -1414,6 +1418,11 @@ function TimelineDashboard({
   const [handoffOpenedPath, setHandoffOpenedPath] = useState('');
   const [handoffOpenError, setHandoffOpenError] = useState('');
   const handoffOpenRequestIdRef = useRef('');
+  const [handoffStatusUpdateStatus, setHandoffStatusUpdateStatus] =
+    useState<HandoffStatusUpdateStatus>('idle');
+  const [handoffStatusUpdatedPath, setHandoffStatusUpdatedPath] = useState('');
+  const [handoffStatusUpdateError, setHandoffStatusUpdateError] = useState('');
+  const handoffStatusUpdateRequestIdRef = useRef('');
   const replayState = useMemo(
     () => resolveTimelineReplaySelection(replaySessions, replaySessionId, replayCursor),
     [replayCursor, replaySessionId, replaySessions],
@@ -1520,6 +1529,32 @@ function TimelineDashboard({
         setHandoffOpenError(
           typeof message.error === 'string' ? message.error : 'Could not open handoff artifact.',
         );
+        return;
+      }
+      if (
+        message.type === 'handoffArtifactStatusUpdated' &&
+        message.requestId === handoffStatusUpdateRequestIdRef.current
+      ) {
+        setHandoffStatusUpdateStatus('updated');
+        setHandoffStatusUpdatedPath(
+          typeof message.relativePath === 'string'
+            ? message.relativePath
+            : typeof message.path === 'string'
+              ? message.path
+              : '',
+        );
+        setHandoffStatusUpdateError('');
+        return;
+      }
+      if (
+        message.type === 'handoffArtifactStatusUpdateFailed' &&
+        message.requestId === handoffStatusUpdateRequestIdRef.current
+      ) {
+        setHandoffStatusUpdateStatus('failed');
+        setHandoffStatusUpdatedPath('');
+        setHandoffStatusUpdateError(
+          typeof message.error === 'string' ? message.error : 'Could not update handoff status.',
+        );
       }
     };
     window.addEventListener('message', handler);
@@ -1609,6 +1644,23 @@ function TimelineDashboard({
     setHandoffOpenStatus('opening');
     setHandoffOpenedPath('');
     setHandoffOpenError('');
+    vscode.postMessage(message);
+  };
+  const updateHandoffArtifactStatus = (
+    item: HandoffArtifactLibraryItem,
+    nextStatus: HandoffArtifactLocalStatus,
+  ) => {
+    const requestId = `handoff-status-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const message = buildUpdateHandoffArtifactStatusMessage(item, nextStatus, requestId);
+    if (!message) {
+      setHandoffStatusUpdateStatus('failed');
+      setHandoffStatusUpdateError('No handoff artifact status update is available.');
+      return;
+    }
+    handoffStatusUpdateRequestIdRef.current = requestId;
+    setHandoffStatusUpdateStatus('updating');
+    setHandoffStatusUpdatedPath('');
+    setHandoffStatusUpdateError('');
     vscode.postMessage(message);
   };
 
@@ -1710,8 +1762,12 @@ function TimelineDashboard({
         openStatus={handoffOpenStatus}
         openedPath={handoffOpenedPath}
         openError={handoffOpenError}
+        statusUpdateStatus={handoffStatusUpdateStatus}
+        statusUpdatedPath={handoffStatusUpdatedPath}
+        statusUpdateError={handoffStatusUpdateError}
         onRefresh={refreshHandoffArtifacts}
         onOpen={openHandoffArtifact}
+        onUpdateStatus={updateHandoffArtifactStatus}
       />
 
       <section className="grid gap-3 border border-border bg-btn-bg p-3 md:grid-cols-2 xl:grid-cols-[minmax(220px,1fr)_150px_160px_180px] 2xl:grid-cols-[minmax(220px,1fr)_150px_160px_180px_160px_170px_220px_220px_auto]">
@@ -2179,15 +2235,26 @@ function HandoffArtifactLibraryPanel({
   openStatus,
   openedPath,
   openError,
+  statusUpdateStatus,
+  statusUpdatedPath,
+  statusUpdateError,
   onRefresh,
   onOpen,
+  onUpdateStatus,
 }: {
   state: HandoffArtifactLibraryState;
   openStatus: HandoffOpenStatus;
   openedPath: string;
   openError: string;
+  statusUpdateStatus: HandoffStatusUpdateStatus;
+  statusUpdatedPath: string;
+  statusUpdateError: string;
   onRefresh: () => void;
   onOpen: (item: HandoffArtifactLibraryItem) => void;
+  onUpdateStatus: (
+    item: HandoffArtifactLibraryItem,
+    nextStatus: HandoffArtifactLocalStatus,
+  ) => void;
 }) {
   return (
     <section className="border border-border bg-bg">
@@ -2235,7 +2302,21 @@ function HandoffArtifactLibraryPanel({
                     {item.relativePath}
                   </div>
                 </div>
-                <div className="flex items-start justify-end">
+                <div className="flex flex-wrap items-start justify-end gap-2">
+                  {handoffArtifactStatusActions(item).map((action) => {
+                    const disabled = action.disabled || statusUpdateStatus === 'updating';
+                    return (
+                      <Button
+                        key={action.nextStatus}
+                        variant={disabled ? 'disabled' : 'ghost'}
+                        size="sm"
+                        disabled={disabled}
+                        onClick={() => onUpdateStatus(item, action.nextStatus)}
+                      >
+                        {action.label}
+                      </Button>
+                    );
+                  })}
                   <Button
                     variant={openStatus === 'opening' ? 'disabled' : 'default'}
                     size="sm"
@@ -2259,6 +2340,17 @@ function HandoffArtifactLibraryPanel({
           }`}
         >
           {handoffOpenStatusLabel(openStatus, openedPath, openError)}
+        </div>
+        <div
+          className={`break-words text-xs ${
+            statusUpdateStatus === 'failed'
+              ? 'text-status-error'
+              : statusUpdateStatus === 'updated'
+                ? 'text-status-waiting'
+                : 'text-text-muted'
+          }`}
+        >
+          {handoffStatusUpdateLabel(statusUpdateStatus, statusUpdatedPath, statusUpdateError)}
         </div>
       </div>
     </section>
@@ -2386,6 +2478,11 @@ function TimelineEventRow({
           {event.runId && <span className="truncate">{event.runId}</span>}
           {event.artifactId && <span className="truncate">{event.artifactId}</span>}
           {event.artifactStatus && <span className="truncate">{event.artifactStatus}</span>}
+          {event.previousStatus && event.nextStatus && (
+            <span className="truncate">
+              {event.previousStatus} -&gt; {event.nextStatus}
+            </span>
+          )}
         </div>
       </div>
       <div className="min-w-0">
@@ -2580,6 +2677,17 @@ function handoffOpenStatusLabel(
   if (status === 'opened') return `Opened: ${openedPath || 'handoff artifact'}`;
   if (status === 'failed') return `Open failed: ${error || 'Could not open handoff artifact.'}`;
   return 'Open reads only validated repo-local Markdown handoffs.';
+}
+
+function handoffStatusUpdateLabel(
+  status: HandoffStatusUpdateStatus,
+  updatedPath: string,
+  error: string,
+): string {
+  if (status === 'updating') return 'Updating handoff metadata sidecar...';
+  if (status === 'updated') return `Status updated: ${updatedPath || 'handoff artifact'}`;
+  if (status === 'failed') return `Status update failed: ${error || 'Could not update handoff.'}`;
+  return 'Status actions update only local metadata; Markdown remains editable.';
 }
 
 function formatProxyUsd(value: number): string {
