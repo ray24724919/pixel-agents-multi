@@ -45,6 +45,7 @@ import {
   delegationTotalCount,
   delegationWorkerLabel,
 } from './delegationModel.js';
+import { buildHandoffDraftPageModel, type HandoffDraftPageModel } from './handoffDraftPageModel.js';
 import { isPausedStatus, pauseActionLabel } from './pauseResume.js';
 import {
   buildTimelinePageItems,
@@ -1385,9 +1386,15 @@ function TimelineDashboard({
   const [replayCursor, setReplayCursor] = useState(0);
   const [isReplayPlaying, setIsReplayPlaying] = useState(false);
   const [replaySpeed, setReplaySpeed] = useState<number>(1);
+  const [isHandoffPreviewOpen, setIsHandoffPreviewOpen] = useState(false);
+  const [handoffCopyStatus, setHandoffCopyStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
   const replayState = useMemo(
     () => resolveTimelineReplaySelection(replaySessions, replaySessionId, replayCursor),
     [replayCursor, replaySessionId, replaySessions],
+  );
+  const handoffPageModel = useMemo(
+    () => buildHandoffDraftPageModel({ timelineEvents: model.events, replayState }),
+    [model.events, replayState],
   );
 
   useEffect(() => {
@@ -1412,6 +1419,13 @@ function TimelineDashboard({
       setReplayCursor(Math.max(0, replayState.session.frameCount - 1));
     }
   }, [isReplayPlaying, replayCursor, replaySessionId, replaySessions, replayState]);
+
+  useEffect(() => {
+    if (!handoffPageModel.canCreate && isHandoffPreviewOpen) {
+      setIsHandoffPreviewOpen(false);
+    }
+    setHandoffCopyStatus('idle');
+  }, [handoffPageModel, isHandoffPreviewOpen]);
 
   useEffect(() => {
     if (!isReplayPlaying || !replayState.session) return;
@@ -1449,6 +1463,21 @@ function TimelineDashboard({
     setReplaySessionId(location.sessionId);
     setReplayCursor(location.cursorIndex);
     setIsReplayPlaying(false);
+  };
+  const createHandoffPreview = () => {
+    if (!handoffPageModel.canCreate) return;
+    setHandoffCopyStatus('idle');
+    setIsHandoffPreviewOpen(true);
+  };
+  const copyHandoffMarkdown = () => {
+    const markdown = handoffPageModel.draft?.markdown;
+    if (!markdown) {
+      setHandoffCopyStatus('failed');
+      return;
+    }
+    void copyTextToClipboard(markdown)
+      .then(() => setHandoffCopyStatus('copied'))
+      .catch(() => setHandoffCopyStatus('failed'));
   };
 
   return (
@@ -1529,6 +1558,15 @@ function TimelineDashboard({
         onLast={goToLastReplayFrame}
         onTogglePlay={() => setIsReplayPlaying((playing) => !playing && replayState.hasNext)}
         onSpeedChange={setReplaySpeed}
+      />
+
+      <HandoffDraftPanel
+        model={handoffPageModel}
+        isPreviewOpen={isHandoffPreviewOpen}
+        copyStatus={handoffCopyStatus}
+        onCreate={createHandoffPreview}
+        onCopy={copyHandoffMarkdown}
+        onClose={() => setIsHandoffPreviewOpen(false)}
       />
 
       <section className="grid gap-3 border border-border bg-btn-bg p-3 md:grid-cols-2 xl:grid-cols-[minmax(220px,1fr)_150px_160px_180px] 2xl:grid-cols-[minmax(220px,1fr)_150px_160px_180px_160px_170px_220px_220px_auto]">
@@ -1874,6 +1912,96 @@ function TimelineReplayPanel({
   );
 }
 
+function HandoffDraftPanel({
+  model,
+  isPreviewOpen,
+  copyStatus,
+  onCreate,
+  onCopy,
+  onClose,
+}: {
+  model: HandoffDraftPageModel;
+  isPreviewOpen: boolean;
+  copyStatus: 'idle' | 'copied' | 'failed';
+  onCreate: () => void;
+  onCopy: () => void;
+  onClose: () => void;
+}) {
+  const draft = model.draft;
+  const notice = handoffDraftNoticeText(model);
+  return (
+    <section className="border border-border bg-bg">
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border bg-btn-bg p-4">
+        <div className="min-w-0">
+          <div className="text-sm uppercase tracking-wide text-accent-bright">Handoff Draft</div>
+          <div className="mt-1 break-words text-xs text-text-muted">
+            {model.sourceLabel} / {model.sourceDetail}
+          </div>
+          {notice && <div className="mt-2 text-xs text-status-permission">{notice}</div>}
+        </div>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <span className="border border-border bg-bg px-2 py-1 text-xs uppercase tracking-wide text-text-muted">
+            Local only
+          </span>
+          <Button
+            variant={model.canCreate ? 'default' : 'disabled'}
+            size="sm"
+            disabled={!model.canCreate}
+            onClick={onCreate}
+          >
+            {isPreviewOpen ? 'Refresh Preview' : 'Create Handoff'}
+          </Button>
+        </div>
+      </div>
+      {isPreviewOpen && draft && (
+        <div className="grid gap-3 p-4 lg:grid-cols-[minmax(0,1fr)_220px]">
+          <label className="min-w-0 text-xs uppercase tracking-wide text-text-muted">
+            Markdown Preview
+            <textarea
+              className="mt-2 h-72 w-full resize-y border border-border bg-btn-bg p-3 font-mono text-xs normal-case tracking-normal text-text outline-none focus:border-accent"
+              value={draft.markdown}
+              readOnly
+              spellCheck={false}
+              aria-label="Handoff markdown preview"
+            />
+          </label>
+          <div className="grid content-start gap-3 border border-border bg-btn-bg p-3">
+            <div>
+              <div className="text-xs uppercase tracking-wide text-text-muted">Draft Scope</div>
+              <div className="mt-2 break-words text-sm text-text">{draft.metadata.title}</div>
+              <div className="mt-2 grid gap-1 text-xs text-text-muted">
+                <span>{draft.metadata.providerId}</span>
+                <span>{draft.metadata.project}</span>
+                <span>
+                  {draft.metadata.includedEventCount.toLocaleString()} highlighted /{' '}
+                  {draft.metadata.eventCount.toLocaleString()} total events
+                </span>
+              </div>
+            </div>
+            <Button variant="default" size="sm" onClick={onCopy}>
+              Copy Markdown
+            </Button>
+            <Button variant="ghost" size="sm" onClick={onClose}>
+              Close Preview
+            </Button>
+            <div
+              className={`text-xs ${
+                copyStatus === 'failed'
+                  ? 'text-status-error'
+                  : copyStatus === 'copied'
+                    ? 'text-status-waiting'
+                    : 'text-text-muted'
+              }`}
+            >
+              {handoffCopyStatusLabel(copyStatus)}
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function TimelineFilterSelect({
   label,
   value,
@@ -2135,6 +2263,22 @@ function usageHistoryCopyLabel(status: 'idle' | 'copied' | 'failed'): string {
   if (status === 'copied') return 'CSV copied';
   if (status === 'failed') return 'Copy failed';
   return 'Redacted paths';
+}
+
+function handoffDraftNoticeText(model: HandoffDraftPageModel): string | undefined {
+  if (model.notice === 'no-timeline-events') {
+    return 'No timeline events available.';
+  }
+  if (model.notice === 'no-replay-session-selected') {
+    return 'No replay session selected; using the current Timeline filtered scope.';
+  }
+  return undefined;
+}
+
+function handoffCopyStatusLabel(status: 'idle' | 'copied' | 'failed'): string {
+  if (status === 'copied') return 'Markdown copied';
+  if (status === 'failed') return 'Clipboard copy failed';
+  return 'Preview only; no files are written.';
 }
 
 function formatProxyUsd(value: number): string {
