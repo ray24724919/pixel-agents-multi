@@ -24,6 +24,20 @@ export interface HandoffDraftPageModel {
   draft?: HandoffDraft;
 }
 
+export interface HandoffDraftWriteMessage {
+  type: 'writeHandoffDraft';
+  requestId: string;
+  markdown: string;
+  source: HandoffDraftSource;
+  title: string;
+  project: string;
+  providerId: string;
+  agentName?: string;
+  agentId?: number;
+  sessionId?: string;
+  runId?: string;
+}
+
 export function buildHandoffDraftPageModel(
   input: HandoffDraftPageModelInput,
 ): HandoffDraftPageModel {
@@ -70,6 +84,26 @@ export function buildHandoffDraftPageModel(
     sourceDetail: 'Run agents or clear Timeline filters before creating a handoff draft.',
     canCreate: false,
     notice: 'no-timeline-events',
+  };
+}
+
+export function buildHandoffDraftWriteMessage(
+  model: HandoffDraftPageModel,
+  requestId: string,
+): HandoffDraftWriteMessage | undefined {
+  if (!model.draft || !requestId) return undefined;
+  return {
+    type: 'writeHandoffDraft',
+    requestId,
+    markdown: model.draft.markdown,
+    source: model.source,
+    title: model.draft.metadata.title,
+    project: model.draft.metadata.project,
+    providerId: model.draft.metadata.providerId,
+    agentName: model.draft.metadata.agentName,
+    agentId: model.draft.metadata.agentId,
+    sessionId: model.draft.metadata.sessionId,
+    runId: model.draft.metadata.runId,
   };
 }
 

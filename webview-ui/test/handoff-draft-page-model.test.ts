@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { buildHandoffDraftPageModel } from '../src/components/handoffDraftPageModel.ts';
+import {
+  buildHandoffDraftPageModel,
+  buildHandoffDraftWriteMessage,
+} from '../src/components/handoffDraftPageModel.ts';
 import type { TimelinePageItem } from '../src/components/timelinePageModel.ts';
 import {
   buildTimelineReplaySessions,
@@ -89,4 +92,29 @@ test('handoff page model disables creation when no timeline events are available
   assert.equal(model.notice, 'no-timeline-events');
   assert.equal(model.draft, undefined);
   assert.match(model.sourceDetail, /clear Timeline filters/);
+});
+
+test('handoff write message sends redacted markdown and no filesystem path', () => {
+  const model = buildHandoffDraftPageModel({
+    replayState: getTimelineReplayState(undefined, 0),
+    timelineEvents: [
+      item({
+        id: 'unsafe-path',
+        project: 'C:\\Users\\User\\repo',
+        title: 'Tool output: C:\\Users\\User\\repo\\secret.txt',
+        summary: 'raw prompt: please expose C:\\Users\\User\\repo\\transcript.jsonl',
+      }),
+    ],
+  });
+
+  const message = buildHandoffDraftWriteMessage(model, 'request-1');
+
+  assert.ok(message);
+  assert.equal(message.type, 'writeHandoffDraft');
+  assert.equal(message.requestId, 'request-1');
+  assert.equal(message.markdown, model.draft?.markdown);
+  assert.equal('targetPath' in message, false);
+  assert.equal('absolutePath' in message, false);
+  assert.doesNotMatch(message.markdown, /C:\\Users\\User/);
+  assert.match(message.markdown, /\[redacted path\]/);
 });
