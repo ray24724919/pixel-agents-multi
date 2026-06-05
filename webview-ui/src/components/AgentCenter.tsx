@@ -51,9 +51,13 @@ import {
   buildCreateHandoffWorkPackageMessage,
   buildCreateHandoffWorkPackagePromptMessage,
   buildHandoffExecutionQueueSummary,
+  buildHandoffQueueSummary,
+  buildLaunchHandoffExecutorMessage,
   buildLinkHandoffExecutionAgentMessage,
   buildOpenHandoffArtifactMessage,
+  buildOpenHandoffReportMessage,
   buildOpenHandoffWorkPackageMessage,
+  buildRefreshHandoffCompletionMessage,
   buildUpdateHandoffArtifactStatusMessage,
   buildUpdateHandoffDispatchStatusMessage,
   buildUpdateHandoffExecutionStatusMessage,
@@ -61,6 +65,7 @@ import {
   canCreateHandoffWorkPackage,
   canLinkHandoffExecutionAgent,
   canUseHandoffWorkPackage,
+  filterHandoffQueueItems,
   type HandoffArtifactLibraryItem,
   type HandoffArtifactLibraryState,
   handoffArtifactLibraryStateFromLoadedMessage,
@@ -74,6 +79,8 @@ import {
   handoffExecutionActionStatusLabel,
   type HandoffExecutionStatus,
   handoffExecutionStatusActions,
+  type HandoffQueueGroup,
+  handoffQueueGroupLabel,
   type HandoffWorkPackageStatus,
   handoffWorkPackageStatusLabel,
   initialHandoffArtifactLibraryState,
@@ -1817,6 +1824,80 @@ function TimelineDashboard({
             ? message.error
             : 'Could not update handoff execution status.',
         );
+        return;
+      }
+      if (
+        message.type === 'handoffExecutorLaunched' &&
+        message.requestId === handoffExecutionRequestIdRef.current
+      ) {
+        setHandoffExecutionActionStatus('launched');
+        setHandoffExecutionAgentLabel(handoffExecutionAgentLabelFromMessage(message));
+        setHandoffExecutionPackagePath(
+          typeof message.packageRelativePath === 'string' ? message.packageRelativePath : '',
+        );
+        setHandoffExecutionError('');
+        return;
+      }
+      if (
+        message.type === 'handoffExecutorLaunchFailed' &&
+        message.requestId === handoffExecutionRequestIdRef.current
+      ) {
+        setHandoffExecutionActionStatus('failed');
+        setHandoffExecutionAgentLabel('');
+        setHandoffExecutionPackagePath('');
+        setHandoffExecutionError(
+          typeof message.error === 'string' ? message.error : 'Could not launch executor.',
+        );
+        return;
+      }
+      if (
+        message.type === 'handoffCompletionRefreshed' &&
+        message.requestId === handoffExecutionRequestIdRef.current
+      ) {
+        setHandoffExecutionActionStatus('refreshed');
+        setHandoffExecutionAgentLabel('');
+        setHandoffExecutionPackagePath(
+          typeof message.packageRelativePath === 'string'
+            ? message.packageRelativePath
+            : typeof message.reportRelativePath === 'string'
+              ? message.reportRelativePath
+              : '',
+        );
+        setHandoffExecutionError('');
+        return;
+      }
+      if (
+        message.type === 'handoffCompletionRefreshFailed' &&
+        message.requestId === handoffExecutionRequestIdRef.current
+      ) {
+        setHandoffExecutionActionStatus('failed');
+        setHandoffExecutionError(
+          typeof message.error === 'string'
+            ? message.error
+            : 'Could not refresh handoff completion.',
+        );
+        return;
+      }
+      if (
+        message.type === 'handoffReportOpened' &&
+        message.requestId === handoffExecutionRequestIdRef.current
+      ) {
+        setHandoffExecutionActionStatus('report_opened');
+        setHandoffExecutionAgentLabel('');
+        setHandoffExecutionPackagePath(
+          typeof message.reportRelativePath === 'string' ? message.reportRelativePath : '',
+        );
+        setHandoffExecutionError('');
+        return;
+      }
+      if (
+        message.type === 'handoffReportOpenFailed' &&
+        message.requestId === handoffExecutionRequestIdRef.current
+      ) {
+        setHandoffExecutionActionStatus('failed');
+        setHandoffExecutionError(
+          typeof message.error === 'string' ? message.error : 'Could not open executor report.',
+        );
       }
     };
     window.addEventListener('message', handler);
@@ -2046,6 +2127,56 @@ function TimelineDashboard({
     setHandoffExecutionError('');
     vscode.postMessage(message);
   };
+  const launchHandoffExecutor = (
+    item: HandoffArtifactLibraryItem,
+    providerId: 'codex' | 'claude',
+  ) => {
+    const requestId = `handoff-executor-launch-${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2, 8)}`;
+    const message = buildLaunchHandoffExecutorMessage(item, requestId, providerId);
+    if (!message) {
+      setHandoffExecutionActionStatus('failed');
+      setHandoffExecutionError('Create a work package before launching an executor.');
+      return;
+    }
+    handoffExecutionRequestIdRef.current = requestId;
+    setHandoffExecutionActionStatus('launching');
+    setHandoffExecutionAgentLabel(providerId === 'claude' ? 'Claude executor' : 'Codex executor');
+    setHandoffExecutionPackagePath(item.dispatchPackage?.packageRelativePath ?? '');
+    setHandoffExecutionError('');
+    vscode.postMessage(message);
+  };
+  const refreshHandoffCompletion = (item: HandoffArtifactLibraryItem) => {
+    const requestId = `handoff-completion-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const message = buildRefreshHandoffCompletionMessage(item, requestId);
+    if (!message) {
+      setHandoffExecutionActionStatus('failed');
+      setHandoffExecutionError('Create a work package before refreshing completion.');
+      return;
+    }
+    handoffExecutionRequestIdRef.current = requestId;
+    setHandoffExecutionActionStatus('refreshing');
+    setHandoffExecutionAgentLabel('');
+    setHandoffExecutionPackagePath(item.dispatchPackage?.packageRelativePath ?? '');
+    setHandoffExecutionError('');
+    vscode.postMessage(message);
+  };
+  const openHandoffReport = (item: HandoffArtifactLibraryItem) => {
+    const requestId = `handoff-report-open-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const message = buildOpenHandoffReportMessage(item, requestId);
+    if (!message) {
+      setHandoffExecutionActionStatus('failed');
+      setHandoffExecutionError('No executor report is available to open.');
+      return;
+    }
+    handoffExecutionRequestIdRef.current = requestId;
+    setHandoffExecutionActionStatus('opening_report');
+    setHandoffExecutionAgentLabel('');
+    setHandoffExecutionPackagePath(item.completion?.reportRelativePath ?? '');
+    setHandoffExecutionError('');
+    vscode.postMessage(message);
+  };
 
   return (
     <div className="grid gap-4">
@@ -2172,6 +2303,9 @@ function TimelineDashboard({
         onUpdateDispatchStatus={updateHandoffDispatchStatus}
         onLinkExecutionAgent={linkHandoffExecutionAgent}
         onUpdateExecutionStatus={updateHandoffExecutionStatus}
+        onLaunchExecutor={launchHandoffExecutor}
+        onRefreshCompletion={refreshHandoffCompletion}
+        onOpenReport={openHandoffReport}
       />
 
       <section className="grid gap-3 border border-border bg-btn-bg p-3 md:grid-cols-2 xl:grid-cols-[minmax(220px,1fr)_150px_160px_180px] 2xl:grid-cols-[minmax(220px,1fr)_150px_160px_180px_160px_170px_220px_220px_auto]">
@@ -2666,6 +2800,9 @@ function HandoffArtifactLibraryPanel({
   onUpdateDispatchStatus,
   onLinkExecutionAgent,
   onUpdateExecutionStatus,
+  onLaunchExecutor,
+  onRefreshCompletion,
+  onOpenReport,
 }: {
   agents: AgentSummary[];
   state: HandoffArtifactLibraryState;
@@ -2707,17 +2844,28 @@ function HandoffArtifactLibraryPanel({
     item: HandoffArtifactLibraryItem,
     nextStatus: HandoffExecutionStatus,
   ) => void;
+  onLaunchExecutor: (item: HandoffArtifactLibraryItem, providerId: 'codex' | 'claude') => void;
+  onRefreshCompletion: (item: HandoffArtifactLibraryItem) => void;
+  onOpenReport: (item: HandoffArtifactLibraryItem) => void;
 }) {
   const [executionAgentSelections, setExecutionAgentSelections] = useState<Record<string, number>>(
     {},
   );
+  const [queueGroup, setQueueGroup] = useState<HandoffQueueGroup>('all');
   const workPackageBusy =
     workPackageStatus === 'creating' ||
     workPackageStatus === 'opening' ||
     workPackageStatus === 'copying' ||
     workPackageStatus === 'updating';
-  const executionBusy = executionActionStatus === 'linking' || executionActionStatus === 'updating';
+  const executionBusy =
+    executionActionStatus === 'linking' ||
+    executionActionStatus === 'updating' ||
+    executionActionStatus === 'launching' ||
+    executionActionStatus === 'refreshing' ||
+    executionActionStatus === 'opening_report';
   const executionSummary = buildHandoffExecutionQueueSummary(state.items);
+  const queueSummary = buildHandoffQueueSummary(state.items);
+  const queueItems = filterHandoffQueueItems(state.items, queueGroup);
   const selectedAgentIdForItem = (item: HandoffArtifactLibraryItem): number | undefined =>
     executionAgentSelections[item.relativePath] ??
     item.dispatchPackage?.execution?.agentId ??
@@ -2913,6 +3061,38 @@ function HandoffArtifactLibraryPanel({
                       })}
                       <Button
                         variant={
+                          executionBusy || !canUseHandoffWorkPackage(item) ? 'disabled' : 'default'
+                        }
+                        size="sm"
+                        disabled={executionBusy || !canUseHandoffWorkPackage(item)}
+                        onClick={() => onLaunchExecutor(item, 'codex')}
+                      >
+                        Launch executor
+                      </Button>
+                      <Button
+                        variant={
+                          executionBusy || !canUseHandoffWorkPackage(item) ? 'disabled' : 'ghost'
+                        }
+                        size="sm"
+                        disabled={executionBusy || !canUseHandoffWorkPackage(item)}
+                        onClick={() => onRefreshCompletion(item)}
+                      >
+                        Refresh completion
+                      </Button>
+                      <Button
+                        variant={
+                          executionBusy || item.completion?.reportExists !== true
+                            ? 'disabled'
+                            : 'default'
+                        }
+                        size="sm"
+                        disabled={executionBusy || item.completion?.reportExists !== true}
+                        onClick={() => onOpenReport(item)}
+                      >
+                        Open report
+                      </Button>
+                      <Button
+                        variant={
                           workPackageBusy || !canUseHandoffWorkPackage(item) ? 'disabled' : 'ghost'
                         }
                         size="sm"
@@ -2957,6 +3137,161 @@ function HandoffArtifactLibraryPanel({
             ))}
           </div>
         )}
+        <div className="grid gap-3 border border-border bg-bg p-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-sm uppercase tracking-wide text-accent-bright">
+                Handoff Queue
+              </div>
+              <div className="mt-1 break-words text-xs text-text-muted">
+                {queueSummary.totalPackages} packages / {queueSummary.needsDispatch} needs dispatch
+                / {queueSummary.activeWaiting} active or waiting / {queueSummary.reportReady} report
+                ready / {queueSummary.done} done
+              </div>
+            </div>
+            <label className="min-w-[180px] text-xs uppercase tracking-wide text-text-muted">
+              Group
+              <select
+                className="mt-1 h-8 w-full border border-border bg-bg px-2 text-xs normal-case tracking-normal text-text outline-none focus:border-accent"
+                value={queueGroup}
+                onChange={(event) => setQueueGroup(event.currentTarget.value as HandoffQueueGroup)}
+              >
+                {(
+                  [
+                    'all',
+                    'needs_dispatch',
+                    'active_waiting',
+                    'blocked',
+                    'report_ready',
+                    'done',
+                  ] as HandoffQueueGroup[]
+                ).map((group) => (
+                  <option key={group} value={group}>
+                    {handoffQueueGroupLabel(group)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          {queueItems.length === 0 ? (
+            <div className="border border-border bg-btn-bg p-3 text-xs text-text-muted">
+              {queueSummary.totalPackages === 0
+                ? 'No handoff work packages yet.'
+                : 'No work packages match this queue group.'}
+            </div>
+          ) : (
+            <div className="grid gap-2">
+              {queueItems.map((item) => (
+                <div
+                  key={`queue-${item.relativePath}`}
+                  className="grid gap-3 border border-border bg-btn-bg p-3 lg:grid-cols-[minmax(0,1fr)_auto]"
+                >
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="truncate text-sm text-text">{item.displayTitle}</span>
+                      <span className="border border-border bg-bg px-2 py-1 text-xs uppercase tracking-wide text-text-muted">
+                        {item.dispatchPackage?.statusLabel}
+                      </span>
+                      <span className="border border-border bg-bg px-2 py-1 text-xs uppercase tracking-wide text-text-muted">
+                        {item.dispatchPackage?.execution?.statusLabel ?? 'No agent'}
+                      </span>
+                    </div>
+                    <div className="mt-1 break-words text-xs text-text-muted">
+                      {item.completion?.statusLabel ?? 'Completion not checked'}
+                    </div>
+                    <div className="mt-1 break-words font-mono text-xs text-text-muted">
+                      {item.dispatchPackage?.packageRelativePath}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-start justify-end gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={openStatus === 'opening'}
+                      onClick={() => onOpen(item)}
+                    >
+                      Open handoff
+                    </Button>
+                    <Button
+                      variant={
+                        workPackageStatus === 'opening' || !canUseHandoffWorkPackage(item)
+                          ? 'disabled'
+                          : 'ghost'
+                      }
+                      size="sm"
+                      disabled={workPackageStatus === 'opening' || !canUseHandoffWorkPackage(item)}
+                      onClick={() => onOpenWorkPackage(item)}
+                    >
+                      Open work package
+                    </Button>
+                    <Button
+                      variant={
+                        workPackageBusy || !canUseHandoffWorkPackage(item) ? 'disabled' : 'ghost'
+                      }
+                      size="sm"
+                      disabled={workPackageBusy || !canUseHandoffWorkPackage(item)}
+                      onClick={() => onCopyWorkPackagePrompt(item)}
+                    >
+                      Copy prompt
+                    </Button>
+                    <Button
+                      variant={
+                        executionBusy || !canUseHandoffWorkPackage(item) ? 'disabled' : 'default'
+                      }
+                      size="sm"
+                      disabled={executionBusy || !canUseHandoffWorkPackage(item)}
+                      onClick={() => onLaunchExecutor(item, 'codex')}
+                    >
+                      Launch executor
+                    </Button>
+                    <Button
+                      variant={executionBusy ? 'disabled' : 'ghost'}
+                      size="sm"
+                      disabled={executionBusy}
+                      onClick={() => onRefreshCompletion(item)}
+                    >
+                      Refresh completion
+                    </Button>
+                    <Button
+                      variant={
+                        executionBusy || item.completion?.reportExists !== true
+                          ? 'disabled'
+                          : 'default'
+                      }
+                      size="sm"
+                      disabled={executionBusy || item.completion?.reportExists !== true}
+                      onClick={() => onOpenReport(item)}
+                    >
+                      Open report
+                    </Button>
+                    {handoffDispatchStatusActions(item).map((action) => (
+                      <Button
+                        key={`queue-dispatch-${action.nextStatus}`}
+                        variant={action.disabled || workPackageBusy ? 'disabled' : 'ghost'}
+                        size="sm"
+                        disabled={action.disabled || workPackageBusy}
+                        onClick={() => onUpdateDispatchStatus(item, action.nextStatus)}
+                      >
+                        {action.label}
+                      </Button>
+                    ))}
+                    {handoffExecutionStatusActions(item).map((action) => (
+                      <Button
+                        key={`queue-exec-${action.nextStatus}`}
+                        variant={action.disabled || executionBusy ? 'disabled' : 'ghost'}
+                        size="sm"
+                        disabled={action.disabled || executionBusy}
+                        onClick={() => onUpdateExecutionStatus(item, action.nextStatus)}
+                      >
+                        {action.label}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
         <div
           className={`break-words text-xs ${
             openStatus === 'failed'

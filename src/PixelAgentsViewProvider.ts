@@ -89,8 +89,11 @@ import {
   buildHandoffWorkPackagePrompt,
   createHandoffWorkPackage,
   linkHandoffExecutionAgent,
+  markHandoffExecutorLaunched,
   readHandoffArtifactMetadataForMarkdown,
+  refreshHandoffCompletionStatus,
   resolveHandoffArtifactOpenPath,
+  resolveHandoffReportOpenPath,
   resolveHandoffWorkPackageOpenPath,
   scanHandoffArtifacts,
   updateHandoffArtifactStatus,
@@ -896,6 +899,208 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  private async launchHandoffExecutorFromWebview(message: Record<string, unknown>): Promise<void> {
+    const requestId = typeof message.requestId === 'string' ? message.requestId : undefined;
+    try {
+      const repoRoot = this.getHandoffRepoRoot();
+      if (!repoRoot) {
+        throw new Error('Open a repository workspace before launching a handoff executor.');
+      }
+      if (message.providerId === 'claude') {
+        throw new Error(
+          'Claude executor launch does not yet support passing work-package prompts; use Codex.',
+        );
+      }
+      const providerId = 'codex';
+      const prompt = buildHandoffWorkPackagePrompt(repoRoot, message.relativePath);
+      const agent = await launchNewTerminal(
+        this.nextAgentId,
+        this.nextTerminalIndex,
+        this.agents,
+        this.activeAgentId,
+        this.knownJsonlFiles,
+        this.fileWatchers,
+        this.pollingTimers,
+        this.waitingTimers,
+        this.permissionTimers,
+        this.jsonlPollTimers,
+        this.projectScanTimer,
+        this.webview,
+        this.persistAgents,
+        providerId,
+        repoRoot,
+        false,
+        prompt.prompt,
+      );
+      if (!agent) {
+        throw new Error(`Could not launch ${providerId} executor terminal.`);
+      }
+      const result = markHandoffExecutorLaunched(repoRoot, prompt.markdown.relativePath, {
+        agentId: agent.id,
+        agentName: agent.agentName ?? `Agent #${agent.id}`,
+        providerId: agent.providerId ?? providerId,
+        projectName: agent.projectName ?? agent.folderName ?? path.basename(agent.projectDir),
+        sessionId: agent.sessionId,
+      });
+      this.webview?.postMessage({
+        type: 'handoffExecutorLaunched',
+        requestId,
+        relativePath: result.markdown.relativePath,
+        filename: result.markdown.filename,
+        artifactId: result.metadata.artifactId,
+        status: result.metadata.status,
+        previousDispatchStatus: result.previousDispatchStatus,
+        dispatchStatus: result.dispatchPackage.status,
+        executionStatus: result.execution.status,
+        packageRelativePath: result.dispatchPackage.packageRelativePath,
+        branchName: result.dispatchPackage.branchName,
+        reportRelativePath: result.dispatchPackage.reportRelativePath,
+        linkedAgentId: result.execution.agentId,
+        linkedAgentName: result.execution.agentName,
+        linkedAgentProviderId: result.execution.providerId,
+        linkedAgentProjectName: result.execution.projectName,
+        linkedAgentSessionId: result.execution.sessionId,
+      });
+      this.postHandoffTimelineEvent('handoff.executor_launched', result.markdown.relativePath, {
+        filename: result.markdown.filename,
+        artifactId: result.metadata.artifactId,
+        artifactStatus: result.metadata.status,
+        previousStatus: result.previousDispatchStatus,
+        nextStatus: result.nextDispatchStatus,
+        dispatchStatus: result.dispatchPackage.status,
+        executionStatus: result.execution.status,
+        packageRelativePath: result.dispatchPackage.packageRelativePath,
+        reportRelativePath: result.dispatchPackage.reportRelativePath,
+        branchName: result.dispatchPackage.branchName,
+        providerId: result.metadata.providerId,
+        project: result.metadata.projectName,
+        sessionId: result.metadata.sessionId,
+        runId: result.metadata.runId,
+        linkedAgentId: result.execution.agentId,
+        linkedAgentName: result.execution.agentName,
+        linkedAgentProviderId: result.execution.providerId,
+        linkedAgentProjectName: result.execution.projectName,
+        linkedAgentSessionId: result.execution.sessionId,
+      });
+      this.postHandoffArtifactsLoaded();
+      vscode.window.showInformationMessage(
+        `Pixel Agents: Launched handoff executor for ${result.dispatchPackage.packageRelativePath}`,
+      );
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.webview?.postMessage({
+        type: 'handoffExecutorLaunchFailed',
+        requestId,
+        relativePath: typeof message.relativePath === 'string' ? message.relativePath : undefined,
+        error: errorMessage,
+      });
+      vscode.window.showErrorMessage(`Pixel Agents: Failed to launch executor: ${errorMessage}`);
+    }
+  }
+
+  private async refreshHandoffCompletionFromWebview(
+    message: Record<string, unknown>,
+  ): Promise<void> {
+    const requestId = typeof message.requestId === 'string' ? message.requestId : undefined;
+    try {
+      const repoRoot = this.getHandoffRepoRoot();
+      if (!repoRoot) {
+        throw new Error('Open a repository workspace before refreshing handoff completion.');
+      }
+      const result = refreshHandoffCompletionStatus(repoRoot, message.relativePath);
+      this.webview?.postMessage({
+        type: 'handoffCompletionRefreshed',
+        requestId,
+        relativePath: result.markdown.relativePath,
+        filename: result.markdown.filename,
+        artifactId: result.metadata.artifactId,
+        status: result.metadata.status,
+        dispatchStatus: result.dispatchPackage.status,
+        executionStatus: result.dispatchPackage.execution?.status,
+        packageRelativePath: result.dispatchPackage.packageRelativePath,
+        branchName: result.completion.branchName,
+        reportRelativePath: result.completion.reportRelativePath,
+        reportExists: result.completion.reportExists,
+        branchExists: result.completion.branchExists,
+        branchMergedToMain: result.completion.branchMergedToMain,
+      });
+      this.postHandoffTimelineEvent('handoff.completion_refreshed', result.markdown.relativePath, {
+        filename: result.markdown.filename,
+        artifactId: result.metadata.artifactId,
+        artifactStatus: result.metadata.status,
+        dispatchStatus: result.dispatchPackage.status,
+        executionStatus: result.dispatchPackage.execution?.status,
+        packageRelativePath: result.dispatchPackage.packageRelativePath,
+        reportRelativePath: result.completion.reportRelativePath,
+        branchName: result.completion.branchName,
+        reportExists: result.completion.reportExists,
+        branchExists: result.completion.branchExists,
+        branchMergedToMain: result.completion.branchMergedToMain,
+        providerId: result.metadata.providerId,
+        project: result.metadata.projectName,
+        sessionId: result.metadata.sessionId,
+        runId: result.metadata.runId,
+      });
+      this.postHandoffArtifactsLoaded();
+    } catch (error) {
+      this.webview?.postMessage({
+        type: 'handoffCompletionRefreshFailed',
+        requestId,
+        relativePath: typeof message.relativePath === 'string' ? message.relativePath : undefined,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private async openHandoffReportFromWebview(message: Record<string, unknown>): Promise<void> {
+    const requestId = typeof message.requestId === 'string' ? message.requestId : undefined;
+    try {
+      const repoRoot = this.getHandoffRepoRoot();
+      if (!repoRoot) {
+        throw new Error('Open a repository workspace before opening a handoff report.');
+      }
+      const target = resolveHandoffReportOpenPath(repoRoot, message.relativePath);
+      const metadata = readHandoffArtifactMetadataForMarkdown(
+        repoRoot,
+        typeof message.relativePath === 'string' ? message.relativePath : '',
+      );
+      const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(target.absolutePath));
+      await vscode.window.showTextDocument(doc, { preview: false });
+      this.webview?.postMessage({
+        type: 'handoffReportOpened',
+        requestId,
+        relativePath: typeof message.relativePath === 'string' ? message.relativePath : undefined,
+        reportRelativePath: target.relativePath,
+        filename: target.filename,
+      });
+      this.postHandoffTimelineEvent(
+        'handoff.report_opened',
+        typeof message.relativePath === 'string' ? message.relativePath : target.relativePath,
+        {
+          filename: target.filename,
+          artifactId: metadata?.artifactId,
+          artifactStatus: metadata?.status,
+          dispatchStatus: metadata?.dispatchPackage?.status,
+          executionStatus: metadata?.dispatchPackage?.execution?.status,
+          packageRelativePath: metadata?.dispatchPackage?.packageRelativePath,
+          reportRelativePath: target.relativePath,
+          branchName: metadata?.dispatchPackage?.branchName,
+          providerId: metadata?.providerId,
+          project: metadata?.projectName,
+          sessionId: metadata?.sessionId,
+          runId: metadata?.runId,
+        },
+      );
+    } catch (error) {
+      this.webview?.postMessage({
+        type: 'handoffReportOpenFailed',
+        requestId,
+        relativePath: typeof message.relativePath === 'string' ? message.relativePath : undefined,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   private postHandoffTimelineEvent(
     kind:
       | 'handoff.generated'
@@ -906,7 +1111,10 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       | 'handoff.dispatch_package_opened'
       | 'handoff.dispatch_status_changed'
       | 'handoff.execution_linked'
-      | 'handoff.execution_status_changed',
+      | 'handoff.execution_status_changed'
+      | 'handoff.executor_launched'
+      | 'handoff.completion_refreshed'
+      | 'handoff.report_opened',
     relativePath: string,
     metadata: Record<string, unknown> = {},
   ): void {
@@ -928,6 +1136,13 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       typeof metadata.packageRelativePath === 'string' ? metadata.packageRelativePath : undefined;
     const reportRelativePath =
       typeof metadata.reportRelativePath === 'string' ? metadata.reportRelativePath : undefined;
+    const branchName = typeof metadata.branchName === 'string' ? metadata.branchName : undefined;
+    const reportExists =
+      typeof metadata.reportExists === 'boolean' ? metadata.reportExists : undefined;
+    const branchExists =
+      typeof metadata.branchExists === 'boolean' ? metadata.branchExists : undefined;
+    const branchMergedToMain =
+      typeof metadata.branchMergedToMain === 'boolean' ? metadata.branchMergedToMain : undefined;
     const linkedAgentId =
       typeof metadata.linkedAgentId === 'number' && Number.isFinite(metadata.linkedAgentId)
         ? metadata.linkedAgentId
@@ -950,8 +1165,12 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       relativePath,
       packageRelativePath,
       reportRelativePath,
+      branchName,
       linkedAgentName,
       linkedAgentId !== undefined ? `agent ${linkedAgentId}` : undefined,
+      reportExists !== undefined ? `report ${reportExists ? 'exists' : 'missing'}` : undefined,
+      branchExists !== undefined ? `branch ${branchExists ? 'exists' : 'missing'}` : undefined,
+      branchMergedToMain !== undefined ? `merged ${branchMergedToMain ? 'yes' : 'no'}` : undefined,
       artifactId,
       statusChange ?? executionStatus ?? dispatchStatus ?? artifactStatus,
     ].filter((part): part is string => typeof part === 'string' && part.trim().length > 0);
@@ -972,7 +1191,13 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
                     ? 'Handoff work package status changed'
                     : kind === 'handoff.execution_linked'
                       ? 'Handoff execution linked'
-                      : 'Handoff execution status changed';
+                      : kind === 'handoff.execution_status_changed'
+                        ? 'Handoff execution status changed'
+                        : kind === 'handoff.executor_launched'
+                          ? 'Handoff executor launched'
+                          : kind === 'handoff.completion_refreshed'
+                            ? 'Handoff completion refreshed'
+                            : 'Handoff report opened';
     postAgentTimelineEvent(this.webview, {
       agentId: typeof metadata.agentId === 'number' ? metadata.agentId : 0,
       kind,
@@ -992,6 +1217,10 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       executionStatus,
       packageRelativePath,
       reportRelativePath,
+      branchName,
+      reportExists,
+      branchExists,
+      branchMergedToMain,
       linkedAgentId,
       linkedAgentName,
       linkedAgentProviderId,
@@ -2059,6 +2288,24 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         );
       } else if (message.type === 'updateHandoffExecutionStatus') {
         await this.updateHandoffExecutionStatusFromWebview(
+          typeof message === 'object' && message !== null
+            ? (message as Record<string, unknown>)
+            : {},
+        );
+      } else if (message.type === 'launchHandoffExecutor') {
+        await this.launchHandoffExecutorFromWebview(
+          typeof message === 'object' && message !== null
+            ? (message as Record<string, unknown>)
+            : {},
+        );
+      } else if (message.type === 'refreshHandoffCompletion') {
+        await this.refreshHandoffCompletionFromWebview(
+          typeof message === 'object' && message !== null
+            ? (message as Record<string, unknown>)
+            : {},
+        );
+      } else if (message.type === 'openHandoffReport') {
+        await this.openHandoffReportFromWebview(
           typeof message === 'object' && message !== null
             ? (message as Record<string, unknown>)
             : {},

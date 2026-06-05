@@ -31,6 +31,10 @@ export interface TimelineRecordV1 {
   executionStatus?: string;
   packageRelativePath?: string;
   reportRelativePath?: string;
+  branchName?: string;
+  reportExists?: boolean;
+  branchExists?: boolean;
+  branchMergedToMain?: boolean;
   linkedAgentId?: number;
   linkedAgentName?: string;
   linkedAgentProviderId?: string;
@@ -67,6 +71,10 @@ export interface TimelineRecordInput {
   executionStatus?: unknown;
   packageRelativePath?: unknown;
   reportRelativePath?: unknown;
+  branchName?: unknown;
+  reportExists?: unknown;
+  branchExists?: unknown;
+  branchMergedToMain?: unknown;
   linkedAgentId?: unknown;
   linkedAgentName?: unknown;
   linkedAgentProviderId?: unknown;
@@ -169,6 +177,10 @@ export function createTimelineRecord(input: TimelineRecordInput): TimelineRecord
   const executionStatus = stringValue(input.executionStatus);
   const packageRelativePath = stringValue(input.packageRelativePath);
   const reportRelativePath = stringValue(input.reportRelativePath);
+  const branchName = stringValue(input.branchName);
+  const reportExists = booleanValue(input.reportExists);
+  const branchExists = booleanValue(input.branchExists);
+  const branchMergedToMain = booleanValue(input.branchMergedToMain);
   const linkedAgentId = numberValue(input.linkedAgentId);
   const linkedAgentName = stringValue(input.linkedAgentName);
   const linkedAgentProviderId = stringValue(input.linkedAgentProviderId);
@@ -191,6 +203,10 @@ export function createTimelineRecord(input: TimelineRecordInput): TimelineRecord
   if (executionStatus) record.executionStatus = executionStatus;
   if (packageRelativePath) record.packageRelativePath = packageRelativePath;
   if (reportRelativePath) record.reportRelativePath = reportRelativePath;
+  if (branchName) record.branchName = branchName;
+  if (reportExists !== undefined) record.reportExists = reportExists;
+  if (branchExists !== undefined) record.branchExists = branchExists;
+  if (branchMergedToMain !== undefined) record.branchMergedToMain = branchMergedToMain;
   if (linkedAgentId !== undefined) record.linkedAgentId = linkedAgentId;
   if (linkedAgentName) record.linkedAgentName = linkedAgentName;
   if (linkedAgentProviderId) record.linkedAgentProviderId = linkedAgentProviderId;
@@ -233,6 +249,10 @@ function isTimelineRecordV1(value: unknown): value is TimelineRecordV1 {
     (record.executionStatus === undefined || typeof record.executionStatus === 'string') &&
     (record.packageRelativePath === undefined || typeof record.packageRelativePath === 'string') &&
     (record.reportRelativePath === undefined || typeof record.reportRelativePath === 'string') &&
+    (record.branchName === undefined || typeof record.branchName === 'string') &&
+    (record.reportExists === undefined || typeof record.reportExists === 'boolean') &&
+    (record.branchExists === undefined || typeof record.branchExists === 'boolean') &&
+    (record.branchMergedToMain === undefined || typeof record.branchMergedToMain === 'boolean') &&
     (record.linkedAgentId === undefined ||
       (typeof record.linkedAgentId === 'number' && Number.isFinite(record.linkedAgentId))) &&
     (record.linkedAgentName === undefined || typeof record.linkedAgentName === 'string') &&
@@ -255,6 +275,10 @@ function stringValue(value: unknown): string | undefined {
 function numberValue(value: unknown): number | undefined {
   if (typeof value !== 'number' || !Number.isFinite(value)) return undefined;
   return value;
+}
+
+function booleanValue(value: unknown): boolean | undefined {
+  return typeof value === 'boolean' ? value : undefined;
 }
 
 function timelineSeverity(value: unknown): TimelineRecordSeverity | undefined {

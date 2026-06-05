@@ -45,6 +45,10 @@ export interface TimelineSourceEvent {
   executionStatus?: string;
   packageRelativePath?: string;
   reportRelativePath?: string;
+  branchName?: string;
+  reportExists?: boolean;
+  branchExists?: boolean;
+  branchMergedToMain?: boolean;
   linkedAgentId?: number;
   linkedAgentName?: string;
   linkedAgentProviderId?: string;
@@ -91,6 +95,10 @@ export interface TimelinePageItem {
   executionStatus?: string;
   packageRelativePath?: string;
   reportRelativePath?: string;
+  branchName?: string;
+  reportExists?: boolean;
+  branchExists?: boolean;
+  branchMergedToMain?: boolean;
   linkedAgentId?: number;
   linkedAgentName?: string;
   linkedAgentProviderId?: string;
@@ -176,6 +184,10 @@ export function buildTimelinePageItems(
       executionStatus: event.executionStatus,
       packageRelativePath: event.packageRelativePath,
       reportRelativePath: event.reportRelativePath,
+      branchName: event.branchName,
+      reportExists: event.reportExists,
+      branchExists: event.branchExists,
+      branchMergedToMain: event.branchMergedToMain,
       linkedAgentId: event.linkedAgentId,
       linkedAgentName: event.linkedAgentName,
       linkedAgentProviderId: event.linkedAgentProviderId,
@@ -426,6 +438,16 @@ function buildTimelineSearchText(event: TimelinePageItem): string {
     event.executionStatus,
     event.packageRelativePath,
     event.reportRelativePath,
+    event.branchName,
+    event.reportExists !== undefined
+      ? `report ${event.reportExists ? 'exists' : 'missing'}`
+      : undefined,
+    event.branchExists !== undefined
+      ? `branch ${event.branchExists ? 'exists' : 'missing'}`
+      : undefined,
+    event.branchMergedToMain !== undefined
+      ? `merged ${event.branchMergedToMain ? 'yes' : 'no'}`
+      : undefined,
     event.linkedAgentId !== undefined ? `linked agent ${event.linkedAgentId}` : undefined,
     event.linkedAgentName,
     event.linkedAgentProviderId,

@@ -293,6 +293,51 @@ test('timeline page keeps handoff execution history searchable', () => {
   assert.equal(model.events[0]?.linkedAgentName, 'Codex executor');
 });
 
+test('timeline page keeps handoff executor completion history searchable', () => {
+  const items = buildTimelinePageItems(
+    [],
+    [
+      {
+        id: 'handoff-completion',
+        agentId: 0,
+        providerId: 'codex',
+        projectName: 'Pixel Agents Multi',
+        artifactId: 'pixel-handoff',
+        artifactStatus: 'reviewed',
+        dispatchStatus: 'dispatched',
+        executionStatus: 'active',
+        packageRelativePath:
+          'docs/roadmap/supervision/work-packages/handoffs/pixel-handoff-work-package.md',
+        reportRelativePath: 'docs/roadmap/supervision/reports/pixel-handoff-executor-report.md',
+        branchName: 'product/handoff-pixel-handoff',
+        reportExists: true,
+        branchExists: true,
+        branchMergedToMain: false,
+        linkedAgentId: 12,
+        linkedAgentName: 'Codex executor',
+        timestamp: 1_780_000_000_000,
+        kind: 'handoff.completion_refreshed',
+        title: 'Handoff completion refreshed',
+        summary: 'pixel-handoff-work-package.md / report exists / branch exists',
+        severity: 'success',
+        source: 'user',
+      },
+    ],
+    [],
+  );
+  const model = buildTimelinePageModel(items, {
+    ...defaultFilters,
+    searchQuery: 'completion report exists branch product handoff merged no',
+  });
+
+  assert.equal(model.events[0]?.id, 'timeline-handoff-completion');
+  assert.equal(model.events[0]?.branchName, 'product/handoff-pixel-handoff');
+  assert.equal(model.events[0]?.reportExists, true);
+  assert.equal(model.events[0]?.branchExists, true);
+  assert.equal(model.events[0]?.branchMergedToMain, false);
+  assert.equal(model.events[0]?.isActionLike, true);
+});
+
 test('timeline page search spans event, agent, provider, and project text', () => {
   const items = buildTimelinePageItems(
     [
