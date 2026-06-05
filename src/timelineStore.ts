@@ -28,8 +28,14 @@ export interface TimelineRecordV1 {
   previousStatus?: string;
   nextStatus?: string;
   dispatchStatus?: string;
+  executionStatus?: string;
   packageRelativePath?: string;
   reportRelativePath?: string;
+  linkedAgentId?: number;
+  linkedAgentName?: string;
+  linkedAgentProviderId?: string;
+  linkedAgentProjectName?: string;
+  linkedAgentSessionId?: string;
   timestamp: number;
   kind: string;
   title: string;
@@ -58,8 +64,14 @@ export interface TimelineRecordInput {
   previousStatus?: unknown;
   nextStatus?: unknown;
   dispatchStatus?: unknown;
+  executionStatus?: unknown;
   packageRelativePath?: unknown;
   reportRelativePath?: unknown;
+  linkedAgentId?: unknown;
+  linkedAgentName?: unknown;
+  linkedAgentProviderId?: unknown;
+  linkedAgentProjectName?: unknown;
+  linkedAgentSessionId?: unknown;
   timestamp?: unknown;
   kind?: unknown;
   title?: unknown;
@@ -154,8 +166,14 @@ export function createTimelineRecord(input: TimelineRecordInput): TimelineRecord
   const previousStatus = stringValue(input.previousStatus);
   const nextStatus = stringValue(input.nextStatus);
   const dispatchStatus = stringValue(input.dispatchStatus);
+  const executionStatus = stringValue(input.executionStatus);
   const packageRelativePath = stringValue(input.packageRelativePath);
   const reportRelativePath = stringValue(input.reportRelativePath);
+  const linkedAgentId = numberValue(input.linkedAgentId);
+  const linkedAgentName = stringValue(input.linkedAgentName);
+  const linkedAgentProviderId = stringValue(input.linkedAgentProviderId);
+  const linkedAgentProjectName = stringValue(input.linkedAgentProjectName);
+  const linkedAgentSessionId = stringValue(input.linkedAgentSessionId);
   const summary = stringValue(input.summary);
   const statusAfter = lifecycleStatus(input.statusAfter);
   const severity = timelineSeverity(input.severity);
@@ -170,8 +188,14 @@ export function createTimelineRecord(input: TimelineRecordInput): TimelineRecord
   if (previousStatus) record.previousStatus = previousStatus;
   if (nextStatus) record.nextStatus = nextStatus;
   if (dispatchStatus) record.dispatchStatus = dispatchStatus;
+  if (executionStatus) record.executionStatus = executionStatus;
   if (packageRelativePath) record.packageRelativePath = packageRelativePath;
   if (reportRelativePath) record.reportRelativePath = reportRelativePath;
+  if (linkedAgentId !== undefined) record.linkedAgentId = linkedAgentId;
+  if (linkedAgentName) record.linkedAgentName = linkedAgentName;
+  if (linkedAgentProviderId) record.linkedAgentProviderId = linkedAgentProviderId;
+  if (linkedAgentProjectName) record.linkedAgentProjectName = linkedAgentProjectName;
+  if (linkedAgentSessionId) record.linkedAgentSessionId = linkedAgentSessionId;
   if (summary) record.summary = summary;
   if (statusAfter) record.statusAfter = statusAfter;
   if (severity) record.severity = severity;
@@ -206,8 +230,18 @@ function isTimelineRecordV1(value: unknown): value is TimelineRecordV1 {
     (record.previousStatus === undefined || typeof record.previousStatus === 'string') &&
     (record.nextStatus === undefined || typeof record.nextStatus === 'string') &&
     (record.dispatchStatus === undefined || typeof record.dispatchStatus === 'string') &&
+    (record.executionStatus === undefined || typeof record.executionStatus === 'string') &&
     (record.packageRelativePath === undefined || typeof record.packageRelativePath === 'string') &&
     (record.reportRelativePath === undefined || typeof record.reportRelativePath === 'string') &&
+    (record.linkedAgentId === undefined ||
+      (typeof record.linkedAgentId === 'number' && Number.isFinite(record.linkedAgentId))) &&
+    (record.linkedAgentName === undefined || typeof record.linkedAgentName === 'string') &&
+    (record.linkedAgentProviderId === undefined ||
+      typeof record.linkedAgentProviderId === 'string') &&
+    (record.linkedAgentProjectName === undefined ||
+      typeof record.linkedAgentProjectName === 'string') &&
+    (record.linkedAgentSessionId === undefined ||
+      typeof record.linkedAgentSessionId === 'string') &&
     (record.severity === undefined || timelineSeverity(record.severity) !== undefined) &&
     (record.source === undefined || timelineSource(record.source) !== undefined) &&
     (record.statusAfter === undefined || lifecycleStatus(record.statusAfter) !== undefined)

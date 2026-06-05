@@ -16,12 +16,33 @@ export interface HandoffArtifactLibraryItem {
   sessionId?: string;
   runId?: string;
   dispatchPackage?: HandoffDispatchPackage;
+  executionLiveHint?: HandoffExecutionLiveHint;
   displayTitle: string;
   displayDetail: string;
   statusLabel: string;
 }
 
 export type HandoffDispatchStatus = 'draft' | 'ready' | 'dispatched' | 'completed' | 'blocked';
+export type HandoffExecutionStatus =
+  | 'linked'
+  | 'active'
+  | 'waiting'
+  | 'completed'
+  | 'blocked'
+  | 'unknown';
+
+export interface HandoffExecutionMetadata {
+  agentId?: number;
+  agentName?: string;
+  providerId?: string;
+  projectName?: string;
+  sessionId?: string;
+  runId?: string;
+  linkedAt: string;
+  updatedAt: string;
+  status: HandoffExecutionStatus;
+  statusLabel: string;
+}
 
 export interface HandoffDispatchPackage {
   packageRelativePath: string;
@@ -30,7 +51,24 @@ export interface HandoffDispatchPackage {
   status: HandoffDispatchStatus;
   createdAt: string;
   updatedAt: string;
+  execution?: HandoffExecutionMetadata;
   statusLabel: string;
+}
+
+export interface HandoffExecutionLiveHint {
+  agentId: number;
+  label: string;
+  statusGroup?: string;
+}
+
+export interface HandoffExecutionQueueSummary {
+  dispatchPackageCount: number;
+  linkedPackageCount: number;
+  completedPackageCount: number;
+  blockedPackageCount: number;
+  dispatchCounts: Record<HandoffDispatchStatus, number>;
+  executionCounts: Record<HandoffExecutionStatus, number>;
+  latestActivityLabel?: string;
 }
 
 export interface HandoffArtifactLibraryState {
@@ -105,11 +143,39 @@ export interface UpdateHandoffDispatchStatusMessage {
   nextStatus: HandoffDispatchStatus;
 }
 
+export interface LinkHandoffExecutionAgentMessage {
+  type: 'linkHandoffExecutionAgent';
+  requestId: string;
+  relativePath: string;
+  agentId: number;
+}
+
+export interface UpdateHandoffExecutionStatusMessage {
+  type: 'updateHandoffExecutionStatus';
+  requestId: string;
+  relativePath: string;
+  nextStatus: HandoffExecutionStatus;
+}
+
 export interface HandoffDispatchStatusAction {
   nextStatus: HandoffDispatchStatus;
   label: string;
   disabled: boolean;
 }
+
+export interface HandoffExecutionStatusAction {
+  nextStatus: HandoffExecutionStatus;
+  label: string;
+  disabled: boolean;
+}
+
+export type HandoffExecutionActionStatus =
+  | 'idle'
+  | 'linking'
+  | 'linked'
+  | 'updating'
+  | 'updated'
+  | 'failed';
 
 export const initialHandoffArtifactLibraryState: HandoffArtifactLibraryState = {
   items: [],
@@ -289,6 +355,136 @@ export function buildUpdateHandoffDispatchStatusMessage(
   };
 }
 
+export function canLinkHandoffExecutionAgent(
+  item: Pick<HandoffArtifactLibraryItem, 'relativePath' | 'dispatchPackage'>,
+  agentId: number | undefined,
+): boolean {
+  return canUseHandoffWorkPackage(item) && safeAgentId(agentId) !== undefined;
+}
+
+export function buildLinkHandoffExecutionAgentMessage(
+  item: Pick<HandoffArtifactLibraryItem, 'relativePath' | 'dispatchPackage'>,
+  agentId: number | undefined,
+  requestId: string,
+): LinkHandoffExecutionAgentMessage | undefined {
+  const safeId = safeAgentId(agentId);
+  if (!requestId || safeId === undefined || !canUseHandoffWorkPackage(item)) return undefined;
+  return {
+    type: 'linkHandoffExecutionAgent',
+    requestId,
+    relativePath: item.relativePath,
+    agentId: safeId,
+  };
+}
+
+export function handoffExecutionStatusActions(
+  item: Pick<HandoffArtifactLibraryItem, 'dispatchPackage' | 'relativePath'>,
+): HandoffExecutionStatusAction[] {
+  const canUpdate = canUseHandoffWorkPackage(item) && !!item.dispatchPackage?.execution;
+  return (['active', 'waiting', 'completed', 'blocked', 'unknown'] as const).map((nextStatus) => ({
+    nextStatus,
+    label: handoffExecutionStatusActionLabel(nextStatus),
+    disabled: !canUpdate || item.dispatchPackage?.execution?.status === nextStatus,
+  }));
+}
+
+export function buildUpdateHandoffExecutionStatusMessage(
+  item: Pick<HandoffArtifactLibraryItem, 'relativePath' | 'dispatchPackage'>,
+  nextStatus: HandoffExecutionStatus,
+  requestId: string,
+): UpdateHandoffExecutionStatusMessage | undefined {
+  if (
+    !requestId ||
+    !canUseHandoffWorkPackage(item) ||
+    !item.dispatchPackage?.execution ||
+    !isHandoffExecutionStatus(nextStatus)
+  ) {
+    return undefined;
+  }
+  return {
+    type: 'updateHandoffExecutionStatus',
+    requestId,
+    relativePath: item.relativePath,
+    nextStatus,
+  };
+}
+
+export function buildHandoffExecutionQueueSummary(
+  items: readonly Pick<HandoffArtifactLibraryItem, 'dispatchPackage' | 'updatedAt'>[],
+): HandoffExecutionQueueSummary {
+  const dispatchCounts: Record<HandoffDispatchStatus, number> = {
+    draft: 0,
+    ready: 0,
+    dispatched: 0,
+    completed: 0,
+    blocked: 0,
+  };
+  const executionCounts: Record<HandoffExecutionStatus, number> = {
+    linked: 0,
+    active: 0,
+    waiting: 0,
+    completed: 0,
+    blocked: 0,
+    unknown: 0,
+  };
+  let dispatchPackageCount = 0;
+  let linkedPackageCount = 0;
+  let completedPackageCount = 0;
+  let blockedPackageCount = 0;
+  let latestActivityMs = 0;
+  for (const item of items) {
+    const dispatchPackage = item.dispatchPackage;
+    if (!dispatchPackage) continue;
+    dispatchPackageCount += 1;
+    dispatchCounts[dispatchPackage.status] += 1;
+    if (dispatchPackage.status === 'completed') completedPackageCount += 1;
+    if (dispatchPackage.status === 'blocked') blockedPackageCount += 1;
+    latestActivityMs = Math.max(
+      latestActivityMs,
+      timestampValue(dispatchPackage.updatedAt) ?? 0,
+      timestampValue(item.updatedAt) ?? 0,
+    );
+    const execution = dispatchPackage.execution;
+    if (!execution) continue;
+    linkedPackageCount += 1;
+    executionCounts[execution.status] += 1;
+    if (execution.status === 'completed') completedPackageCount += 1;
+    if (execution.status === 'blocked') blockedPackageCount += 1;
+    latestActivityMs = Math.max(latestActivityMs, timestampValue(execution.updatedAt) ?? 0);
+  }
+  return {
+    dispatchPackageCount,
+    linkedPackageCount,
+    completedPackageCount,
+    blockedPackageCount,
+    dispatchCounts,
+    executionCounts,
+    latestActivityLabel: latestActivityMs > 0 ? formatDateTime(latestActivityMs) : undefined,
+  };
+}
+
+export function handoffExecutionActionStatusLabel(
+  status: HandoffExecutionActionStatus,
+  agentLabel: string,
+  packageRelativePath: string,
+  error: string,
+): string {
+  if (status === 'linking') return 'Linking handoff package to visible agent...';
+  if (status === 'linked') {
+    return `Execution linked: ${agentLabel || 'visible agent'} / ${
+      packageRelativePath || 'handoff work package'
+    }`;
+  }
+  if (status === 'updating') return 'Updating handoff execution status...';
+  if (status === 'updated') {
+    return `Execution status updated: ${packageRelativePath || 'handoff work package'}`;
+  }
+  if (status === 'failed') {
+    return `Execution action failed: ${error || 'Could not update handoff execution.'}`;
+  }
+  return 'Execution links use visible agents only; live hints do not overwrite metadata.';
+}
+
 export function handoffWorkPackageStatusLabel(
   status: HandoffWorkPackageStatus,
   packageRelativePath: string,
@@ -325,7 +521,9 @@ export function shouldRefreshHandoffArtifactsForMessage(message: Record<string, 
     message.type === 'handoffDraftWritten' ||
     message.type === 'handoffArtifactStatusUpdated' ||
     message.type === 'handoffWorkPackageCreated' ||
-    message.type === 'handoffDispatchStatusUpdated'
+    message.type === 'handoffDispatchStatusUpdated' ||
+    message.type === 'handoffExecutionLinked' ||
+    message.type === 'handoffExecutionStatusUpdated'
   );
 }
 
@@ -343,6 +541,15 @@ function handoffDispatchStatusActionLabel(status: HandoffDispatchStatus): string
   return 'Reset draft';
 }
 
+function handoffExecutionStatusActionLabel(status: HandoffExecutionStatus): string {
+  if (status === 'active') return 'Mark active';
+  if (status === 'waiting') return 'Mark waiting';
+  if (status === 'completed') return 'Mark completed';
+  if (status === 'blocked') return 'Mark blocked';
+  if (status === 'unknown') return 'Reset unknown';
+  return 'Mark linked';
+}
+
 function isLocalHandoffArtifactStatus(value: unknown): value is HandoffArtifactLocalStatus {
   return value === 'draft' || value === 'reviewed' || value === 'stale';
 }
@@ -354,6 +561,17 @@ function isHandoffDispatchStatus(value: unknown): value is HandoffDispatchStatus
     value === 'dispatched' ||
     value === 'completed' ||
     value === 'blocked'
+  );
+}
+
+function isHandoffExecutionStatus(value: unknown): value is HandoffExecutionStatus {
+  return (
+    value === 'linked' ||
+    value === 'active' ||
+    value === 'waiting' ||
+    value === 'completed' ||
+    value === 'blocked' ||
+    value === 'unknown'
   );
 }
 
@@ -382,7 +600,9 @@ function handoffArtifactItemFromUnknown(value: unknown): HandoffArtifactLibraryI
   const dispatchPackage = handoffDispatchPackageFromUnknown(record.dispatchPackage);
   const statusLabel = handoffStatusLabel(status);
   const dispatchDetail = dispatchPackage
-    ? ` / package ${dispatchPackage.statusLabel} / ${dispatchPackage.packageRelativePath}`
+    ? ` / package ${dispatchPackage.statusLabel}${
+        dispatchPackage.execution ? ` / execution ${dispatchPackage.execution.statusLabel}` : ''
+      } / ${dispatchPackage.packageRelativePath}`
     : '';
   const updatedAtMs = updatedAt ? Date.parse(updatedAt) : undefined;
   const updatedLabel =
@@ -424,6 +644,7 @@ function handoffDispatchPackageFromUnknown(value: unknown): HandoffDispatchPacka
   const status = isHandoffDispatchStatus(record.status) ? record.status : undefined;
   const createdAt = stringValue(record.createdAt);
   const updatedAt = stringValue(record.updatedAt);
+  const execution = handoffExecutionMetadataFromUnknown(record.execution);
   if (
     !packageRelativePath ||
     !branchName ||
@@ -441,7 +662,30 @@ function handoffDispatchPackageFromUnknown(value: unknown): HandoffDispatchPacka
     status,
     createdAt,
     updatedAt,
+    execution,
     statusLabel: handoffDispatchStatusLabel(status),
+  };
+}
+
+function handoffExecutionMetadataFromUnknown(value: unknown): HandoffExecutionMetadata | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const record = value as Record<string, unknown>;
+  const status = isHandoffExecutionStatus(record.status) ? record.status : undefined;
+  const linkedAt = stringValue(record.linkedAt);
+  const updatedAt = stringValue(record.updatedAt);
+  if (!status || !linkedAt || !updatedAt) return undefined;
+  const agentId = safeAgentId(numberValue(record.agentId));
+  return {
+    agentId,
+    agentName: safeDisplayStringValue(record.agentName),
+    providerId: safeDisplayStringValue(record.providerId),
+    projectName: safeDisplayStringValue(record.projectName),
+    sessionId: safeDisplayStringValue(record.sessionId),
+    runId: safeDisplayStringValue(record.runId),
+    linkedAt,
+    updatedAt,
+    status,
+    statusLabel: handoffExecutionStatusLabel(status),
   };
 }
 
@@ -461,6 +705,15 @@ function handoffDispatchStatusLabel(status: HandoffDispatchStatus): string {
   return 'Draft package';
 }
 
+function handoffExecutionStatusLabel(status: HandoffExecutionStatus): string {
+  if (status === 'linked') return 'Linked';
+  if (status === 'active') return 'Active';
+  if (status === 'waiting') return 'Waiting';
+  if (status === 'completed') return 'Completed';
+  if (status === 'blocked') return 'Blocked';
+  return 'Unknown';
+}
+
 function formatBytes(value: number): string {
   if (value < 1024) return `${Math.max(0, Math.round(value))} B`;
   if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
@@ -471,8 +724,37 @@ function formatDateTime(timestamp: number): string {
   return new Date(timestamp).toLocaleString();
 }
 
+function timestampValue(value: unknown): number | undefined {
+  if (typeof value !== 'string') return undefined;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : undefined;
+}
+
+function safeAgentId(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
 function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function safeDisplayStringValue(value: unknown): string | undefined {
+  const text = stringValue(value);
+  if (!text) return undefined;
+  const safe = text
+    .replace(/\\\\\?\\[^\s)]+/g, '[redacted path]')
+    .replace(/[A-Za-z]:\\[^\s)]+/g, '[redacted path]')
+    .replace(/\\\\[^\s)]+/g, '[redacted path]')
+    .replace(
+      /(^|[\s(["'])\/(?:Users|home|var|tmp|private|mnt|Volumes)\/[^\s)]+/g,
+      '$1[redacted path]',
+    )
+    .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, '[redacted secret]')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 240)
+    .trim();
+  return safe || undefined;
 }
 
 function numberValue(value: unknown): number | undefined {

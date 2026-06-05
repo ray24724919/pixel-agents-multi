@@ -50,12 +50,16 @@ import {
   buildCreateHandoffDispatchPromptMessage,
   buildCreateHandoffWorkPackageMessage,
   buildCreateHandoffWorkPackagePromptMessage,
+  buildHandoffExecutionQueueSummary,
+  buildLinkHandoffExecutionAgentMessage,
   buildOpenHandoffArtifactMessage,
   buildOpenHandoffWorkPackageMessage,
   buildUpdateHandoffArtifactStatusMessage,
   buildUpdateHandoffDispatchStatusMessage,
+  buildUpdateHandoffExecutionStatusMessage,
   canCreateHandoffDispatchPrompt,
   canCreateHandoffWorkPackage,
+  canLinkHandoffExecutionAgent,
   canUseHandoffWorkPackage,
   type HandoffArtifactLibraryItem,
   type HandoffArtifactLibraryState,
@@ -66,6 +70,10 @@ import {
   handoffDispatchPromptStatusLabel,
   type HandoffDispatchStatus,
   handoffDispatchStatusActions,
+  type HandoffExecutionActionStatus,
+  handoffExecutionActionStatusLabel,
+  type HandoffExecutionStatus,
+  handoffExecutionStatusActions,
   type HandoffWorkPackageStatus,
   handoffWorkPackageStatusLabel,
   initialHandoffArtifactLibraryState,
@@ -1450,6 +1458,12 @@ function TimelineDashboard({
   const [handoffWorkPackageReportPath, setHandoffWorkPackageReportPath] = useState('');
   const [handoffWorkPackageError, setHandoffWorkPackageError] = useState('');
   const handoffWorkPackageRequestIdRef = useRef('');
+  const [handoffExecutionActionStatus, setHandoffExecutionActionStatus] =
+    useState<HandoffExecutionActionStatus>('idle');
+  const [handoffExecutionAgentLabel, setHandoffExecutionAgentLabel] = useState('');
+  const [handoffExecutionPackagePath, setHandoffExecutionPackagePath] = useState('');
+  const [handoffExecutionError, setHandoffExecutionError] = useState('');
+  const handoffExecutionRequestIdRef = useRef('');
   const replayState = useMemo(
     () => resolveTimelineReplaySelection(replaySessions, replaySessionId, replayCursor),
     [replayCursor, replaySessionId, replaySessions],
@@ -1755,6 +1769,54 @@ function TimelineDashboard({
             ? message.error
             : 'Could not update work-package status.',
         );
+        return;
+      }
+      if (
+        message.type === 'handoffExecutionLinked' &&
+        message.requestId === handoffExecutionRequestIdRef.current
+      ) {
+        setHandoffExecutionActionStatus('linked');
+        setHandoffExecutionAgentLabel(handoffExecutionAgentLabelFromMessage(message));
+        setHandoffExecutionPackagePath(
+          typeof message.packageRelativePath === 'string' ? message.packageRelativePath : '',
+        );
+        setHandoffExecutionError('');
+        return;
+      }
+      if (
+        message.type === 'handoffExecutionLinkFailed' &&
+        message.requestId === handoffExecutionRequestIdRef.current
+      ) {
+        setHandoffExecutionActionStatus('failed');
+        setHandoffExecutionAgentLabel('');
+        setHandoffExecutionPackagePath('');
+        setHandoffExecutionError(
+          typeof message.error === 'string' ? message.error : 'Could not link handoff execution.',
+        );
+        return;
+      }
+      if (
+        message.type === 'handoffExecutionStatusUpdated' &&
+        message.requestId === handoffExecutionRequestIdRef.current
+      ) {
+        setHandoffExecutionActionStatus('updated');
+        setHandoffExecutionAgentLabel(handoffExecutionAgentLabelFromMessage(message));
+        setHandoffExecutionPackagePath(
+          typeof message.packageRelativePath === 'string' ? message.packageRelativePath : '',
+        );
+        setHandoffExecutionError('');
+        return;
+      }
+      if (
+        message.type === 'handoffExecutionStatusUpdateFailed' &&
+        message.requestId === handoffExecutionRequestIdRef.current
+      ) {
+        setHandoffExecutionActionStatus('failed');
+        setHandoffExecutionError(
+          typeof message.error === 'string'
+            ? message.error
+            : 'Could not update handoff execution status.',
+        );
       }
     };
     window.addEventListener('message', handler);
@@ -1941,6 +2003,49 @@ function TimelineDashboard({
     setHandoffWorkPackageError('');
     vscode.postMessage(message);
   };
+  const linkHandoffExecutionAgent = (item: HandoffArtifactLibraryItem, agentId: number) => {
+    const requestId = `handoff-execution-link-${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2, 8)}`;
+    const message = buildLinkHandoffExecutionAgentMessage(item, agentId, requestId);
+    if (!message) {
+      setHandoffExecutionActionStatus('failed');
+      setHandoffExecutionError('Select a visible agent and create a work package first.');
+      return;
+    }
+    const agent = agents.find((candidate) => candidate.id === agentId);
+    handoffExecutionRequestIdRef.current = requestId;
+    setHandoffExecutionActionStatus('linking');
+    setHandoffExecutionAgentLabel(agent ? handoffAgentOptionLabel(agent) : `Agent #${agentId}`);
+    setHandoffExecutionPackagePath(item.dispatchPackage?.packageRelativePath ?? '');
+    setHandoffExecutionError('');
+    vscode.postMessage(message);
+  };
+  const updateHandoffExecutionStatus = (
+    item: HandoffArtifactLibraryItem,
+    nextStatus: HandoffExecutionStatus,
+  ) => {
+    const requestId = `handoff-execution-status-${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2, 8)}`;
+    const message = buildUpdateHandoffExecutionStatusMessage(item, nextStatus, requestId);
+    if (!message) {
+      setHandoffExecutionActionStatus('failed');
+      setHandoffExecutionError('Link an agent before updating handoff execution status.');
+      return;
+    }
+    handoffExecutionRequestIdRef.current = requestId;
+    setHandoffExecutionActionStatus('updating');
+    setHandoffExecutionAgentLabel(
+      item.dispatchPackage?.execution?.agentName ??
+        (item.dispatchPackage?.execution?.agentId !== undefined
+          ? `Agent #${item.dispatchPackage.execution.agentId}`
+          : ''),
+    );
+    setHandoffExecutionPackagePath(item.dispatchPackage?.packageRelativePath ?? '');
+    setHandoffExecutionError('');
+    vscode.postMessage(message);
+  };
 
   return (
     <div className="grid gap-4">
@@ -2036,6 +2141,7 @@ function TimelineDashboard({
       />
 
       <HandoffArtifactLibraryPanel
+        agents={agents}
         state={handoffLibraryState}
         openStatus={handoffOpenStatus}
         openedPath={handoffOpenedPath}
@@ -2052,6 +2158,10 @@ function TimelineDashboard({
         workPackageBranchName={handoffWorkPackageBranchName}
         workPackageReportPath={handoffWorkPackageReportPath}
         workPackageError={handoffWorkPackageError}
+        executionActionStatus={handoffExecutionActionStatus}
+        executionAgentLabel={handoffExecutionAgentLabel}
+        executionPackagePath={handoffExecutionPackagePath}
+        executionError={handoffExecutionError}
         onRefresh={refreshHandoffArtifacts}
         onOpen={openHandoffArtifact}
         onUpdateStatus={updateHandoffArtifactStatus}
@@ -2060,6 +2170,8 @@ function TimelineDashboard({
         onOpenWorkPackage={openHandoffWorkPackage}
         onCopyWorkPackagePrompt={copyHandoffWorkPackagePrompt}
         onUpdateDispatchStatus={updateHandoffDispatchStatus}
+        onLinkExecutionAgent={linkHandoffExecutionAgent}
+        onUpdateExecutionStatus={updateHandoffExecutionStatus}
       />
 
       <section className="grid gap-3 border border-border bg-btn-bg p-3 md:grid-cols-2 xl:grid-cols-[minmax(220px,1fr)_150px_160px_180px] 2xl:grid-cols-[minmax(220px,1fr)_150px_160px_180px_160px_170px_220px_220px_auto]">
@@ -2523,6 +2635,7 @@ function HandoffDraftPanel({
 }
 
 function HandoffArtifactLibraryPanel({
+  agents,
   state,
   openStatus,
   openedPath,
@@ -2539,6 +2652,10 @@ function HandoffArtifactLibraryPanel({
   workPackageBranchName,
   workPackageReportPath,
   workPackageError,
+  executionActionStatus,
+  executionAgentLabel,
+  executionPackagePath,
+  executionError,
   onRefresh,
   onOpen,
   onUpdateStatus,
@@ -2547,7 +2664,10 @@ function HandoffArtifactLibraryPanel({
   onOpenWorkPackage,
   onCopyWorkPackagePrompt,
   onUpdateDispatchStatus,
+  onLinkExecutionAgent,
+  onUpdateExecutionStatus,
 }: {
+  agents: AgentSummary[];
   state: HandoffArtifactLibraryState;
   openStatus: HandoffOpenStatus;
   openedPath: string;
@@ -2564,6 +2684,10 @@ function HandoffArtifactLibraryPanel({
   workPackageBranchName: string;
   workPackageReportPath: string;
   workPackageError: string;
+  executionActionStatus: HandoffExecutionActionStatus;
+  executionAgentLabel: string;
+  executionPackagePath: string;
+  executionError: string;
   onRefresh: () => void;
   onOpen: (item: HandoffArtifactLibraryItem) => void;
   onUpdateStatus: (
@@ -2578,12 +2702,26 @@ function HandoffArtifactLibraryPanel({
     item: HandoffArtifactLibraryItem,
     nextStatus: HandoffDispatchStatus,
   ) => void;
+  onLinkExecutionAgent: (item: HandoffArtifactLibraryItem, agentId: number) => void;
+  onUpdateExecutionStatus: (
+    item: HandoffArtifactLibraryItem,
+    nextStatus: HandoffExecutionStatus,
+  ) => void;
 }) {
+  const [executionAgentSelections, setExecutionAgentSelections] = useState<Record<string, number>>(
+    {},
+  );
   const workPackageBusy =
     workPackageStatus === 'creating' ||
     workPackageStatus === 'opening' ||
     workPackageStatus === 'copying' ||
     workPackageStatus === 'updating';
+  const executionBusy = executionActionStatus === 'linking' || executionActionStatus === 'updating';
+  const executionSummary = buildHandoffExecutionQueueSummary(state.items);
+  const selectedAgentIdForItem = (item: HandoffArtifactLibraryItem): number | undefined =>
+    executionAgentSelections[item.relativePath] ??
+    item.dispatchPackage?.execution?.agentId ??
+    agents[0]?.id;
   return (
     <section className="border border-border bg-bg">
       <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border bg-btn-bg p-4">
@@ -2599,6 +2737,34 @@ function HandoffArtifactLibraryPanel({
         </Button>
       </div>
       <div className="grid gap-3 p-4">
+        {executionSummary.dispatchPackageCount > 0 && (
+          <div className="grid gap-2 border border-border bg-bg p-3 text-xs text-text-muted sm:grid-cols-4">
+            <div>
+              <div className="uppercase tracking-wide text-text">Queue</div>
+              <div>{executionSummary.dispatchPackageCount} packages</div>
+            </div>
+            <div>
+              <div className="uppercase tracking-wide text-text">Linked</div>
+              <div>{executionSummary.linkedPackageCount} linked agents</div>
+            </div>
+            <div>
+              <div className="uppercase tracking-wide text-text">Attention</div>
+              <div>
+                {executionSummary.blockedPackageCount} blocked /{' '}
+                {executionSummary.executionCounts.waiting} waiting
+              </div>
+            </div>
+            <div>
+              <div className="uppercase tracking-wide text-text">Done</div>
+              <div>
+                {executionSummary.completedPackageCount} completed
+                {executionSummary.latestActivityLabel
+                  ? ` / ${executionSummary.latestActivityLabel}`
+                  : ''}
+              </div>
+            </div>
+          </div>
+        )}
         {state.unavailable ? (
           <div className="border border-status-error bg-btn-bg p-3 text-xs text-status-error">
             {state.error ?? 'Recent handoffs are unavailable.'}
@@ -2686,6 +2852,65 @@ function HandoffArtifactLibraryPanel({
                           </Button>
                         );
                       })}
+                      <div className="flex min-w-[220px] flex-wrap items-center justify-end gap-2">
+                        <select
+                          className="h-8 max-w-[220px] border border-border bg-bg px-2 text-xs text-text outline-none focus:border-accent"
+                          value={String(selectedAgentIdForItem(item) ?? '')}
+                          disabled={agents.length === 0 || executionBusy}
+                          onChange={(event) => {
+                            const agentId = Number.parseInt(event.currentTarget.value, 10);
+                            if (Number.isFinite(agentId)) {
+                              setExecutionAgentSelections((prev) => ({
+                                ...prev,
+                                [item.relativePath]: agentId,
+                              }));
+                            }
+                          }}
+                        >
+                          {agents.length === 0 ? (
+                            <option value="">No visible agents</option>
+                          ) : (
+                            agents.map((agent) => (
+                              <option key={agent.id} value={agent.id}>
+                                {handoffAgentOptionLabel(agent)}
+                              </option>
+                            ))
+                          )}
+                        </select>
+                        <Button
+                          variant={
+                            executionBusy ||
+                            !canLinkHandoffExecutionAgent(item, selectedAgentIdForItem(item))
+                              ? 'disabled'
+                              : 'ghost'
+                          }
+                          size="sm"
+                          disabled={
+                            executionBusy ||
+                            !canLinkHandoffExecutionAgent(item, selectedAgentIdForItem(item))
+                          }
+                          onClick={() => {
+                            const agentId = selectedAgentIdForItem(item);
+                            if (agentId !== undefined) onLinkExecutionAgent(item, agentId);
+                          }}
+                        >
+                          Link agent
+                        </Button>
+                      </div>
+                      {handoffExecutionStatusActions(item).map((action) => {
+                        const disabled = action.disabled || executionBusy;
+                        return (
+                          <Button
+                            key={action.nextStatus}
+                            variant={disabled ? 'disabled' : 'ghost'}
+                            size="sm"
+                            disabled={disabled}
+                            onClick={() => onUpdateExecutionStatus(item, action.nextStatus)}
+                          >
+                            {action.label}
+                          </Button>
+                        );
+                      })}
                       <Button
                         variant={
                           workPackageBusy || !canUseHandoffWorkPackage(item) ? 'disabled' : 'ghost'
@@ -2721,6 +2946,13 @@ function HandoffArtifactLibraryPanel({
                     Open
                   </Button>
                 </div>
+                {item.dispatchPackage && (
+                  <div className="md:col-span-2">
+                    <div className="break-words border-t border-border pt-2 text-xs text-text-muted">
+                      {handoffExecutionDetailLabel(item, agents)}
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -2781,6 +3013,22 @@ function HandoffArtifactLibraryPanel({
             workPackageBranchName,
             workPackageReportPath,
             workPackageError,
+          )}
+        </div>
+        <div
+          className={`break-words text-xs ${
+            executionActionStatus === 'failed'
+              ? 'text-status-error'
+              : executionActionStatus === 'linked' || executionActionStatus === 'updated'
+                ? 'text-status-waiting'
+                : 'text-text-muted'
+          }`}
+        >
+          {handoffExecutionActionStatusLabel(
+            executionActionStatus,
+            executionAgentLabel,
+            executionPackagePath,
+            executionError,
           )}
         </div>
       </div>
@@ -2910,6 +3158,11 @@ function TimelineEventRow({
           {event.artifactId && <span className="truncate">{event.artifactId}</span>}
           {event.artifactStatus && <span className="truncate">{event.artifactStatus}</span>}
           {event.dispatchStatus && <span className="truncate">{event.dispatchStatus}</span>}
+          {event.executionStatus && <span className="truncate">{event.executionStatus}</span>}
+          {event.linkedAgentName && <span className="truncate">{event.linkedAgentName}</span>}
+          {event.linkedAgentId !== undefined && (
+            <span className="truncate">agent {event.linkedAgentId}</span>
+          )}
           {event.packageRelativePath && (
             <span className="truncate">{event.packageRelativePath}</span>
           )}
@@ -3069,6 +3322,53 @@ function handoffLibraryStatusLabel(state: HandoffArtifactLibraryState): string {
   return `${state.items.length.toLocaleString()} recent ${noun} / refreshed ${formatRelative(
     state.loadedAtMs,
   )}`;
+}
+
+function handoffAgentOptionLabel(
+  agent: Pick<AgentSummary, 'id' | 'name' | 'providerId' | 'project'>,
+): string {
+  return `${agent.name} #${agent.id} / ${agent.providerId} / ${agent.project}`;
+}
+
+function handoffExecutionAgentLabelFromMessage(message: Record<string, unknown>): string {
+  const name = typeof message.linkedAgentName === 'string' ? message.linkedAgentName : undefined;
+  const id =
+    typeof message.linkedAgentId === 'number' && Number.isFinite(message.linkedAgentId)
+      ? `Agent #${message.linkedAgentId}`
+      : undefined;
+  const provider =
+    typeof message.linkedAgentProviderId === 'string' ? message.linkedAgentProviderId : undefined;
+  return [name ?? id, provider].filter(Boolean).join(' / ');
+}
+
+function handoffExecutionDetailLabel(
+  item: HandoffArtifactLibraryItem,
+  agents: readonly AgentSummary[],
+): string {
+  const dispatchPackage = item.dispatchPackage;
+  if (!dispatchPackage) return 'No handoff work package yet.';
+  const execution = dispatchPackage.execution;
+  const packageLabel = `Package ${dispatchPackage.statusLabel}: ${dispatchPackage.packageRelativePath}`;
+  if (!execution) {
+    return `${packageLabel} / Execution not linked.`;
+  }
+  const linkedAgent = execution.agentId
+    ? agents.find((agent) => agent.id === execution.agentId)
+    : undefined;
+  const linkedLabel = [
+    execution.statusLabel,
+    execution.agentName ?? (execution.agentId !== undefined ? `Agent #${execution.agentId}` : ''),
+    execution.providerId,
+    execution.projectName,
+  ]
+    .filter(Boolean)
+    .join(' / ');
+  const liveHint = linkedAgent
+    ? `Live: ${attentionLabel(linkedAgent)} / ${linkedAgent.activity}`
+    : execution.agentId !== undefined
+      ? 'Live: linked agent not visible'
+      : undefined;
+  return [packageLabel, `Execution ${linkedLabel}`, liveHint].filter(Boolean).join(' / ');
 }
 
 function usageHistoryCopyLabel(status: 'idle' | 'copied' | 'failed'): string {
