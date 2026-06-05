@@ -672,7 +672,7 @@ test('handoff executor, completion, and report messages send only safe identifie
     type: 'launchHandoffExecutor',
     requestId: 'launch-1',
     relativePath: item.relativePath,
-    providerId: 'codex',
+    providerId: 'claude',
   });
   assert.deepEqual(buildLaunchHandoffExecutorMessage(item, 'launch-2', 'bad-provider'), {
     type: 'launchHandoffExecutor',

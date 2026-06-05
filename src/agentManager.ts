@@ -98,10 +98,17 @@ export function resolveClaudeCommand(commandPath = getClaudeCommandPath()): stri
     : resolveBareCommand(commandPath);
 }
 
-function buildClaudeArgs(sessionId: string, bypassPermissions?: boolean): string[] {
+function buildClaudeArgs(
+  sessionId: string,
+  bypassPermissions?: boolean,
+  prompt?: string,
+): string[] {
   const args = ['--session-id', sessionId];
   if (bypassPermissions) {
     args.push('--dangerously-skip-permissions');
+  }
+  if (prompt !== undefined) {
+    args.push(prompt);
   }
   return args;
 }
@@ -188,9 +195,13 @@ export async function launchNewTerminal(
 
   const idx = nextTerminalIndexRef.current++;
   const sessionId = crypto.randomUUID();
-  const claudeArgs = isClaude ? buildClaudeArgs(sessionId, bypassPermissions) : [];
+  const claudePrompt =
+    isClaude && typeof prompt === 'string' && prompt.trim().length > 0 ? prompt : undefined;
+  const claudeArgs = isClaude ? buildClaudeArgs(sessionId, bypassPermissions, claudePrompt) : [];
   const launchClaudeDirectly =
-    isClaude && !!configuredClaudeCommand && isPathLikeCommand(configuredClaudeCommand);
+    isClaude &&
+    !!configuredClaudeCommand &&
+    (isPathLikeCommand(configuredClaudeCommand) || claudePrompt !== undefined);
   const terminalOptions: vscode.TerminalOptions = launchClaudeDirectly
     ? {
         name: `${TERMINAL_NAME_PREFIX} #${idx}`,

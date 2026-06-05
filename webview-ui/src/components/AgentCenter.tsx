@@ -3067,7 +3067,17 @@ function HandoffArtifactLibraryPanel({
                         disabled={executionBusy || !canUseHandoffWorkPackage(item)}
                         onClick={() => onLaunchExecutor(item, 'codex')}
                       >
-                        Launch executor
+                        Launch Codex
+                      </Button>
+                      <Button
+                        variant={
+                          executionBusy || !canUseHandoffWorkPackage(item) ? 'disabled' : 'default'
+                        }
+                        size="sm"
+                        disabled={executionBusy || !canUseHandoffWorkPackage(item)}
+                        onClick={() => onLaunchExecutor(item, 'claude')}
+                      >
+                        Launch Claude
                       </Button>
                       <Button
                         variant={
@@ -3242,7 +3252,17 @@ function HandoffArtifactLibraryPanel({
                       disabled={executionBusy || !canUseHandoffWorkPackage(item)}
                       onClick={() => onLaunchExecutor(item, 'codex')}
                     >
-                      Launch executor
+                      Launch Codex
+                    </Button>
+                    <Button
+                      variant={
+                        executionBusy || !canUseHandoffWorkPackage(item) ? 'disabled' : 'default'
+                      }
+                      size="sm"
+                      disabled={executionBusy || !canUseHandoffWorkPackage(item)}
+                      onClick={() => onLaunchExecutor(item, 'claude')}
+                    >
+                      Launch Claude
                     </Button>
                     <Button
                       variant={executionBusy ? 'disabled' : 'ghost'}

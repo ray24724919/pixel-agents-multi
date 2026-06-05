@@ -174,7 +174,7 @@ export interface LaunchHandoffExecutorMessage {
   type: 'launchHandoffExecutor';
   requestId: string;
   relativePath: string;
-  providerId: 'codex';
+  providerId: 'codex' | 'claude';
 }
 
 export interface RefreshHandoffCompletionMessage {
@@ -470,12 +470,12 @@ export function buildLaunchHandoffExecutorMessage(
   providerId: unknown = 'codex',
 ): LaunchHandoffExecutorMessage | undefined {
   if (!requestId || !canUseHandoffWorkPackage(item)) return undefined;
-  void providerId;
+  const safeProviderId = providerId === 'claude' ? 'claude' : 'codex';
   return {
     type: 'launchHandoffExecutor',
     requestId,
     relativePath: item.relativePath,
-    providerId: 'codex',
+    providerId: safeProviderId,
   };
 }
 

@@ -93,6 +93,7 @@ function createLaunchHarness() {
 async function launchWith(
   harness: ReturnType<typeof createLaunchHarness>,
   providerId: 'claude' | 'codex' | undefined,
+  prompt?: string,
 ) {
   await launchNewTerminal(
     harness.nextAgentIdRef,
@@ -111,7 +112,7 @@ async function launchWith(
     providerId,
     '/workspace/project',
     false,
-    'summarize tests',
+    prompt,
   );
 }
 
@@ -170,7 +171,7 @@ describe('launchNewTerminal provider dispatch', () => {
   it('launches Codex through the existing Codex command builder', async () => {
     const harness = createLaunchHarness();
 
-    await launchWith(harness, 'codex');
+    await launchWith(harness, 'codex', 'summarize tests');
 
     expect(buildCodexLaunchCommandMock).toHaveBeenCalledWith(
       '/workspace/project',
@@ -205,7 +206,7 @@ describe('launchNewTerminal provider dispatch', () => {
     spawnSyncMock.mockReturnValue({ status: 1 });
     const harness = createLaunchHarness();
 
-    await launchWith(harness, 'claude');
+    await launchWith(harness, 'claude', 'handoff executor prompt');
 
     expect(createTerminalMock).not.toHaveBeenCalled();
     expect(harness.agents.size).toBe(0);
@@ -229,6 +230,45 @@ describe('launchNewTerminal provider dispatch', () => {
       expect.objectContaining({
         shellPath: commandPath,
         shellArgs: ['--session-id', 'session-123'],
+      }),
+    );
+    expect(harness.terminal.sendText).not.toHaveBeenCalled();
+    expect(harness.agents.get(1)?.providerId).toBe('claude');
+  });
+
+  it('passes Claude handoff prompts as the final shell argument without sendText shell concatenation', async () => {
+    const harness = createLaunchHarness();
+
+    await launchWith(harness, 'claude', 'read docs/roadmap/supervision/work-packages/handoff.md');
+
+    expect(createTerminalMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        shellPath: 'claude',
+        shellArgs: [
+          '--session-id',
+          'session-123',
+          'read docs/roadmap/supervision/work-packages/handoff.md',
+        ],
+      }),
+    );
+    expect(harness.terminal.sendText).not.toHaveBeenCalled();
+    expect(harness.agents.get(1)?.providerId).toBe('claude');
+  });
+
+  it('passes prompts to configured Claude paths with spaces as the final shell argument', async () => {
+    const commandDir = path.join(tmpDir, 'Claude CLI');
+    const commandPath = path.join(commandDir, 'claude.cmd');
+    fs.mkdirSync(commandDir, { recursive: true });
+    fs.writeFileSync(commandPath, '');
+    claudeCommandPathMock.current = commandPath;
+    const harness = createLaunchHarness();
+
+    await launchWith(harness, 'claude', 'handoff prompt with spaces');
+
+    expect(createTerminalMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        shellPath: commandPath,
+        shellArgs: ['--session-id', 'session-123', 'handoff prompt with spaces'],
       }),
     );
     expect(harness.terminal.sendText).not.toHaveBeenCalled();
