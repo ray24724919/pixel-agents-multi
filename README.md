@@ -1,11 +1,11 @@
 <h1 align="center">
     <a href="https://github.com/ray24724919/pixel-agents-multi/discussions">
-        <img src="webview-ui/public/banner.png" alt="Pixel Agents">
+        <img src="webview-ui/public/banner.png" alt="Pixel Agents Multi">
     </a>
 </h1>
 
 <h2 align="center" style="padding-bottom: 20px;">
-  The game interface where AI agents build real things
+  A local-first pixel control room for Claude and Codex agents
 </h2>
 
 <div align="center" style="margin-top: 25px;">
@@ -14,6 +14,11 @@
 [![license](https://img.shields.io/github/license/ray24724919/pixel-agents-multi?color=0183ff&style=flat)](https://github.com/ray24724919/pixel-agents-multi/blob/main/LICENSE)
 [![good first issues](https://img.shields.io/github/issues/ray24724919/pixel-agents-multi/good%20first%20issue?color=7057ff&label=good%20first%20issues)](https://github.com/ray24724919/pixel-agents-multi/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22)
 
+</div>
+
+<div align="center">
+<a href="README.md">English</a> |
+<a href="README.zh-TW.md">繁體中文</a>
 </div>
 
 <div align="center">
@@ -26,68 +31,139 @@
 
 <br/>
 
-Pixel Agents Multi turns AI coding sessions into something you can actually see and manage. Each Claude or Codex session becomes a character in a pixel art office. Agents walk around when idle, return to computer desks when working, show their current tool activity, and can be filtered, refreshed, inspected, or closed from the UI.
+Pixel Agents Multi turns local AI coding sessions into an observable, playful, and practical VS Code control room. Claude and Codex sessions become animated characters in a pixel office, where working agents move to computer desks, idle agents wander or rest, and each character reflects real tool activity, waiting state, project, provider, thread name, and tracked usage.
 
-This fork extends the original Claude Code-focused project into a Claude + Codex visual agent dashboard for VS Code. The goal is to make multi-project, multi-thread AI work feel observable: you can see which provider an agent came from, which project/thread it belongs to, whether it is active or waiting, and how much tracked token usage it has accumulated.
+This fork extends the original Claude Code-focused project into a multi-provider agent dashboard, timeline, usage intelligence surface, and handoff/executor workflow for serious local development. It is designed for one person supervising many local agents today, with a longer path toward team/lab coordination later.
 
-This repository is derived from [pablodelucca/pixel-agents](https://github.com/pablodelucca/pixel-agents) (the original Claude-Code-focused project). This fork publishes as `raychen.pixel-agents-multi`, with separate VS Code commands, settings, views, hook discovery, and user data so it can be installed without being mistaken for the public extension.
+This repository is derived from [pablodelucca/pixel-agents](https://github.com/pablodelucca/pixel-agents). This fork publishes as `raychen.pixel-agents-multi`, with separate VS Code commands, settings, views, hook discovery, and user data so it can be installed beside the public extension without identity confusion.
 
 ![Pixel Agents screenshot](webview-ui/public/Screenshot.jpg)
 
-## Features
+## What It Does
 
-- **Claude + Codex providers** — watches Claude Code, Claude Desktop/Cowork local sessions, and Codex CLI threads
-- **One agent, one character** — every tracked session/thread gets its own animated character
-- **Project and thread labels** — shows provider, project folder, and known agent/thread names in overlays and Agent Center
-- **Live activity tracking** — characters animate based on what the agent is actually doing (writing, reading, running commands)
-- **Work vs idle behavior** — active agents use computer desks; inactive agents leave desks and wander instead of occupying work seats
-- **Agent Center** — inspect agents, filter by All/Codex/Claude, refresh sessions, focus an agent, close/kill tracked agents, and view token totals
-- **Token meter** — Codex and Claude token totals are shown with exact/estimated labels; provider cost is a proxy estimate, not subscription billing
-- **Close confirmation** — closing an agent asks for confirmation before killing/archiving/removing the linked session
-- **Office layout editor** — design your office with floors, walls, and furniture using a built-in editor
-- **Speech bubbles** — visual indicators when an agent is waiting for input or needs permission
-- **Sound notifications** — optional chime when an agent finishes its turn
-- **Sub-agent visualization** — Task tool sub-agents spawn as separate characters linked to their parent
-- **Persistent layouts** — your office design is saved and shared across VS Code windows
-- **External asset directories** — load custom or third-party furniture packs from any folder on your machine
-- **Diverse characters** — 6 diverse characters. These are based on the amazing work of [JIK-A-4, Metro City](https://jik-a-4.itch.io/metrocity-free-topdown-character-pack).
+- **Visualizes local agents**: Claude Code, Claude Desktop/Cowork local-agent-mode sessions, and Codex CLI threads appear as characters.
+- **Keeps work visible**: active agents use computer desks, idle agents leave work seats, and refresh reassigns positions to reduce stacking.
+- **Shows live status**: characters animate for writing, reading, shell commands, task delegation, permission prompts, and waiting-for-input states.
+- **Tracks providers and projects**: overlays and Agent Center show project, provider, thread/session name, and status in a compact scan-friendly format.
+- **Surfaces usage intelligence**: token totals, exact/estimated labels, provider/project/session grouping, and proxy cost context live outside the canvas.
+- **Records timeline history**: local event history captures agent turns, tool events, handoff actions, executor launches, report opens, and completion refreshes.
+- **Turns history into handoffs**: create reviewed handoff artifacts from timeline/replay context, then dispatch them as executor-ready work packages.
+- **Runs a handoff queue**: track draft, reviewed, stale, dispatched, active, blocked, report-ready, and completed work package states.
+- **Supports local VSIX releases**: package and install this fork with its own extension id, name, commands, settings, and verification scripts.
+- **Lets you design the office**: edit floors, walls, furniture, desks, chairs, colors, assets, and layout JSON without touching code.
 
 <p align="center">
   <img src="webview-ui/public/characters.png" alt="Pixel Agents characters" width="320" height="72" style="image-rendering: pixelated;">
 </p>
 
+## Core Features
+
+### Pixel Office
+
+- One visible character per adopted local session/thread.
+- Working agents pathfind to available computer-adjacent seats.
+- Idle agents leave work seats and wander or rest so they do not block active agents.
+- Sub-agents spawned by task delegation appear as linked child characters near the parent.
+- Waiting and permission states show speech bubbles and optional sound notifications.
+- Characters are assigned diverse palettes and hue shifts to make crowded rooms easier to read.
+- Seat assignment, refresh behavior, and character placement are designed to avoid common visual bugs such as agents typing in empty space, standing on chairs, or stacking after refresh.
+
+### Agent Center
+
+The Agent Center is the larger inspection surface for the project. It is intentionally separate from the canvas so the office can stay readable.
+
+- Filter by All, Codex, or Claude.
+- Inspect agent name, provider, project, status, and tracked usage.
+- Focus a character or linked terminal/session.
+- Refresh session discovery and stale visual state.
+- Close, archive, hide, or kill tracked agents through guarded actions.
+- Open Usage, Timeline, Handoff, and Handoff Queue views without crowding the main office.
+
+### Usage Intelligence
+
+Usage data is presented as operational telemetry, not billing truth.
+
+- Codex and Claude token totals are shown when local metadata exposes them.
+- Exact and estimated values are labelled separately.
+- Provider, project, session, and time-based summaries help identify heavy or stale work.
+- Cache, reasoning, and artifact usage can be estimated where enough local data exists.
+- Cost display is a proxy estimate only. It is not OpenAI, Anthropic, or subscription billing.
+
+### Timeline And Replay
+
+Pixel Agents Multi stores a local, privacy-aware timeline of important agent events.
+
+- Tool start/done, turn completion, waiting state, handoff actions, executor launch, completion refresh, and report-open events.
+- Replay-oriented views for understanding what happened before creating a handoff.
+- Search/filter support for narrowing by agent, provider, project, event type, or time.
+- Safe persistence: raw prompts, raw transcript body, credentials, and absolute transcript paths are not stored in timeline events.
+
+### Handoff And Executor Workflow
+
+The handoff workflow is built for supervising downstream executors without losing context.
+
+1. Review timeline/replay context from an agent or project.
+2. Draft a handoff artifact in `docs/agent-handoffs/`.
+3. Store structured metadata in a sidecar `.handoff.json` file.
+4. Mark handoffs as draft, reviewed, stale, dispatched, active, blocked, or completed.
+5. Generate an executor-ready work package under `docs/roadmap/supervision/work-packages/handoffs/`.
+6. Copy a dispatch prompt or launch a Codex executor directly from a package-backed handoff.
+7. Link launched executor metadata back to the handoff sidecar.
+8. Detect local completion signals from the expected report file and local branch state.
+9. Use Handoff Queue to inspect work package status, open reports, refresh completion, and continue supervision.
+
+Codex is currently the supported package-launch provider. Claude sessions can be tracked and used in handoff context, but direct Claude work-package prompt injection remains a follow-up until the Claude launcher path supports it safely.
+
+### Layout Editor And Assets
+
+- Paint floors and walls with pixel-art tools.
+- Place, move, rotate, recolor, and remove furniture.
+- Use desk/chair metadata to create valid work seats.
+- Undo/redo up to 50 editor actions.
+- Export/import layout JSON from the Settings modal.
+- Share a user-level layout across VS Code windows through `~/.pixel-agents/layout.json`.
+- Load external asset directories from `~/.pixel-agents/config.json`.
+- Edit modular furniture manifests under `webview-ui/public/assets/`.
+
 ## Requirements
 
 - VS Code 1.105.0 or later
-- Node.js/npm for source development
+- Node.js/npm for source development and packaging
+- Git for branch/report completion detection
 - Optional: [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and configured
 - Optional: OpenAI Codex CLI installed and authenticated
-- **Platform**: Windows, Linux, and macOS are supported
+- Supported platforms: Windows, Linux, and macOS
 
-## Getting Started
-
-This fork is currently meant to be installed from source or packaged locally.
-
-### Install from source
+## Install From Source
 
 ```bash
 git clone git@github.com:ray24724919/pixel-agents-multi.git
 cd pixel-agents-multi
 npm install
 cd webview-ui && npm install && cd ..
+cd server && npm install && cd ..
 npm run build
 ```
 
 Then press **F5** in VS Code to launch the Extension Development Host.
 
-### Install as a VS Code extension package
+## Install As A Local VSIX
 
-If you want to use the built extension in normal VS Code windows:
+Use this path when you want the built extension in normal VS Code windows:
+
+```bash
+npm run release:local
+```
+
+Or run the steps manually:
 
 ```bash
 npm run build
+npm run verify:identity
+npm run verify:vsix
 npm run package:vsix
 npm run install:local
+npm run verify:installed
 ```
 
 Confirm that VS Code installed this fork, not the upstream public extension:
@@ -98,9 +174,72 @@ code --list-extensions --show-versions | rg "raychen\.pixel-agents-multi"
 
 Expected output includes `raychen.pixel-agents-multi@1.3.0`.
 
-Reload VS Code after installing. If the extension does not appear in a folder, open the Command Palette and run **Developer: Reload Window**.
+Reload VS Code after installing. If the panel does not appear, run **Developer: Reload Window** from the Command Palette.
 
-### Windows release checklist
+## Quick Start
+
+1. Open the **Pixel Agents Multi** panel in the VS Code panel area.
+2. Click **Refresh** to adopt existing Claude/Codex sessions.
+3. Click **+ Agent** to start a new Codex agent in a selected project.
+4. Open **Agents** to inspect active agents, usage, timeline, and handoffs.
+5. Click a character to focus it, then click a valid seat to reassign it.
+6. Use **Layout** to customize the office.
+7. Use the Timeline or Handoff view when an agent's work should become a reviewed downstream work package.
+
+## Provider Behavior
+
+### Codex
+
+- Discovers local Codex threads and project metadata.
+- Reads transcript/rollout events to infer active, waiting, complete, abort, and error states.
+- Supports direct executor launch from package-backed handoffs.
+- Links launched executor metadata back to the handoff sidecar.
+- Reads local branch/report state for completion display without mutating git state.
+
+### Claude
+
+- Discovers Claude Code JSONL project transcripts.
+- Uses hook events when available for faster and more reliable state changes.
+- Discovers Claude Desktop/Cowork local-agent-mode metadata when active.
+- Can appear in Agent Center, Usage, Timeline, Replay, and Handoff context.
+- Direct package-backed Claude executor launch is intentionally deferred until prompt injection can be handled by the Claude launcher safely.
+
+## Data And Privacy
+
+Pixel Agents Multi is local-first. It does not call Claude or OpenAI APIs to observe sessions. It reads local CLI/session metadata and visualizes it inside VS Code.
+
+Main local data locations:
+
+- `~/.pixel-agents/layout.json`: shared user-level office layout
+- `~/.pixel-agents/config.json`: extension config such as external asset directories
+- `~/.pixel-agents/server.json`: local hook server discovery
+- `docs/agent-handoffs/`: Markdown handoffs and `.handoff.json` sidecars
+- `docs/roadmap/supervision/work-packages/`: executor work-package specs
+- `docs/roadmap/supervision/reports/`: executor completion reports
+
+The extension does not stage, commit, push, merge, reset, stash, clean, delete branches, or rebase when checking handoff completion. Completion detection is read-only.
+
+## Development
+
+```bash
+npm run build
+npm run test:webview
+npm run test:server
+npm test
+```
+
+Other useful commands:
+
+```bash
+npm run check-types
+npm run lint
+npm run package:vsix
+npm run verify:release
+```
+
+The extension backend lives in `src/`, the standalone hook/server code lives in `server/`, and the React/canvas webview lives in `webview-ui/`.
+
+## Windows Release Checklist
 
 Before sharing a VSIX from this repository, run the release path from a clean worktree:
 
@@ -118,112 +257,52 @@ npm run verify:installed
 code --list-extensions --show-versions | rg "raychen\.pixel-agents-multi"
 ```
 
-Then reload VS Code and smoke-test the **Pixel Agents Multi** panel:
+Then reload VS Code and smoke-test:
 
-1. Open the panel and click **Refresh**.
+1. Open the Pixel Agents Multi panel and click **Refresh**.
 2. Set the provider filter to **All**.
 3. Confirm active Codex and Claude agents are visible with correct project labels.
-4. Open **Agents** and confirm the Usage tab renders token totals or an empty state, not a blank panel.
+4. Open **Agents** and confirm the Usage tab renders totals or an empty state.
 5. Confirm the VSIX filename is `pixel-agents-multi-1.3.0.vsix` and the installed id is `raychen.pixel-agents-multi`.
-
-### Usage
-
-1. Open the **Pixel Agents Multi** panel (it appears in the bottom panel area alongside your terminal)
-2. Click **+ Agent** to start a new Codex agent in a selected project and optionally provide an initial task
-3. Use **Refresh** to rescan Claude/Codex sessions and remove stale visual state
-4. Use the **All / Codex / Claude** filter to focus the canvas on one provider
-5. Open **Agents** to inspect the Agent Center: provider, project, status, token count, and close actions
-6. Click a character to select it, then click a seat to reassign it
-7. Click **Layout** to open the office editor and customize your space
-
-### Claude and Codex behavior
-
-- **Codex** sessions are discovered from Codex's local thread database/transcripts. Active turns are inferred from `task_started`, tool events, and `task_complete`/abort/error events. Codex token totals are read when available.
-- **Claude Code** sessions are discovered from Claude JSONL project transcripts and hook events.
-- **Claude Desktop/Cowork** local-agent-mode sessions are discovered from Claude's `local-agent-mode-sessions` metadata when active, including sessions from other project folders. Use the **All / Codex / Claude** filter and Agent Center project labels to separate them.
-- **Working agents** are assigned to computer-adjacent work seats.
-- **Idle agents** leave work seats and roam, so they do not block active agents from using desks.
-
-## Layout Editor
-
-The built-in editor lets you design your office:
-
-- **Floor** — Full HSB color control
-- **Walls** — Auto-tiling walls with color customization
-- **Tools** — Select, paint, erase, place, eyedropper, pick
-- **Undo/Redo** — 50 levels with Ctrl+Z / Ctrl+Y
-- **Export/Import** — Share layouts as JSON files via the Settings modal
-
-The grid is expandable up to 64×64 tiles. Click the ghost border outside the current grid to grow it.
-
-### Office Assets
-
-All office assets (furniture, floors, walls) are now **fully open-source** and included in this repository under `webview-ui/public/assets/`. No external purchases or imports are needed — everything works out of the box.
-
-Each furniture item lives in its own folder under `assets/furniture/` with a `manifest.json` that declares its sprites, rotation groups, state groups (on/off), and animation frames. Floor tiles are individual PNGs in `assets/floors/`, and wall tile sets are in `assets/walls/`. This modular structure makes it easy to add, remove, or modify assets without touching any code.
-
-To add a new furniture item, create a folder in `webview-ui/public/assets/furniture/` with your PNG sprite(s) and a `manifest.json`, then rebuild. The asset manager (`scripts/asset-manager.html`) provides a visual editor for creating and editing manifests.
-
-To use furniture from an external directory, open Settings → **Add Asset Directory**. See [docs/external-assets.md](docs/external-assets.md) for the full manifest format and how to use third-party asset packs.
-
-Characters are based on the amazing work of [JIK-A-4, Metro City](https://jik-a-4.itch.io/metrocity-free-topdown-character-pack).
-
-## How It Works
-
-Pixel Agents Multi watches local transcript/session files to track what each agent is doing. Claude sessions are observed through JSONL transcript files and hooks. Codex sessions are observed through Codex local thread metadata and rollout/transcript events. When an agent uses a tool, starts a turn, finishes a turn, or waits for approval, the extension posts messages into the webview and updates the character state.
-
-The webview runs a lightweight game loop with canvas rendering, BFS pathfinding, and a character state machine (idle → walk → type/read). Everything is pixel-perfect at integer zoom levels.
-
-The current provider bridge is intentionally local-first: it does not call Claude or OpenAI APIs. It reads local CLI/session state and visualizes it.
-
-## Tech Stack
-
-- **Extension**: TypeScript, VS Code Webview API, esbuild
-- **Webview**: React 19, TypeScript, Vite, Canvas 2D
-- **Providers**: Claude transcript/hook watcher, Codex thread/transcript watcher
 
 ## Known Limitations
 
-- **Session sync is heuristic** — Claude and Codex do not expose one shared live-agent API, so the extension infers activity from local files and events.
-- **Claude Cowork status is still approximate** — local-agent-mode sessions have a different audit format than Claude Code JSONL, so some active/waiting transitions may need more refinement.
-- **Token cost is a proxy** — Codex token totals may not split input/output. Claude token totals are shown as counts, not converted to OpenAI pricing.
-- **Work seats are finite** — if more agents are actively working than there are computer desks, some agents may wait for a free work seat.
-- **Linux/macOS tip** — if you launch VS Code without a folder open (e.g. bare `code` command), agents will start in your home directory. This is fully supported; just be aware your Claude sessions will be tracked under `~/.claude/projects/` using your home directory as the project root.
+- Session sync is still adapter-based because Claude and Codex do not expose one shared live-agent API.
+- Claude Desktop/Cowork status can be less precise than Claude Code hook events.
+- Usage/cost displays are operational estimates, not provider billing records.
+- Codex is the supported direct handoff executor launch path today; Claude launch is planned.
+- If more agents are working than there are valid work seats, some agents may wait for a desk.
+- Manual desktop QA is still useful after UI-heavy changes because VS Code webviews, terminals, and local CLIs vary by platform.
 
 ## Troubleshooting
 
-If your agent appears stuck on idle or doesn't spawn:
+If agents do not appear or look stale:
 
-1. **Refresh** — Click **Refresh** in the toolbar or Agent Center to rescan current Claude/Codex sessions.
-2. **Debug View** — In the Pixel Agents Multi panel, click the gear icon (Settings), then toggle **Debug View**. This shows connection diagnostics per agent: JSONL file status, lines parsed, last data timestamp, runtime state, seat state, and recent webview events. If you see "JSONL not found", the extension can't locate the session file.
-3. **Debug Console** — If you're running from source (Extension Development Host via F5), open VS Code's **View > Debug Console**. Search for `[Pixel Agents]` to see detailed logs: project directory resolution, JSONL polling status, path encoding mismatches, Codex scan results, and unrecognized transcript record types.
+1. Click **Refresh** in the toolbar or Agent Center.
+2. Confirm the provider filter is set to **All**.
+3. Open Settings and enable **Debug View** to inspect JSONL/session paths, timestamps, runtime state, seat state, and recent webview events.
+4. In an Extension Development Host, open **View > Debug Console** and search for `[Pixel Agents]`.
+5. On Windows, confirm VS Code was reloaded after installing the local VSIX.
+6. For Codex, confirm the Codex CLI is authenticated and has local threads under the expected project.
+7. For Claude, confirm the Claude Code CLI path setting is correct if launching Claude from the extension.
 
-## Where This Is Going
+## Roadmap
 
-The long-term vision is an interface where managing AI agents feels like playing the Sims, but the results are real things built.
+The near-term direction is to make local individual supervision excellent:
 
-- **Agents as characters** you can see, assign, monitor, and redirect, each with visible roles (designer, coder, writer, reviewer), stats, context usage, and tools.
-- **Desks as directories** — drag an agent to a desk to assign it to a project or working directory.
-- **An office as a project** — with a Kanban board on the wall where idle agents can pick up tasks autonomously.
-- **Deep inspection** — click any agent to see its model, branch, system prompt, and full work history. Interrupt it, chat with it, or redirect it.
-- **Token health bars** — rate limits and context windows visualized as in-game stats.
-- **Fully customizable** — upload your own character sprites, themes, and office assets. Eventually maybe even move beyond pixel art into 3D or VR.
+- More reliable Claude launch and package dispatch.
+- Better usage intelligence, context health, and stale-work detection.
+- Stronger timeline replay and report-ready workflows.
+- Cleaner separation between pixel office visualization and large inspection pages.
+- Safer multi-agent queue operations and completion status review.
 
-For this to work, the architecture needs to be modular at every level:
-
-- **Platform-agnostic**: VS Code extension today, Electron app, web app, or any other host environment tomorrow.
-- **Agent-agnostic**: Claude Code today, but built to support Codex, OpenCode, Gemini, Cursor, Copilot, and others through composable adapters.
-- **Theme-agnostic**: community-created assets, skins, and themes from any contributor.
-
-We're actively working on the core module and adapter architecture that makes this possible. If you're interested to talk about this further, please visit our [Discussions Section](https://github.com/ray24724919/pixel-agents-multi/discussions).
+The longer-term product direction is a team/lab model: several people sharing a platform where agent work, repo handoffs, communication, status, and usage can be observed across projects. That comes after the local single-user control room is stable.
 
 ## Community & Contributing
 
-Use **[Issues](https://github.com/ray24724919/pixel-agents-multi/issues)** to report bugs or request features. Join **[Discussions](https://github.com/ray24724919/pixel-agents-multi/discussions)** for questions and conversations.
+Use [Issues](https://github.com/ray24724919/pixel-agents-multi/issues) to report bugs or request features. Join [Discussions](https://github.com/ray24724919/pixel-agents-multi/discussions) for questions and conversations.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for instructions on how to contribute.
-
-Please read our [Code of Conduct](CODE_OF_CONDUCT.md) before participating.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution instructions, and read [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) before participating.
 
 ## Star History
 
