@@ -51,6 +51,25 @@ export interface HandoffArtifactTarget {
 export type HandoffArtifactStatus = 'draft' | 'published' | 'reviewed' | 'stale';
 export type HandoffArtifactLocalStatus = 'draft' | 'reviewed' | 'stale';
 export type HandoffDispatchStatus = 'draft' | 'ready' | 'dispatched' | 'completed' | 'blocked';
+export type HandoffExecutionStatus =
+  | 'linked'
+  | 'active'
+  | 'waiting'
+  | 'completed'
+  | 'blocked'
+  | 'unknown';
+
+export interface HandoffExecutionMetadataV1 {
+  agentId?: number;
+  agentName?: string;
+  providerId?: string;
+  projectName?: string;
+  sessionId?: string;
+  runId?: string;
+  linkedAt: string;
+  updatedAt: string;
+  status: HandoffExecutionStatus;
+}
 
 export interface HandoffDispatchPackageV1 {
   packageRelativePath: string;
@@ -59,6 +78,7 @@ export interface HandoffDispatchPackageV1 {
   status: HandoffDispatchStatus;
   createdAt: string;
   updatedAt: string;
+  execution?: HandoffExecutionMetadataV1;
 }
 
 export interface HandoffArtifactMetadataV1 {
@@ -147,6 +167,33 @@ export interface HandoffDispatchStatusUpdateResult {
   previousStatus: HandoffDispatchStatus;
   nextStatus: HandoffDispatchStatus;
   dispatchPackage: HandoffDispatchPackageV1;
+}
+
+export interface HandoffExecutionLinkInput {
+  agentId?: unknown;
+  agentName?: unknown;
+  providerId?: unknown;
+  projectName?: unknown;
+  sessionId?: unknown;
+  runId?: unknown;
+}
+
+export interface HandoffExecutionLinkResult {
+  markdown: HandoffArtifactOpenPath;
+  metadataPath: HandoffArtifactMetadataPath;
+  metadata: HandoffArtifactMetadataV1;
+  dispatchPackage: HandoffDispatchPackageV1;
+  execution: HandoffExecutionMetadataV1;
+}
+
+export interface HandoffExecutionStatusUpdateResult {
+  markdown: HandoffArtifactOpenPath;
+  metadataPath: HandoffArtifactMetadataPath;
+  metadata: HandoffArtifactMetadataV1;
+  previousStatus: HandoffExecutionStatus;
+  nextStatus: HandoffExecutionStatus;
+  dispatchPackage: HandoffDispatchPackageV1;
+  execution: HandoffExecutionMetadataV1;
 }
 
 export interface HandoffWorkPackagePrompt {
@@ -652,6 +699,116 @@ export function updateHandoffDispatchStatus(
   };
 }
 
+export function linkHandoffExecutionAgent(
+  repoRoot: string,
+  markdownRelativePath: unknown,
+  input: HandoffExecutionLinkInput,
+  nowMs = Date.now(),
+): HandoffExecutionLinkResult {
+  const { markdown, metadataPath, metadata } = readRequiredHandoffArtifactMetadataForMarkdown(
+    repoRoot,
+    markdownRelativePath,
+  );
+  if (!metadata.dispatchPackage) {
+    throw new Error('Create a handoff work package before linking executor activity.');
+  }
+  const agentId = safeExecutionAgentId(input.agentId);
+  if (agentId === undefined) {
+    throw new Error('A visible agent id is required to link handoff execution.');
+  }
+  const timestamp = isoTimestampFromMs(nowMs);
+  const execution = buildHandoffExecutionMetadata(
+    {
+      ...input,
+      agentId,
+      status: 'linked',
+      linkedAt: timestamp,
+      updatedAt: timestamp,
+    },
+    true,
+  );
+  if (!execution) {
+    throw new Error('Handoff execution metadata is invalid.');
+  }
+  const dispatchPackage: HandoffDispatchPackageV1 = {
+    ...metadata.dispatchPackage,
+    execution,
+    updatedAt: timestamp,
+  };
+  const updatedMetadata: HandoffArtifactMetadataV1 = {
+    ...metadata,
+    dispatchPackage,
+    updatedAt: timestamp,
+  };
+  fs.writeFileSync(
+    metadataPath.absolutePath,
+    `${JSON.stringify(updatedMetadata, null, 2)}\n`,
+    'utf8',
+  );
+  return {
+    markdown,
+    metadataPath,
+    metadata: updatedMetadata,
+    dispatchPackage,
+    execution,
+  };
+}
+
+export function updateHandoffExecutionStatus(
+  repoRoot: string,
+  markdownRelativePath: unknown,
+  nextStatusValue: unknown,
+  nowMs = Date.now(),
+): HandoffExecutionStatusUpdateResult {
+  const nextStatus = handoffExecutionStatus(nextStatusValue);
+  if (!nextStatus) {
+    throw new Error(
+      'Handoff execution status must be linked, active, waiting, completed, blocked, or unknown.',
+    );
+  }
+  const { markdown, metadataPath, metadata } = readRequiredHandoffArtifactMetadataForMarkdown(
+    repoRoot,
+    markdownRelativePath,
+  );
+  if (!metadata.dispatchPackage) {
+    throw new Error('Handoff artifact does not have a work package yet.');
+  }
+  if (!metadata.dispatchPackage.execution) {
+    throw new Error('Link a visible agent before updating handoff execution status.');
+  }
+  const previousStatus = metadata.dispatchPackage.execution.status;
+  const timestamp = isoTimestampFromMs(nowMs);
+  const execution: HandoffExecutionMetadataV1 = {
+    ...metadata.dispatchPackage.execution,
+    status: nextStatus,
+    updatedAt: timestamp,
+  };
+  const dispatchPackage: HandoffDispatchPackageV1 = {
+    ...metadata.dispatchPackage,
+    execution,
+    updatedAt: timestamp,
+  };
+  const updatedMetadata: HandoffArtifactMetadataV1 = {
+    ...metadata,
+    dispatchPackage,
+    updatedAt: timestamp,
+  };
+  fs.writeFileSync(
+    metadataPath.absolutePath,
+    `${JSON.stringify(updatedMetadata, null, 2)}\n`,
+    'utf8',
+  );
+  return {
+    markdown,
+    metadataPath,
+    metadata: updatedMetadata,
+    previousStatus,
+    nextStatus,
+    dispatchPackage,
+    execution,
+  };
+}
+
 export function parseHandoffArtifactMetadata(
   value: unknown,
 ): HandoffArtifactMetadataV1 | undefined {
@@ -1075,6 +1232,20 @@ export function handoffDispatchStatus(value: unknown): HandoffDispatchStatus | u
   return undefined;
 }
 
+export function handoffExecutionStatus(value: unknown): HandoffExecutionStatus | undefined {
+  if (
+    value === 'linked' ||
+    value === 'active' ||
+    value === 'waiting' ||
+    value === 'completed' ||
+    value === 'blocked' ||
+    value === 'unknown'
+  ) {
+    return value;
+  }
+  return undefined;
+}
+
 function handoffDispatchPackage(value: unknown): HandoffDispatchPackageV1 | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== 'object' || value === null) return undefined;
@@ -1092,8 +1263,10 @@ function handoffDispatchPackage(value: unknown): HandoffDispatchPackageV1 | unde
   const status = handoffDispatchStatus(record.status);
   const createdAt = isoTimestamp(record.createdAt);
   const updatedAt = isoTimestamp(record.updatedAt);
+  const execution = buildHandoffExecutionMetadata(record.execution);
+  if (record.execution !== undefined && !execution) return undefined;
   if (!branchName || !status || !createdAt || !updatedAt) return undefined;
-  return {
+  const dispatchPackage: HandoffDispatchPackageV1 = {
     packageRelativePath,
     branchName,
     reportRelativePath,
@@ -1101,6 +1274,45 @@ function handoffDispatchPackage(value: unknown): HandoffDispatchPackageV1 | unde
     createdAt,
     updatedAt,
   };
+  if (execution) dispatchPackage.execution = execution;
+  return dispatchPackage;
+}
+
+function buildHandoffExecutionMetadata(
+  value: unknown,
+  requireAgentId = false,
+): HandoffExecutionMetadataV1 | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const record = value as Record<string, unknown>;
+  const status = handoffExecutionStatus(record.status);
+  const linkedAt = isoTimestamp(record.linkedAt);
+  const updatedAt = isoTimestamp(record.updatedAt);
+  const agentId = safeExecutionAgentId(record.agentId);
+  if (!status || !linkedAt || !updatedAt || (requireAgentId && agentId === undefined)) {
+    return undefined;
+  }
+  const execution: HandoffExecutionMetadataV1 = {
+    linkedAt,
+    updatedAt,
+    status,
+  };
+  const agentName = safeHandoffMetadataText(record.agentName);
+  const providerId = safeHandoffMetadataToken(record.providerId);
+  const projectName = safeHandoffMetadataText(record.projectName);
+  const sessionId = safeHandoffMetadataToken(record.sessionId);
+  const runId = safeHandoffMetadataToken(record.runId);
+  if (agentId !== undefined) execution.agentId = agentId;
+  if (agentName) execution.agentName = agentName;
+  if (providerId) execution.providerId = providerId;
+  if (projectName) execution.projectName = projectName;
+  if (sessionId) execution.sessionId = sessionId;
+  if (runId) execution.runId = runId;
+  return execution;
+}
+
+function safeExecutionAgentId(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) return undefined;
+  return value;
 }
 
 function safeDispatchBranchName(value: unknown): string {

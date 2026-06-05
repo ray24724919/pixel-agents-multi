@@ -243,6 +243,56 @@ test('timeline page keeps handoff work package history searchable', () => {
   );
 });
 
+test('timeline page keeps handoff execution history searchable', () => {
+  const items = buildTimelinePageItems(
+    [],
+    [
+      {
+        id: 'handoff-execution-linked',
+        agentId: 0,
+        providerId: 'codex',
+        projectName: 'Pixel Agents Multi',
+        sessionId: 'source-session',
+        artifactId: 'pixel-handoff',
+        artifactStatus: 'reviewed',
+        dispatchStatus: 'dispatched',
+        executionStatus: 'active',
+        packageRelativePath:
+          'docs/roadmap/supervision/work-packages/handoffs/pixel-handoff-work-package.md',
+        reportRelativePath: 'docs/roadmap/supervision/reports/pixel-handoff-executor-report.md',
+        linkedAgentId: 12,
+        linkedAgentName: 'Codex executor',
+        linkedAgentProviderId: 'codex',
+        linkedAgentProjectName: 'Pixel Agents Multi',
+        linkedAgentSessionId: 'executor-session',
+        timestamp: 1_780_000_000_000,
+        kind: 'handoff.execution_linked',
+        title: 'Handoff execution linked',
+        summary: 'pixel-handoff-work-package.md / Codex executor / active',
+        severity: 'success',
+        source: 'user',
+      },
+    ],
+    [],
+  );
+  const model = buildTimelinePageModel(items, {
+    providerFilter: 'all',
+    severityFilter: 'all',
+    projectFilter: 'all',
+    agentFilter: 'all',
+    categoryFilter: 'all',
+    kindFilter: 'all',
+    timeWindow: 'all',
+    searchQuery: 'execution codex executor active work package',
+  });
+
+  assert.equal(model.events[0]?.id, 'timeline-handoff-execution-linked');
+  assert.equal(model.events[0]?.isActionLike, true);
+  assert.equal(model.events[0]?.executionStatus, 'active');
+  assert.equal(model.events[0]?.linkedAgentId, 12);
+  assert.equal(model.events[0]?.linkedAgentName, 'Codex executor');
+});
+
 test('timeline page search spans event, agent, provider, and project text', () => {
   const items = buildTimelinePageItems(
     [

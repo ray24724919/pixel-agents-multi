@@ -117,8 +117,14 @@ export interface AgentTimelineEvent {
   previousStatus?: string;
   nextStatus?: string;
   dispatchStatus?: string;
+  executionStatus?: string;
   packageRelativePath?: string;
   reportRelativePath?: string;
+  linkedAgentId?: number;
+  linkedAgentName?: string;
+  linkedAgentProviderId?: string;
+  linkedAgentProjectName?: string;
+  linkedAgentSessionId?: string;
   timestamp: number;
   kind: string;
   title: string;
@@ -986,8 +992,14 @@ export function useExtensionMessages(
             previousStatus: raw.previousStatus,
             nextStatus: raw.nextStatus,
             dispatchStatus: raw.dispatchStatus,
+            executionStatus: raw.executionStatus,
             packageRelativePath: raw.packageRelativePath,
             reportRelativePath: raw.reportRelativePath,
+            linkedAgentId: raw.linkedAgentId,
+            linkedAgentName: raw.linkedAgentName,
+            linkedAgentProviderId: raw.linkedAgentProviderId,
+            linkedAgentProjectName: raw.linkedAgentProjectName,
+            linkedAgentSessionId: raw.linkedAgentSessionId,
             timestamp: Number.isFinite(timestamp) ? timestamp : Date.now(),
             kind: raw.kind ?? raw.type ?? 'event',
             title: raw.title ?? raw.summary ?? raw.kind ?? raw.type ?? 'Event',

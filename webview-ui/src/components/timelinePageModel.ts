@@ -42,8 +42,14 @@ export interface TimelineSourceEvent {
   previousStatus?: string;
   nextStatus?: string;
   dispatchStatus?: string;
+  executionStatus?: string;
   packageRelativePath?: string;
   reportRelativePath?: string;
+  linkedAgentId?: number;
+  linkedAgentName?: string;
+  linkedAgentProviderId?: string;
+  linkedAgentProjectName?: string;
+  linkedAgentSessionId?: string;
   timestamp: number;
   kind: string;
   title: string;
@@ -82,8 +88,14 @@ export interface TimelinePageItem {
   previousStatus?: string;
   nextStatus?: string;
   dispatchStatus?: string;
+  executionStatus?: string;
   packageRelativePath?: string;
   reportRelativePath?: string;
+  linkedAgentId?: number;
+  linkedAgentName?: string;
+  linkedAgentProviderId?: string;
+  linkedAgentProjectName?: string;
+  linkedAgentSessionId?: string;
   category: TimelineCategory;
   isActionLike: boolean;
   isDelegationLike: boolean;
@@ -161,8 +173,14 @@ export function buildTimelinePageItems(
       previousStatus: event.previousStatus,
       nextStatus: event.nextStatus,
       dispatchStatus: event.dispatchStatus,
+      executionStatus: event.executionStatus,
       packageRelativePath: event.packageRelativePath,
       reportRelativePath: event.reportRelativePath,
+      linkedAgentId: event.linkedAgentId,
+      linkedAgentName: event.linkedAgentName,
+      linkedAgentProviderId: event.linkedAgentProviderId,
+      linkedAgentProjectName: event.linkedAgentProjectName,
+      linkedAgentSessionId: event.linkedAgentSessionId,
       category,
       isActionLike,
       isDelegationLike,
@@ -405,8 +423,14 @@ function buildTimelineSearchText(event: TimelinePageItem): string {
     event.previousStatus,
     event.nextStatus,
     event.dispatchStatus,
+    event.executionStatus,
     event.packageRelativePath,
     event.reportRelativePath,
+    event.linkedAgentId !== undefined ? `linked agent ${event.linkedAgentId}` : undefined,
+    event.linkedAgentName,
+    event.linkedAgentProviderId,
+    event.linkedAgentProjectName,
+    event.linkedAgentSessionId,
     event.isActionLike ? 'action' : undefined,
     event.isDelegationLike ? 'delegation delegate worker supervising' : undefined,
     isHandoffTimelineKind(event.kind) ? 'handoff artifact note repo review' : undefined,

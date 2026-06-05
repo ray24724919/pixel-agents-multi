@@ -88,12 +88,14 @@ import {
   buildHandoffDispatchPrompt,
   buildHandoffWorkPackagePrompt,
   createHandoffWorkPackage,
+  linkHandoffExecutionAgent,
   readHandoffArtifactMetadataForMarkdown,
   resolveHandoffArtifactOpenPath,
   resolveHandoffWorkPackageOpenPath,
   scanHandoffArtifacts,
   updateHandoffArtifactStatus,
   updateHandoffDispatchStatus,
+  updateHandoffExecutionStatus,
 } from './handoffArtifacts.js';
 import type { LayoutWatcher } from './layoutPersistence.js';
 import { readLayoutFromFile, watchLayoutFile, writeLayoutToFile } from './layoutPersistence.js';
@@ -738,6 +740,162 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  private async linkHandoffExecutionAgentFromWebview(
+    message: Record<string, unknown>,
+  ): Promise<void> {
+    const requestId = typeof message.requestId === 'string' ? message.requestId : undefined;
+    try {
+      const repoRoot = this.getHandoffRepoRoot();
+      if (!repoRoot) {
+        throw new Error('Open a repository workspace before linking handoff execution.');
+      }
+      const agentId =
+        typeof message.agentId === 'number' && Number.isInteger(message.agentId)
+          ? message.agentId
+          : undefined;
+      if (agentId === undefined) {
+        throw new Error('Select a visible agent before linking handoff execution.');
+      }
+      const agent = this.agents.get(agentId);
+      if (!agent) {
+        throw new Error(`Visible agent is no longer available: ${agentId}`);
+      }
+      const result = linkHandoffExecutionAgent(repoRoot, message.relativePath, {
+        agentId: agent.id,
+        agentName: agent.agentName ?? `Agent #${agent.id}`,
+        providerId: agent.providerId ?? 'claude',
+        projectName: agent.projectName ?? agent.folderName ?? path.basename(agent.projectDir),
+        sessionId: agent.sessionId,
+      });
+      this.webview?.postMessage({
+        type: 'handoffExecutionLinked',
+        requestId,
+        relativePath: result.markdown.relativePath,
+        filename: result.markdown.filename,
+        artifactId: result.metadata.artifactId,
+        status: result.metadata.status,
+        dispatchStatus: result.dispatchPackage.status,
+        executionStatus: result.execution.status,
+        packageRelativePath: result.dispatchPackage.packageRelativePath,
+        reportRelativePath: result.dispatchPackage.reportRelativePath,
+        linkedAgentId: result.execution.agentId,
+        linkedAgentName: result.execution.agentName,
+        linkedAgentProviderId: result.execution.providerId,
+        linkedAgentProjectName: result.execution.projectName,
+        linkedAgentSessionId: result.execution.sessionId,
+      });
+      this.postHandoffTimelineEvent('handoff.execution_linked', result.markdown.relativePath, {
+        filename: result.markdown.filename,
+        artifactId: result.metadata.artifactId,
+        artifactStatus: result.metadata.status,
+        dispatchStatus: result.dispatchPackage.status,
+        executionStatus: result.execution.status,
+        packageRelativePath: result.dispatchPackage.packageRelativePath,
+        reportRelativePath: result.dispatchPackage.reportRelativePath,
+        providerId: result.metadata.providerId,
+        project: result.metadata.projectName,
+        sessionId: result.metadata.sessionId,
+        runId: result.metadata.runId,
+        linkedAgentId: result.execution.agentId,
+        linkedAgentName: result.execution.agentName,
+        linkedAgentProviderId: result.execution.providerId,
+        linkedAgentProjectName: result.execution.projectName,
+        linkedAgentSessionId: result.execution.sessionId,
+      });
+      this.postHandoffArtifactsLoaded();
+      vscode.window.showInformationMessage(
+        `Pixel Agents: Handoff execution linked to ${result.execution.agentName ?? `Agent #${agent.id}`}`,
+      );
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.webview?.postMessage({
+        type: 'handoffExecutionLinkFailed',
+        requestId,
+        relativePath: typeof message.relativePath === 'string' ? message.relativePath : undefined,
+        error: errorMessage,
+      });
+      vscode.window.showErrorMessage(
+        `Pixel Agents: Failed to link handoff execution: ${errorMessage}`,
+      );
+    }
+  }
+
+  private async updateHandoffExecutionStatusFromWebview(
+    message: Record<string, unknown>,
+  ): Promise<void> {
+    const requestId = typeof message.requestId === 'string' ? message.requestId : undefined;
+    try {
+      const repoRoot = this.getHandoffRepoRoot();
+      if (!repoRoot) {
+        throw new Error('Open a repository workspace before updating handoff execution.');
+      }
+      const result = updateHandoffExecutionStatus(
+        repoRoot,
+        message.relativePath,
+        message.nextStatus,
+      );
+      this.webview?.postMessage({
+        type: 'handoffExecutionStatusUpdated',
+        requestId,
+        relativePath: result.markdown.relativePath,
+        filename: result.markdown.filename,
+        artifactId: result.metadata.artifactId,
+        status: result.metadata.status,
+        previousStatus: result.previousStatus,
+        nextStatus: result.nextStatus,
+        dispatchStatus: result.dispatchPackage.status,
+        executionStatus: result.execution.status,
+        packageRelativePath: result.dispatchPackage.packageRelativePath,
+        reportRelativePath: result.dispatchPackage.reportRelativePath,
+        linkedAgentId: result.execution.agentId,
+        linkedAgentName: result.execution.agentName,
+        linkedAgentProviderId: result.execution.providerId,
+        linkedAgentProjectName: result.execution.projectName,
+        linkedAgentSessionId: result.execution.sessionId,
+      });
+      this.postHandoffTimelineEvent(
+        'handoff.execution_status_changed',
+        result.markdown.relativePath,
+        {
+          filename: result.markdown.filename,
+          artifactId: result.metadata.artifactId,
+          artifactStatus: result.metadata.status,
+          previousStatus: result.previousStatus,
+          nextStatus: result.nextStatus,
+          dispatchStatus: result.dispatchPackage.status,
+          executionStatus: result.execution.status,
+          packageRelativePath: result.dispatchPackage.packageRelativePath,
+          reportRelativePath: result.dispatchPackage.reportRelativePath,
+          providerId: result.metadata.providerId,
+          project: result.metadata.projectName,
+          sessionId: result.metadata.sessionId,
+          runId: result.metadata.runId,
+          linkedAgentId: result.execution.agentId,
+          linkedAgentName: result.execution.agentName,
+          linkedAgentProviderId: result.execution.providerId,
+          linkedAgentProjectName: result.execution.projectName,
+          linkedAgentSessionId: result.execution.sessionId,
+        },
+      );
+      this.postHandoffArtifactsLoaded();
+      vscode.window.showInformationMessage(
+        `Pixel Agents: Handoff execution status updated to ${result.nextStatus}: ${result.dispatchPackage.packageRelativePath}`,
+      );
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.webview?.postMessage({
+        type: 'handoffExecutionStatusUpdateFailed',
+        requestId,
+        relativePath: typeof message.relativePath === 'string' ? message.relativePath : undefined,
+        nextStatus: typeof message.nextStatus === 'string' ? message.nextStatus : undefined,
+        error: errorMessage,
+      });
+      vscode.window.showErrorMessage(
+        `Pixel Agents: Failed to update handoff execution status: ${errorMessage}`,
+      );
+    }
+  }
+
   private postHandoffTimelineEvent(
     kind:
       | 'handoff.generated'
@@ -746,7 +904,9 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       | 'handoff.dispatch_prompt_created'
       | 'handoff.dispatch_package_created'
       | 'handoff.dispatch_package_opened'
-      | 'handoff.dispatch_status_changed',
+      | 'handoff.dispatch_status_changed'
+      | 'handoff.execution_linked'
+      | 'handoff.execution_status_changed',
     relativePath: string,
     metadata: Record<string, unknown> = {},
   ): void {
@@ -762,18 +922,38 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     const nextStatus = typeof metadata.nextStatus === 'string' ? metadata.nextStatus : undefined;
     const dispatchStatus =
       typeof metadata.dispatchStatus === 'string' ? metadata.dispatchStatus : undefined;
+    const executionStatus =
+      typeof metadata.executionStatus === 'string' ? metadata.executionStatus : undefined;
     const packageRelativePath =
       typeof metadata.packageRelativePath === 'string' ? metadata.packageRelativePath : undefined;
     const reportRelativePath =
       typeof metadata.reportRelativePath === 'string' ? metadata.reportRelativePath : undefined;
+    const linkedAgentId =
+      typeof metadata.linkedAgentId === 'number' && Number.isFinite(metadata.linkedAgentId)
+        ? metadata.linkedAgentId
+        : undefined;
+    const linkedAgentName =
+      typeof metadata.linkedAgentName === 'string' ? metadata.linkedAgentName : undefined;
+    const linkedAgentProviderId =
+      typeof metadata.linkedAgentProviderId === 'string'
+        ? metadata.linkedAgentProviderId
+        : undefined;
+    const linkedAgentProjectName =
+      typeof metadata.linkedAgentProjectName === 'string'
+        ? metadata.linkedAgentProjectName
+        : undefined;
+    const linkedAgentSessionId =
+      typeof metadata.linkedAgentSessionId === 'string' ? metadata.linkedAgentSessionId : undefined;
     const statusChange =
       previousStatus && nextStatus ? `${previousStatus} -> ${nextStatus}` : undefined;
     const summaryParts = [
       relativePath,
       packageRelativePath,
       reportRelativePath,
+      linkedAgentName,
+      linkedAgentId !== undefined ? `agent ${linkedAgentId}` : undefined,
       artifactId,
-      statusChange ?? dispatchStatus ?? artifactStatus,
+      statusChange ?? executionStatus ?? dispatchStatus ?? artifactStatus,
     ].filter((part): part is string => typeof part === 'string' && part.trim().length > 0);
     const title =
       kind === 'handoff.generated'
@@ -788,7 +968,11 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
                 ? 'Handoff work package created'
                 : kind === 'handoff.dispatch_package_opened'
                   ? 'Handoff work package opened'
-                  : 'Handoff work package status changed';
+                  : kind === 'handoff.dispatch_status_changed'
+                    ? 'Handoff work package status changed'
+                    : kind === 'handoff.execution_linked'
+                      ? 'Handoff execution linked'
+                      : 'Handoff execution status changed';
     postAgentTimelineEvent(this.webview, {
       agentId: typeof metadata.agentId === 'number' ? metadata.agentId : 0,
       kind,
@@ -805,8 +989,14 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       previousStatus,
       nextStatus,
       dispatchStatus,
+      executionStatus,
       packageRelativePath,
       reportRelativePath,
+      linkedAgentId,
+      linkedAgentName,
+      linkedAgentProviderId,
+      linkedAgentProjectName,
+      linkedAgentSessionId,
     });
   }
 
@@ -1857,6 +2047,18 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         );
       } else if (message.type === 'updateHandoffDispatchStatus') {
         await this.updateHandoffDispatchStatusFromWebview(
+          typeof message === 'object' && message !== null
+            ? (message as Record<string, unknown>)
+            : {},
+        );
+      } else if (message.type === 'linkHandoffExecutionAgent') {
+        await this.linkHandoffExecutionAgentFromWebview(
+          typeof message === 'object' && message !== null
+            ? (message as Record<string, unknown>)
+            : {},
+        );
+      } else if (message.type === 'updateHandoffExecutionStatus') {
+        await this.updateHandoffExecutionStatusFromWebview(
           typeof message === 'object' && message !== null
             ? (message as Record<string, unknown>)
             : {},

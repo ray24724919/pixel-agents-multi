@@ -13,6 +13,7 @@ import {
   extractHandoffMarkdownTitle,
   formatHandoffTimestamp,
   getHandoffArtifactMetadataRelativePath,
+  linkHandoffExecutionAgent,
   parseHandoffArtifactMetadata,
   resolveHandoffArtifactMetadataPath,
   resolveHandoffArtifactOpenPath,
@@ -21,6 +22,7 @@ import {
   scanHandoffArtifacts,
   updateHandoffArtifactStatus,
   updateHandoffDispatchStatus,
+  updateHandoffExecutionStatus,
 } from '../../src/handoffArtifacts.js';
 
 describe('handoff artifact path safety', () => {
@@ -700,6 +702,128 @@ describe('handoff artifact path safety', () => {
     }
   });
 
+  it('links handoff execution metadata to a visible agent without changing markdown files', () => {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pixel-handoff-execution-link-'));
+    try {
+      const target = buildHandoffArtifactTarget(
+        repoRoot,
+        { project: 'Execution Link' },
+        Date.UTC(2026, 5, 4, 7, 7),
+      );
+      const handoffMarkdown = '# Execution handoff\n\nEditable handoff body';
+      fs.mkdirSync(path.dirname(target.absolutePath), { recursive: true });
+      fs.writeFileSync(target.absolutePath, handoffMarkdown, 'utf8');
+      const metadata = buildHandoffArtifactMetadata(
+        target,
+        { title: 'Execution W11-C', projectName: 'Pixel Agents Multi' },
+        Date.UTC(2026, 5, 4, 7, 7),
+      );
+      fs.writeFileSync(
+        target.metadataAbsolutePath,
+        `${JSON.stringify(metadata, null, 2)}\n`,
+        'utf8',
+      );
+      const workPackage = createHandoffWorkPackage(
+        repoRoot,
+        target.relativePath,
+        Date.UTC(2026, 5, 4, 8, 30),
+      );
+      const workPackageMarkdown = fs.readFileSync(workPackage.packageAbsolutePath, 'utf8');
+
+      const result = linkHandoffExecutionAgent(
+        repoRoot,
+        target.relativePath,
+        {
+          agentId: 12,
+          agentName: 'Codex executor C:\\Users\\User\\secret',
+          providerId: 'codex',
+          projectName: '\\\\?\\C:\\Users\\User\\repo',
+          sessionId: 'session-abc',
+          runId: 'run-abc',
+        },
+        Date.UTC(2026, 5, 4, 9, 45),
+      );
+      const parsed = parseHandoffArtifactMetadata(
+        JSON.parse(fs.readFileSync(target.metadataAbsolutePath, 'utf8')),
+      );
+
+      expect(result.execution).toMatchObject({
+        agentId: 12,
+        providerId: 'codex',
+        sessionId: 'session-abc',
+        runId: 'run-abc',
+        status: 'linked',
+        linkedAt: '2026-06-04T09:45:00.000Z',
+        updatedAt: '2026-06-04T09:45:00.000Z',
+      });
+      expect(result.execution.agentName).toContain('[redacted path]');
+      expect(result.execution.projectName).toContain('[redacted path]');
+      expect(parsed?.dispatchPackage?.execution?.agentId).toBe(12);
+      expect(fs.readFileSync(target.absolutePath, 'utf8')).toBe(handoffMarkdown);
+      expect(fs.readFileSync(workPackage.packageAbsolutePath, 'utf8')).toBe(workPackageMarkdown);
+      expect(JSON.stringify(parsed)).not.toContain('C:\\Users\\User\\secret');
+      expect(JSON.stringify(parsed)).not.toContain('\\\\?\\C:\\Users\\User\\repo');
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('updates handoff execution status and rejects invalid execution inputs', () => {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pixel-handoff-execution-status-'));
+    try {
+      const target = buildHandoffArtifactTarget(
+        repoRoot,
+        { project: 'Execution Status' },
+        Date.UTC(2026, 5, 4, 7, 7),
+      );
+      fs.mkdirSync(path.dirname(target.absolutePath), { recursive: true });
+      fs.writeFileSync(target.absolutePath, '# Execution status handoff\n\nBody', 'utf8');
+      const metadata = buildHandoffArtifactMetadata(
+        target,
+        { title: 'Status W11-C', projectName: 'Pixel Agents Multi' },
+        Date.UTC(2026, 5, 4, 7, 7),
+      );
+      fs.writeFileSync(
+        target.metadataAbsolutePath,
+        `${JSON.stringify(metadata, null, 2)}\n`,
+        'utf8',
+      );
+      createHandoffWorkPackage(repoRoot, target.relativePath, Date.UTC(2026, 5, 4, 8, 30));
+
+      expect(() => updateHandoffExecutionStatus(repoRoot, target.relativePath, 'active')).toThrow(
+        /Link a visible agent/,
+      );
+      expect(() =>
+        linkHandoffExecutionAgent(repoRoot, target.relativePath, { agentId: -1 }),
+      ).toThrow(/visible agent id/);
+
+      linkHandoffExecutionAgent(
+        repoRoot,
+        target.relativePath,
+        { agentId: 12, agentName: 'Codex executor', providerId: 'codex' },
+        Date.UTC(2026, 5, 4, 9, 45),
+      );
+      const result = updateHandoffExecutionStatus(
+        repoRoot,
+        target.relativePath,
+        'blocked',
+        Date.UTC(2026, 5, 4, 10, 10),
+      );
+
+      expect(result.previousStatus).toBe('linked');
+      expect(result.nextStatus).toBe('blocked');
+      expect(result.execution.status).toBe('blocked');
+      expect(result.execution.agentId).toBe(12);
+      expect(result.execution.linkedAt).toBe('2026-06-04T09:45:00.000Z');
+      expect(result.execution.updatedAt).toBe('2026-06-04T10:10:00.000Z');
+      expect(() =>
+        updateHandoffExecutionStatus(repoRoot, target.relativePath, 'published'),
+      ).toThrow(/execution status must be linked, active, waiting, completed, blocked, or unknown/);
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
   it('parses legacy sidecars and rejects malformed dispatch package metadata safely', () => {
     const legacy = {
       schemaVersion: 1,
@@ -741,6 +865,34 @@ describe('handoff artifact path safety', () => {
         dispatchPackage: {
           ...valid.dispatchPackage,
           branchName: 'main; rm -rf',
+        },
+      }),
+    ).toBeUndefined();
+    expect(
+      parseHandoffArtifactMetadata({
+        ...valid,
+        dispatchPackage: {
+          ...valid.dispatchPackage,
+          execution: {
+            agentId: 12,
+            status: 'active',
+            linkedAt: '2026-06-04T07:11:00.000Z',
+            updatedAt: '2026-06-04T07:12:00.000Z',
+          },
+        },
+      })?.dispatchPackage?.execution?.status,
+    ).toBe('active');
+    expect(
+      parseHandoffArtifactMetadata({
+        ...valid,
+        dispatchPackage: {
+          ...valid.dispatchPackage,
+          execution: {
+            agentId: 12,
+            status: 'published',
+            linkedAt: '2026-06-04T07:11:00.000Z',
+            updatedAt: '2026-06-04T07:12:00.000Z',
+          },
         },
       }),
     ).toBeUndefined();

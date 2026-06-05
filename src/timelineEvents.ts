@@ -21,7 +21,9 @@ export type TimelineEventKind =
   | 'handoff.dispatch_prompt_created'
   | 'handoff.dispatch_package_created'
   | 'handoff.dispatch_package_opened'
-  | 'handoff.dispatch_status_changed';
+  | 'handoff.dispatch_status_changed'
+  | 'handoff.execution_linked'
+  | 'handoff.execution_status_changed';
 
 export type TimelineEventSeverity = 'info' | 'success' | 'warning' | 'error';
 
@@ -46,8 +48,14 @@ export interface TimelineEvent {
   previousStatus?: string;
   nextStatus?: string;
   dispatchStatus?: string;
+  executionStatus?: string;
   packageRelativePath?: string;
   reportRelativePath?: string;
+  linkedAgentId?: number;
+  linkedAgentName?: string;
+  linkedAgentProviderId?: string;
+  linkedAgentProjectName?: string;
+  linkedAgentSessionId?: string;
   visibility: TimelineEventVisibility;
 }
 
