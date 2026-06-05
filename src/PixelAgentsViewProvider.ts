@@ -906,12 +906,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       if (!repoRoot) {
         throw new Error('Open a repository workspace before launching a handoff executor.');
       }
-      if (message.providerId === 'claude') {
-        throw new Error(
-          'Claude executor launch does not yet support passing work-package prompts; use Codex.',
-        );
-      }
-      const providerId = 'codex';
+      const providerId = message.providerId === 'claude' ? 'claude' : 'codex';
       const prompt = buildHandoffWorkPackagePrompt(repoRoot, message.relativePath);
       const agent = await launchNewTerminal(
         this.nextAgentId,
