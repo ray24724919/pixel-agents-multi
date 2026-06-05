@@ -92,6 +92,10 @@ export function timelineEventForPersistence(value: unknown): PersistedTimelineEv
   const executionStatus = stringValue(event.executionStatus);
   const packageRelativePath = stringValue(event.packageRelativePath);
   const reportRelativePath = stringValue(event.reportRelativePath);
+  const branchName = stringValue(event.branchName);
+  const reportExists = booleanValue(event.reportExists);
+  const branchExists = booleanValue(event.branchExists);
+  const branchMergedToMain = booleanValue(event.branchMergedToMain);
   const linkedAgentId = numberValue(event.linkedAgentId);
   const linkedAgentName = stringValue(event.linkedAgentName);
   const linkedAgentProviderId = stringValue(event.linkedAgentProviderId);
@@ -114,6 +118,10 @@ export function timelineEventForPersistence(value: unknown): PersistedTimelineEv
   if (executionStatus) out.executionStatus = executionStatus;
   if (packageRelativePath) out.packageRelativePath = packageRelativePath;
   if (reportRelativePath) out.reportRelativePath = reportRelativePath;
+  if (branchName) out.branchName = branchName;
+  if (reportExists !== undefined) out.reportExists = reportExists;
+  if (branchExists !== undefined) out.branchExists = branchExists;
+  if (branchMergedToMain !== undefined) out.branchMergedToMain = branchMergedToMain;
   if (linkedAgentId !== undefined) out.linkedAgentId = linkedAgentId;
   if (linkedAgentName) out.linkedAgentName = linkedAgentName;
   if (linkedAgentProviderId) out.linkedAgentProviderId = linkedAgentProviderId;
@@ -137,6 +145,10 @@ function stringValue(value: unknown): string | undefined {
 
 function numberValue(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function booleanValue(value: unknown): boolean | undefined {
+  return typeof value === 'boolean' ? value : undefined;
 }
 
 function timelineSeverity(value: unknown): AgentTimelineEvent['severity'] | undefined {

@@ -49,6 +49,10 @@ describe('timeline store foundation', () => {
         packageRelativePath:
           'docs/roadmap/supervision/work-packages/handoffs/safe-handoff-work-package.md',
         reportRelativePath: 'docs/roadmap/supervision/reports/safe-handoff-executor-report.md',
+        branchName: 'product/handoff-safe-handoff',
+        reportExists: true,
+        branchExists: true,
+        branchMergedToMain: false,
         linkedAgentId: 12,
         linkedAgentName: 'Codex executor',
         linkedAgentProviderId: 'codex',
@@ -84,6 +88,10 @@ describe('timeline store foundation', () => {
       packageRelativePath:
         'docs/roadmap/supervision/work-packages/handoffs/safe-handoff-work-package.md',
       reportRelativePath: 'docs/roadmap/supervision/reports/safe-handoff-executor-report.md',
+      branchName: 'product/handoff-safe-handoff',
+      reportExists: true,
+      branchExists: true,
+      branchMergedToMain: false,
       linkedAgentId: 12,
       linkedAgentName: 'Codex executor',
       linkedAgentProviderId: 'codex',

@@ -120,6 +120,10 @@ export interface AgentTimelineEvent {
   executionStatus?: string;
   packageRelativePath?: string;
   reportRelativePath?: string;
+  branchName?: string;
+  reportExists?: boolean;
+  branchExists?: boolean;
+  branchMergedToMain?: boolean;
   linkedAgentId?: number;
   linkedAgentName?: string;
   linkedAgentProviderId?: string;

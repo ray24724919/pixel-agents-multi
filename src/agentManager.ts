@@ -168,7 +168,7 @@ export async function launchNewTerminal(
   folderPath?: string,
   bypassPermissions?: boolean,
   prompt?: string,
-): Promise<void> {
+): Promise<AgentState | undefined> {
   const folders = vscode.workspace.workspaceFolders;
   // Use home directory as fallback cwd when no workspace is open (common on Linux/macOS).
   // This gives Codex a predictable --cd value, which is later matched against its
@@ -183,7 +183,7 @@ export async function launchNewTerminal(
     : undefined;
   if (isClaude && !resolvedClaudeCommand) {
     vscode.window.showWarningMessage(CLAUDE_CLI_MISSING_MESSAGE);
-    return;
+    return undefined;
   }
 
   const idx = nextTerminalIndexRef.current++;
@@ -365,7 +365,7 @@ export async function launchNewTerminal(
       }
     }, JSONL_POLL_INTERVAL_MS);
     jsonlPollTimers.set(id, pollTimer);
-    return;
+    return agent;
   }
 
   terminal.sendText(buildCodexLaunchCommand(cwd, bypassPermissions ?? false, prompt));
@@ -438,6 +438,7 @@ export async function launchNewTerminal(
     webview,
     persistAgents,
   );
+  return agent;
 }
 
 function clearCodexTransientState(agent: AgentState): void {

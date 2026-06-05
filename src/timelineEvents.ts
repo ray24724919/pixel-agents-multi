@@ -23,7 +23,10 @@ export type TimelineEventKind =
   | 'handoff.dispatch_package_opened'
   | 'handoff.dispatch_status_changed'
   | 'handoff.execution_linked'
-  | 'handoff.execution_status_changed';
+  | 'handoff.execution_status_changed'
+  | 'handoff.executor_launched'
+  | 'handoff.completion_refreshed'
+  | 'handoff.report_opened';
 
 export type TimelineEventSeverity = 'info' | 'success' | 'warning' | 'error';
 
@@ -51,6 +54,10 @@ export interface TimelineEvent {
   executionStatus?: string;
   packageRelativePath?: string;
   reportRelativePath?: string;
+  branchName?: string;
+  reportExists?: boolean;
+  branchExists?: boolean;
+  branchMergedToMain?: boolean;
   linkedAgentId?: number;
   linkedAgentName?: string;
   linkedAgentProviderId?: string;

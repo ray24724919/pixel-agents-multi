@@ -16,9 +16,22 @@ export interface HandoffArtifactLibraryItem {
   sessionId?: string;
   runId?: string;
   dispatchPackage?: HandoffDispatchPackage;
+  completion?: HandoffCompletionStatus;
   executionLiveHint?: HandoffExecutionLiveHint;
   displayTitle: string;
   displayDetail: string;
+  statusLabel: string;
+}
+
+export interface HandoffCompletionStatus {
+  reportExists: boolean;
+  reportRelativePath: string;
+  reportModifiedAt?: number;
+  reportSizeBytes?: number;
+  branchName: string;
+  branchExists?: boolean;
+  branchMergedToMain?: boolean;
+  checkedAt: string;
   statusLabel: string;
 }
 
@@ -157,6 +170,25 @@ export interface UpdateHandoffExecutionStatusMessage {
   nextStatus: HandoffExecutionStatus;
 }
 
+export interface LaunchHandoffExecutorMessage {
+  type: 'launchHandoffExecutor';
+  requestId: string;
+  relativePath: string;
+  providerId: 'codex';
+}
+
+export interface RefreshHandoffCompletionMessage {
+  type: 'refreshHandoffCompletion';
+  requestId: string;
+  relativePath: string;
+}
+
+export interface OpenHandoffReportMessage {
+  type: 'openHandoffReport';
+  requestId: string;
+  relativePath: string;
+}
+
 export interface HandoffDispatchStatusAction {
   nextStatus: HandoffDispatchStatus;
   label: string;
@@ -175,7 +207,30 @@ export type HandoffExecutionActionStatus =
   | 'linked'
   | 'updating'
   | 'updated'
+  | 'launching'
+  | 'launched'
+  | 'refreshing'
+  | 'refreshed'
+  | 'opening_report'
+  | 'report_opened'
   | 'failed';
+
+export type HandoffQueueGroup =
+  | 'all'
+  | 'needs_dispatch'
+  | 'active_waiting'
+  | 'blocked'
+  | 'report_ready'
+  | 'done';
+
+export interface HandoffQueueSummary {
+  totalPackages: number;
+  needsDispatch: number;
+  activeWaiting: number;
+  blocked: number;
+  reportReady: number;
+  done: number;
+}
 
 export const initialHandoffArtifactLibraryState: HandoffArtifactLibraryState = {
   items: [],
@@ -409,6 +464,47 @@ export function buildUpdateHandoffExecutionStatusMessage(
   };
 }
 
+export function buildLaunchHandoffExecutorMessage(
+  item: Pick<HandoffArtifactLibraryItem, 'relativePath' | 'dispatchPackage'>,
+  requestId: string,
+  providerId: unknown = 'codex',
+): LaunchHandoffExecutorMessage | undefined {
+  if (!requestId || !canUseHandoffWorkPackage(item)) return undefined;
+  void providerId;
+  return {
+    type: 'launchHandoffExecutor',
+    requestId,
+    relativePath: item.relativePath,
+    providerId: 'codex',
+  };
+}
+
+export function buildRefreshHandoffCompletionMessage(
+  item: Pick<HandoffArtifactLibraryItem, 'relativePath' | 'dispatchPackage'>,
+  requestId: string,
+): RefreshHandoffCompletionMessage | undefined {
+  if (!requestId || !canUseHandoffWorkPackage(item)) return undefined;
+  return {
+    type: 'refreshHandoffCompletion',
+    requestId,
+    relativePath: item.relativePath,
+  };
+}
+
+export function buildOpenHandoffReportMessage(
+  item: Pick<HandoffArtifactLibraryItem, 'relativePath' | 'completion'>,
+  requestId: string,
+): OpenHandoffReportMessage | undefined {
+  if (!requestId || !item.relativePath || item.completion?.reportExists !== true) {
+    return undefined;
+  }
+  return {
+    type: 'openHandoffReport',
+    requestId,
+    relativePath: item.relativePath,
+  };
+}
+
 export function buildHandoffExecutionQueueSummary(
   items: readonly Pick<HandoffArtifactLibraryItem, 'dispatchPackage' | 'updatedAt'>[],
 ): HandoffExecutionQueueSummary {
@@ -463,6 +559,69 @@ export function buildHandoffExecutionQueueSummary(
   };
 }
 
+export function buildHandoffQueueSummary(
+  items: readonly Pick<HandoffArtifactLibraryItem, 'dispatchPackage' | 'completion'>[],
+): HandoffQueueSummary {
+  const summary: HandoffQueueSummary = {
+    totalPackages: 0,
+    needsDispatch: 0,
+    activeWaiting: 0,
+    blocked: 0,
+    reportReady: 0,
+    done: 0,
+  };
+  for (const item of items) {
+    if (!item.dispatchPackage) continue;
+    summary.totalPackages += 1;
+    const group = handoffQueueGroupForItem(item);
+    if (group === 'needs_dispatch') summary.needsDispatch += 1;
+    if (group === 'active_waiting') summary.activeWaiting += 1;
+    if (group === 'blocked') summary.blocked += 1;
+    if (group === 'report_ready') summary.reportReady += 1;
+    if (group === 'done') summary.done += 1;
+  }
+  return summary;
+}
+
+export function filterHandoffQueueItems(
+  items: readonly HandoffArtifactLibraryItem[],
+  group: HandoffQueueGroup,
+): HandoffArtifactLibraryItem[] {
+  return items
+    .filter((item) => !!item.dispatchPackage)
+    .filter((item) => group === 'all' || handoffQueueGroupForItem(item) === group)
+    .sort(compareHandoffQueueItems);
+}
+
+export function handoffQueueGroupLabel(group: HandoffQueueGroup): string {
+  if (group === 'needs_dispatch') return 'Needs dispatch';
+  if (group === 'active_waiting') return 'Active / waiting';
+  if (group === 'blocked') return 'Blocked';
+  if (group === 'report_ready') return 'Report ready';
+  if (group === 'done') return 'Done';
+  return 'All packages';
+}
+
+export function handoffQueueGroupForItem(
+  item: Pick<HandoffArtifactLibraryItem, 'dispatchPackage' | 'completion'>,
+): Exclude<HandoffQueueGroup, 'all'> {
+  const dispatchPackage = item.dispatchPackage;
+  if (!dispatchPackage) return 'needs_dispatch';
+  const executionStatus = dispatchPackage.execution?.status;
+  if (dispatchPackage.status === 'blocked' || executionStatus === 'blocked') return 'blocked';
+  if (dispatchPackage.status === 'completed' || executionStatus === 'completed') return 'done';
+  if (item.completion?.reportExists === true) return 'report_ready';
+  if (
+    dispatchPackage.status === 'dispatched' ||
+    executionStatus === 'active' ||
+    executionStatus === 'waiting' ||
+    executionStatus === 'linked'
+  ) {
+    return 'active_waiting';
+  }
+  return 'needs_dispatch';
+}
+
 export function handoffExecutionActionStatusLabel(
   status: HandoffExecutionActionStatus,
   agentLabel: string,
@@ -478,6 +637,20 @@ export function handoffExecutionActionStatusLabel(
   if (status === 'updating') return 'Updating handoff execution status...';
   if (status === 'updated') {
     return `Execution status updated: ${packageRelativePath || 'handoff work package'}`;
+  }
+  if (status === 'launching') return 'Launching executor from handoff work package...';
+  if (status === 'launched') {
+    return `Executor launched: ${agentLabel || 'new agent'} / ${
+      packageRelativePath || 'handoff work package'
+    }`;
+  }
+  if (status === 'refreshing') return 'Refreshing report and branch completion signals...';
+  if (status === 'refreshed') {
+    return `Completion refreshed: ${packageRelativePath || 'handoff work package'}`;
+  }
+  if (status === 'opening_report') return 'Opening executor report in VS Code...';
+  if (status === 'report_opened') {
+    return `Opened report: ${packageRelativePath || 'executor report'}`;
   }
   if (status === 'failed') {
     return `Execution action failed: ${error || 'Could not update handoff execution.'}`;
@@ -523,7 +696,9 @@ export function shouldRefreshHandoffArtifactsForMessage(message: Record<string, 
     message.type === 'handoffWorkPackageCreated' ||
     message.type === 'handoffDispatchStatusUpdated' ||
     message.type === 'handoffExecutionLinked' ||
-    message.type === 'handoffExecutionStatusUpdated'
+    message.type === 'handoffExecutionStatusUpdated' ||
+    message.type === 'handoffExecutorLaunched' ||
+    message.type === 'handoffCompletionRefreshed'
   );
 }
 
@@ -598,12 +773,14 @@ function handoffArtifactItemFromUnknown(value: unknown): HandoffArtifactLibraryI
   const sessionId = stringValue(record.sessionId);
   const runId = stringValue(record.runId);
   const dispatchPackage = handoffDispatchPackageFromUnknown(record.dispatchPackage);
+  const completion = handoffCompletionStatusFromUnknown(record.completion);
   const statusLabel = handoffStatusLabel(status);
   const dispatchDetail = dispatchPackage
     ? ` / package ${dispatchPackage.statusLabel}${
         dispatchPackage.execution ? ` / execution ${dispatchPackage.execution.statusLabel}` : ''
       } / ${dispatchPackage.packageRelativePath}`
     : '';
+  const completionDetail = completion ? ` / ${completion.statusLabel}` : '';
   const updatedAtMs = updatedAt ? Date.parse(updatedAt) : undefined;
   const updatedLabel =
     updatedAtMs !== undefined && Number.isFinite(updatedAtMs)
@@ -627,11 +804,37 @@ function handoffArtifactItemFromUnknown(value: unknown): HandoffArtifactLibraryI
     sessionId,
     runId,
     dispatchPackage,
+    completion,
     displayTitle: title ?? filename,
-    displayDetail: `${statusLabel}${dispatchDetail} / ${filename} / ${formatBytes(
+    displayDetail: `${statusLabel}${dispatchDetail}${completionDetail} / ${filename} / ${formatBytes(
       sizeBytes,
     )} / ${updatedLabel}`,
     statusLabel,
+  };
+}
+
+function handoffCompletionStatusFromUnknown(value: unknown): HandoffCompletionStatus | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const record = value as Record<string, unknown>;
+  const reportExists = booleanValue(record.reportExists);
+  const reportRelativePath = stringValue(record.reportRelativePath);
+  const branchName = stringValue(record.branchName);
+  const checkedAt = stringValue(record.checkedAt);
+  if (reportExists === undefined || !reportRelativePath || !branchName || !checkedAt) {
+    return undefined;
+  }
+  const branchExists = booleanValue(record.branchExists);
+  const branchMergedToMain = booleanValue(record.branchMergedToMain);
+  return {
+    reportExists,
+    reportRelativePath,
+    reportModifiedAt: numberValue(record.reportModifiedAt),
+    reportSizeBytes: numberValue(record.reportSizeBytes),
+    branchName,
+    branchExists,
+    branchMergedToMain,
+    checkedAt,
+    statusLabel: handoffCompletionStatusLabel(reportExists, branchExists, branchMergedToMain),
   };
 }
 
@@ -759,4 +962,48 @@ function safeDisplayStringValue(value: unknown): string | undefined {
 
 function numberValue(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function booleanValue(value: unknown): boolean | undefined {
+  return typeof value === 'boolean' ? value : undefined;
+}
+
+function handoffCompletionStatusLabel(
+  reportExists: boolean,
+  branchExists?: boolean,
+  branchMergedToMain?: boolean,
+): string {
+  const report = reportExists ? 'Report ready' : 'Report missing';
+  const branch =
+    branchExists === undefined
+      ? 'branch unknown'
+      : branchExists
+        ? 'branch exists'
+        : 'branch missing';
+  const merged =
+    branchMergedToMain === undefined
+      ? 'merge unknown'
+      : branchMergedToMain
+        ? 'merged'
+        : 'not merged';
+  return `${report} / ${branch} / ${merged}`;
+}
+
+function compareHandoffQueueItems(
+  a: Pick<HandoffArtifactLibraryItem, 'completion' | 'dispatchPackage' | 'modifiedAt'>,
+  b: Pick<HandoffArtifactLibraryItem, 'completion' | 'dispatchPackage' | 'modifiedAt'>,
+): number {
+  const groupRank = (item: Pick<HandoffArtifactLibraryItem, 'completion' | 'dispatchPackage'>) => {
+    const group = handoffQueueGroupForItem(item);
+    if (group === 'blocked') return 0;
+    if (group === 'report_ready') return 1;
+    if (group === 'active_waiting') return 2;
+    if (group === 'needs_dispatch') return 3;
+    return 4;
+  };
+  const rankDiff = groupRank(a) - groupRank(b);
+  if (rankDiff !== 0) return rankDiff;
+  const aUpdated = timestampValue(a.dispatchPackage?.updatedAt) ?? a.modifiedAt;
+  const bUpdated = timestampValue(b.dispatchPackage?.updatedAt) ?? b.modifiedAt;
+  return bUpdated - aUpdated;
 }

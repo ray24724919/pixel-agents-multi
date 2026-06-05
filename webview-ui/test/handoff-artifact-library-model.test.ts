@@ -6,21 +6,27 @@ import {
   buildCreateHandoffWorkPackageMessage,
   buildCreateHandoffWorkPackagePromptMessage,
   buildHandoffExecutionQueueSummary,
+  buildHandoffQueueSummary,
+  buildLaunchHandoffExecutorMessage,
   buildLinkHandoffExecutionAgentMessage,
   buildOpenHandoffArtifactMessage,
+  buildOpenHandoffReportMessage,
   buildOpenHandoffWorkPackageMessage,
+  buildRefreshHandoffCompletionMessage,
   buildUpdateHandoffArtifactStatusMessage,
   buildUpdateHandoffDispatchStatusMessage,
   buildUpdateHandoffExecutionStatusMessage,
   canCreateHandoffDispatchPrompt,
   canCreateHandoffWorkPackage,
   canUseHandoffWorkPackage,
+  filterHandoffQueueItems,
   handoffArtifactLibraryStateFromLoadedMessage,
   handoffArtifactStatusActions,
   handoffDispatchPromptStatusLabel,
   handoffDispatchStatusActions,
   handoffExecutionActionStatusLabel,
   handoffExecutionStatusActions,
+  handoffQueueGroupForItem,
   handoffWorkPackageStatusLabel,
   shouldRefreshHandoffArtifactsForMessage,
 } from '../src/components/handoffArtifactLibraryModel.ts';
@@ -589,5 +595,207 @@ test('handoff artifact library refreshes after work package mutations', () => {
   assert.equal(
     shouldRefreshHandoffArtifactsForMessage({ type: 'handoffExecutionStatusUpdated' }),
     true,
+  );
+  assert.equal(shouldRefreshHandoffArtifactsForMessage({ type: 'handoffExecutorLaunched' }), true);
+  assert.equal(
+    shouldRefreshHandoffArtifactsForMessage({ type: 'handoffCompletionRefreshed' }),
+    true,
+  );
+});
+
+test('handoff completion metadata is parsed and exposed without absolute paths', () => {
+  const state = handoffArtifactLibraryStateFromLoadedMessage({
+    type: 'handoffArtifactsLoaded',
+    artifacts: [
+      {
+        relativePath: 'docs/agent-handoffs/2026-06-04-1507-pixel-handoff.md',
+        filename: '2026-06-04-1507-pixel-handoff.md',
+        modifiedAt: 1_780_000_000_000,
+        sizeBytes: 1536,
+        title: 'Pixel handoff',
+        dispatchPackage: {
+          packageRelativePath:
+            'docs/roadmap/supervision/work-packages/handoffs/pixel-handoff-work-package.md',
+          branchName: 'product/handoff-pixel-handoff',
+          reportRelativePath: 'docs/roadmap/supervision/reports/pixel-handoff-executor-report.md',
+          status: 'dispatched',
+          createdAt: '2026-06-04T07:09:00.000Z',
+          updatedAt: '2026-06-04T07:10:00.000Z',
+        },
+        completion: {
+          reportExists: true,
+          reportRelativePath: 'docs/roadmap/supervision/reports/pixel-handoff-executor-report.md',
+          reportModifiedAt: 1_780_000_001_000,
+          reportSizeBytes: 2048,
+          branchName: 'product/handoff-pixel-handoff',
+          branchExists: true,
+          branchMergedToMain: false,
+          checkedAt: '2026-06-04T07:11:00.000Z',
+          absolutePath: 'C:\\Users\\User\\private.md',
+        },
+      },
+    ],
+  });
+
+  const completion = state.items[0]?.completion;
+  assert.equal(completion?.reportExists, true);
+  assert.equal(completion?.branchExists, true);
+  assert.equal(completion?.branchMergedToMain, false);
+  assert.match(completion?.statusLabel ?? '', /Report ready/);
+  assert.match(state.items[0]?.displayDetail ?? '', /Report ready/);
+  assert.equal('absolutePath' in (completion ?? {}), false);
+});
+
+test('handoff executor, completion, and report messages send only safe identifiers', () => {
+  const item = {
+    relativePath: 'docs/agent-handoffs/2026-06-04-1507-pixel-handoff.md',
+    dispatchPackage: {
+      packageRelativePath:
+        'docs/roadmap/supervision/work-packages/handoffs/pixel-handoff-work-package.md',
+      branchName: 'product/handoff-pixel-handoff',
+      reportRelativePath: 'docs/roadmap/supervision/reports/pixel-handoff-executor-report.md',
+      status: 'dispatched' as const,
+      createdAt: '2026-06-04T07:09:00.000Z',
+      updatedAt: '2026-06-04T07:10:00.000Z',
+      statusLabel: 'Dispatched',
+    },
+    completion: {
+      reportExists: true,
+      reportRelativePath: 'docs/roadmap/supervision/reports/pixel-handoff-executor-report.md',
+      branchName: 'product/handoff-pixel-handoff',
+      checkedAt: '2026-06-04T07:11:00.000Z',
+      statusLabel: 'Report ready / branch exists / not merged',
+    },
+  };
+
+  assert.deepEqual(buildLaunchHandoffExecutorMessage(item, 'launch-1', 'claude'), {
+    type: 'launchHandoffExecutor',
+    requestId: 'launch-1',
+    relativePath: item.relativePath,
+    providerId: 'codex',
+  });
+  assert.deepEqual(buildLaunchHandoffExecutorMessage(item, 'launch-2', 'bad-provider'), {
+    type: 'launchHandoffExecutor',
+    requestId: 'launch-2',
+    relativePath: item.relativePath,
+    providerId: 'codex',
+  });
+  assert.deepEqual(buildRefreshHandoffCompletionMessage(item, 'refresh-1'), {
+    type: 'refreshHandoffCompletion',
+    requestId: 'refresh-1',
+    relativePath: item.relativePath,
+  });
+  assert.deepEqual(buildOpenHandoffReportMessage(item, 'report-1'), {
+    type: 'openHandoffReport',
+    requestId: 'report-1',
+    relativePath: item.relativePath,
+  });
+  assert.equal('prompt' in buildLaunchHandoffExecutorMessage(item, 'launch-3')!, false);
+  assert.equal('absolutePath' in buildRefreshHandoffCompletionMessage(item, 'refresh-2')!, false);
+  assert.equal(
+    buildOpenHandoffReportMessage(
+      { relativePath: item.relativePath, completion: { ...item.completion, reportExists: false } },
+      'report-2',
+    ),
+    undefined,
+  );
+});
+
+test('handoff queue summary and filters group package supervision states', () => {
+  const base = {
+    relativePath: 'docs/agent-handoffs/base.md',
+    filename: 'base.md',
+    modifiedAt: 1_780_000_000_000,
+    sizeBytes: 512,
+    displayTitle: 'Base',
+    displayDetail: 'Base detail',
+    statusLabel: 'Draft',
+  };
+  const items = [
+    {
+      ...base,
+      relativePath: 'docs/agent-handoffs/draft.md',
+      dispatchPackage: {
+        packageRelativePath: 'docs/roadmap/supervision/work-packages/handoffs/draft.md',
+        branchName: 'product/handoff-draft',
+        reportRelativePath: 'docs/roadmap/supervision/reports/draft-executor-report.md',
+        status: 'ready' as const,
+        createdAt: '2026-06-04T07:00:00.000Z',
+        updatedAt: '2026-06-04T07:01:00.000Z',
+        statusLabel: 'Ready',
+      },
+    },
+    {
+      ...base,
+      relativePath: 'docs/agent-handoffs/active.md',
+      dispatchPackage: {
+        packageRelativePath: 'docs/roadmap/supervision/work-packages/handoffs/active.md',
+        branchName: 'product/handoff-active',
+        reportRelativePath: 'docs/roadmap/supervision/reports/active-executor-report.md',
+        status: 'dispatched' as const,
+        createdAt: '2026-06-04T07:00:00.000Z',
+        updatedAt: '2026-06-04T07:02:00.000Z',
+        statusLabel: 'Dispatched',
+        execution: {
+          agentId: 12,
+          linkedAt: '2026-06-04T07:01:00.000Z',
+          updatedAt: '2026-06-04T07:02:00.000Z',
+          status: 'waiting' as const,
+          statusLabel: 'Waiting',
+        },
+      },
+    },
+    {
+      ...base,
+      relativePath: 'docs/agent-handoffs/report.md',
+      dispatchPackage: {
+        packageRelativePath: 'docs/roadmap/supervision/work-packages/handoffs/report.md',
+        branchName: 'product/handoff-report',
+        reportRelativePath: 'docs/roadmap/supervision/reports/report-executor-report.md',
+        status: 'dispatched' as const,
+        createdAt: '2026-06-04T07:00:00.000Z',
+        updatedAt: '2026-06-04T07:03:00.000Z',
+        statusLabel: 'Dispatched',
+      },
+      completion: {
+        reportExists: true,
+        reportRelativePath: 'docs/roadmap/supervision/reports/report-executor-report.md',
+        branchName: 'product/handoff-report',
+        checkedAt: '2026-06-04T07:04:00.000Z',
+        statusLabel: 'Report ready / branch exists / not merged',
+      },
+    },
+    {
+      ...base,
+      relativePath: 'docs/agent-handoffs/done.md',
+      dispatchPackage: {
+        packageRelativePath: 'docs/roadmap/supervision/work-packages/handoffs/done.md',
+        branchName: 'product/handoff-done',
+        reportRelativePath: 'docs/roadmap/supervision/reports/done-executor-report.md',
+        status: 'completed' as const,
+        createdAt: '2026-06-04T07:00:00.000Z',
+        updatedAt: '2026-06-04T07:05:00.000Z',
+        statusLabel: 'Completed',
+      },
+    },
+  ];
+
+  const summary = buildHandoffQueueSummary(items);
+  assert.deepEqual(summary, {
+    totalPackages: 4,
+    needsDispatch: 1,
+    activeWaiting: 1,
+    blocked: 0,
+    reportReady: 1,
+    done: 1,
+  });
+  assert.equal(handoffQueueGroupForItem(items[2]!), 'report_ready');
+  assert.deepEqual(
+    filterHandoffQueueItems(items, 'report_ready').map((item) => item.relativePath),
+    ['docs/agent-handoffs/report.md'],
+  );
+  assert.equal(
+    filterHandoffQueueItems(items, 'all')[0]?.relativePath,
+    'docs/agent-handoffs/report.md',
   );
 });

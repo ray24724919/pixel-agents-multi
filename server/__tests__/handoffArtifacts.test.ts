@@ -10,13 +10,17 @@ import {
   buildHandoffWorkPackagePrompt,
   buildHandoffWorkPackageTarget,
   createHandoffWorkPackage,
+  detectHandoffCompletionStatus,
   extractHandoffMarkdownTitle,
   formatHandoffTimestamp,
   getHandoffArtifactMetadataRelativePath,
   linkHandoffExecutionAgent,
+  markHandoffExecutorLaunched,
   parseHandoffArtifactMetadata,
+  refreshHandoffCompletionStatus,
   resolveHandoffArtifactMetadataPath,
   resolveHandoffArtifactOpenPath,
+  resolveHandoffReportOpenPath,
   resolveHandoffWorkPackageOpenPath,
   safeHandoffFilenamePart,
   scanHandoffArtifacts,
@@ -819,6 +823,172 @@ describe('handoff artifact path safety', () => {
       expect(() =>
         updateHandoffExecutionStatus(repoRoot, target.relativePath, 'published'),
       ).toThrow(/execution status must be linked, active, waiting, completed, blocked, or unknown/);
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('marks an executor launch as active and dispatched without changing markdown files', () => {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pixel-handoff-executor-launch-'));
+    try {
+      const target = buildHandoffArtifactTarget(
+        repoRoot,
+        { project: 'Executor Launch' },
+        Date.UTC(2026, 5, 4, 7, 7),
+      );
+      const handoffMarkdown = '# Executor handoff\n\nEditable body';
+      fs.mkdirSync(path.dirname(target.absolutePath), { recursive: true });
+      fs.writeFileSync(target.absolutePath, handoffMarkdown, 'utf8');
+      const metadata = buildHandoffArtifactMetadata(
+        target,
+        { title: 'Launch W11', projectName: 'Pixel Agents Multi' },
+        Date.UTC(2026, 5, 4, 7, 7),
+      );
+      fs.writeFileSync(
+        target.metadataAbsolutePath,
+        `${JSON.stringify(metadata, null, 2)}\n`,
+        'utf8',
+      );
+      const workPackage = createHandoffWorkPackage(
+        repoRoot,
+        target.relativePath,
+        Date.UTC(2026, 5, 4, 8, 30),
+      );
+      const workPackageMarkdown = fs.readFileSync(workPackage.packageAbsolutePath, 'utf8');
+
+      const result = markHandoffExecutorLaunched(
+        repoRoot,
+        target.relativePath,
+        {
+          agentId: 18,
+          agentName: 'Codex executor',
+          providerId: 'codex',
+          projectName: 'Pixel Agents Multi',
+          sessionId: 'executor-session',
+        },
+        Date.UTC(2026, 5, 4, 9, 45),
+      );
+      const parsed = parseHandoffArtifactMetadata(
+        JSON.parse(fs.readFileSync(target.metadataAbsolutePath, 'utf8')),
+      );
+
+      expect(result.previousDispatchStatus).toBe('draft');
+      expect(result.nextDispatchStatus).toBe('dispatched');
+      expect(result.dispatchPackage.status).toBe('dispatched');
+      expect(result.execution).toMatchObject({
+        agentId: 18,
+        providerId: 'codex',
+        sessionId: 'executor-session',
+        status: 'active',
+        linkedAt: '2026-06-04T09:45:00.000Z',
+        updatedAt: '2026-06-04T09:45:00.000Z',
+      });
+      expect(parsed?.dispatchPackage?.execution?.agentId).toBe(18);
+      expect(fs.readFileSync(target.absolutePath, 'utf8')).toBe(handoffMarkdown);
+      expect(fs.readFileSync(workPackage.packageAbsolutePath, 'utf8')).toBe(workPackageMarkdown);
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('detects report and branch completion with a mocked read-only git runner', () => {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pixel-handoff-completion-'));
+    try {
+      const target = buildHandoffArtifactTarget(
+        repoRoot,
+        { project: 'Completion Scan' },
+        Date.UTC(2026, 5, 4, 7, 7),
+      );
+      fs.mkdirSync(path.dirname(target.absolutePath), { recursive: true });
+      fs.writeFileSync(target.absolutePath, '# Completion handoff\n\nBody', 'utf8');
+      const metadata = buildHandoffArtifactMetadata(
+        target,
+        { title: 'Completion W11', projectName: 'Pixel Agents Multi' },
+        Date.UTC(2026, 5, 4, 7, 7),
+      );
+      fs.writeFileSync(
+        target.metadataAbsolutePath,
+        `${JSON.stringify(metadata, null, 2)}\n`,
+        'utf8',
+      );
+      const workPackage = createHandoffWorkPackage(
+        repoRoot,
+        target.relativePath,
+        Date.UTC(2026, 5, 4, 8, 30),
+      );
+      const reportAbsolutePath = path.resolve(
+        repoRoot,
+        ...workPackage.dispatchPackage.reportRelativePath.split('/'),
+      );
+      fs.mkdirSync(path.dirname(reportAbsolutePath), { recursive: true });
+      fs.writeFileSync(reportAbsolutePath, '# Executor report\n\nBuild passed', 'utf8');
+
+      const completion = detectHandoffCompletionStatus(repoRoot, workPackage.dispatchPackage, {
+        nowMs: Date.UTC(2026, 5, 4, 10, 30),
+        gitRunner: (_cwd, args) =>
+          args[0] === 'show-ref' || args[0] === 'merge-base' ? true : false,
+      });
+      const refreshed = refreshHandoffCompletionStatus(repoRoot, target.relativePath, {
+        nowMs: Date.UTC(2026, 5, 4, 10, 30),
+        gitRunner: (_cwd, args) => args[0] === 'show-ref',
+      });
+      const reportOpenPath = resolveHandoffReportOpenPath(repoRoot, target.relativePath);
+
+      expect(completion).toMatchObject({
+        reportExists: true,
+        reportRelativePath: workPackage.dispatchPackage.reportRelativePath,
+        branchName: workPackage.dispatchPackage.branchName,
+        branchExists: true,
+        branchMergedToMain: true,
+        checkedAt: '2026-06-04T10:30:00.000Z',
+      });
+      expect(completion.reportSizeBytes).toBeGreaterThan(0);
+      expect(refreshed.completion.branchMergedToMain).toBe(false);
+      expect(reportOpenPath.relativePath).toBe(workPackage.dispatchPackage.reportRelativePath);
+      expect(reportOpenPath.absolutePath).toBe(reportAbsolutePath);
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects unsafe or missing executor report opens', () => {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pixel-handoff-report-safe-'));
+    try {
+      const target = buildHandoffArtifactTarget(
+        repoRoot,
+        { project: 'Report Safety' },
+        Date.UTC(2026, 5, 4, 7, 7),
+      );
+      fs.mkdirSync(path.dirname(target.absolutePath), { recursive: true });
+      fs.writeFileSync(target.absolutePath, '# Report safety handoff\n\nBody', 'utf8');
+      const metadata = buildHandoffArtifactMetadata(
+        target,
+        { title: 'Report Safety W11', projectName: 'Pixel Agents Multi' },
+        Date.UTC(2026, 5, 4, 7, 7),
+      );
+      fs.writeFileSync(
+        target.metadataAbsolutePath,
+        `${JSON.stringify(metadata, null, 2)}\n`,
+        'utf8',
+      );
+      const workPackage = createHandoffWorkPackage(
+        repoRoot,
+        target.relativePath,
+        Date.UTC(2026, 5, 4, 8, 30),
+      );
+
+      expect(() => resolveHandoffReportOpenPath(repoRoot, target.relativePath)).toThrow(
+        /executor report does not exist/,
+      );
+      const badSidecar = parseHandoffArtifactMetadata({
+        ...workPackage.metadata,
+        dispatchPackage: {
+          ...workPackage.dispatchPackage,
+          reportRelativePath: 'docs/roadmap/supervision/reports/../escape.md',
+        },
+      });
+
+      expect(badSidecar).toBeUndefined();
     } finally {
       fs.rmSync(repoRoot, { recursive: true, force: true });
     }
