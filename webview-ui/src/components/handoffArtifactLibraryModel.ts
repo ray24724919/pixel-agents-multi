@@ -356,6 +356,18 @@ export interface HandoffMergeReadiness {
   canCopyChecklist: boolean;
 }
 
+export type HandoffChecklistCopyKind = 'merge' | 'review' | 'blocker' | 'status' | 'closeout';
+
+export interface HandoffChecklistCopyModel {
+  kind: HandoffChecklistCopyKind;
+  actionLabel: string;
+  copiedLabel: string;
+  title: string;
+  text?: string;
+  disabled: boolean;
+  canCopy: boolean;
+}
+
 export const initialHandoffArtifactLibraryState: HandoffArtifactLibraryState = {
   items: [],
   unavailable: false,
@@ -1086,15 +1098,56 @@ export function buildHandoffManualMergeChecklist(
     'completion' | 'dispatchPackage' | 'displayTitle' | 'relativePath' | 'review'
   >,
 ): string | undefined {
-  if (!item.dispatchPackage) return undefined;
+  return buildHandoffChecklistCopyModel(item).text;
+}
+
+export function buildHandoffChecklistCopyModel(
+  item: Pick<
+    HandoffArtifactLibraryItem,
+    'completion' | 'dispatchPackage' | 'displayTitle' | 'relativePath' | 'review'
+  >,
+): HandoffChecklistCopyModel {
   const readiness = buildHandoffMergeReadiness(item);
+  const copyConfig = handoffChecklistCopyConfig(readiness.status);
+  const title = `${copyConfig.titlePrefix}: ${item.displayTitle}`;
+  const dispatchPackage = item.dispatchPackage;
+  if (!dispatchPackage) {
+    return {
+      kind: copyConfig.kind,
+      actionLabel: copyConfig.actionLabel,
+      copiedLabel: copyConfig.copiedLabel,
+      title,
+      disabled: true,
+      canCopy: false,
+    };
+  }
+  return {
+    kind: copyConfig.kind,
+    actionLabel: copyConfig.actionLabel,
+    copiedLabel: copyConfig.copiedLabel,
+    title,
+    text: buildHandoffChecklistCopyText({ ...item, dispatchPackage }, readiness, copyConfig, title),
+    disabled: false,
+    canCopy: true,
+  };
+}
+
+function buildHandoffChecklistCopyText(
+  item: Pick<
+    HandoffArtifactLibraryItem,
+    'completion' | 'dispatchPackage' | 'displayTitle' | 'relativePath' | 'review'
+  > & { dispatchPackage: HandoffDispatchPackage },
+  readiness: HandoffMergeReadiness,
+  copyConfig: HandoffChecklistCopyConfig,
+  title: string,
+): string {
   const checklist = buildHandoffReviewChecklist(item);
   const reportPath = item.review?.reportRelativePath ?? item.completion?.reportRelativePath;
   const branchName = item.review?.branchName ?? item.dispatchPackage.branchName;
   const lines = [
-    `# Manual Merge Checklist: ${item.displayTitle}`,
+    `# ${title}`,
     '',
-    `Readiness: ${readiness.label}`,
+    `Status: ${readiness.label}`,
     `Recommended next step: ${readiness.recommendedStep}`,
     '',
     `Handoff: ${item.relativePath}`,
@@ -1109,17 +1162,101 @@ export function buildHandoffManualMergeChecklist(
     `- Warnings: ${readiness.warningCount}`,
     ...checklist.map((cue) => `- ${cue.label}: ${cue.detail}`),
     '',
-    'Manual review:',
-    '- Open the executor report and inspect the summarized validation and changed-file cues.',
-    '- Inspect the executor branch manually outside Pixel Agents.',
-    '- Run any required validation locally before merging.',
-    '- If approved, merge outside Pixel Agents; then refresh completion and mark reviewed.',
+    `${copyConfig.sectionTitle}:`,
+    ...copyConfig.steps,
     '',
     'Safety:',
-    '- Pixel Agents does not run git merge, push, rebase, reset, stash, or clean from this checklist.',
+    '- Pixel Agents does not run git checkout, merge, push, rebase, reset, stash, or clean from this checklist.',
     '- This checklist references repo-relative artifacts only and does not include report bodies, transcripts, tool output, credentials, or absolute paths.',
   ];
   return lines.join('\n');
+}
+
+interface HandoffChecklistCopyConfig {
+  kind: HandoffChecklistCopyKind;
+  actionLabel: string;
+  copiedLabel: string;
+  titlePrefix: string;
+  sectionTitle: string;
+  steps: string[];
+}
+
+function handoffChecklistCopyConfig(
+  status: HandoffMergeReadinessStatus,
+): HandoffChecklistCopyConfig {
+  if (status === 'ready_to_inspect') {
+    return {
+      kind: 'merge',
+      actionLabel: 'Copy merge checklist',
+      copiedLabel: 'Merge checklist copied.',
+      titlePrefix: 'Manual Merge Checklist',
+      sectionTitle: 'Manual merge review',
+      steps: [
+        '- Open the executor report and inspect the summarized validation and changed-file cues.',
+        '- Inspect the executor branch manually outside Pixel Agents.',
+        '- Run any required validation locally before merging.',
+        '- If approved, merge outside Pixel Agents; then refresh completion and mark reviewed.',
+      ],
+    };
+  }
+  if (status === 'needs_review') {
+    return {
+      kind: 'review',
+      actionLabel: 'Copy review checklist',
+      copiedLabel: 'Review checklist copied.',
+      titlePrefix: 'Manual Review Checklist',
+      sectionTitle: 'Manual review',
+      steps: [
+        '- Open the executor report and review summary, validation, changed-file, and risk cues.',
+        '- Inspect the executor branch manually outside Pixel Agents.',
+        '- Run any required validation locally before making a merge decision.',
+        '- If review passes, refresh completion so the handoff can move to ready to inspect.',
+      ],
+    };
+  }
+  if (status === 'blocked') {
+    return {
+      kind: 'blocker',
+      actionLabel: 'Copy blocker checklist',
+      copiedLabel: 'Blocker checklist copied.',
+      titlePrefix: 'Manual Blocker Checklist',
+      sectionTitle: 'Manual blocker review',
+      steps: [
+        '- Open the executor report if available and confirm the blocker.',
+        '- Inspect branch and status cues manually outside Pixel Agents before deciding next ownership.',
+        '- Mark stale or re-dispatch manually only after the blocker is understood.',
+        '- Do not merge until the blocker is resolved and completion is refreshed.',
+      ],
+    };
+  }
+  if (status === 'already_merged') {
+    return {
+      kind: 'closeout',
+      actionLabel: 'Copy closeout checklist',
+      copiedLabel: 'Closeout checklist copied.',
+      titlePrefix: 'Manual Closeout Checklist',
+      sectionTitle: 'Manual closeout',
+      steps: [
+        '- Confirm the branch is merged into main using local tools outside Pixel Agents.',
+        '- Open the report if needed to verify final validation and changed-file cues.',
+        '- Mark the handoff reviewed after the local status is confirmed.',
+        '- Do not run another merge from this checklist.',
+      ],
+    };
+  }
+  return {
+    kind: 'status',
+    actionLabel: 'Copy status checklist',
+    copiedLabel: 'Status checklist copied.',
+    titlePrefix: 'Manual Status Checklist',
+    sectionTitle: 'Manual status review',
+    steps: [
+      '- Refresh completion when the executor status may have changed.',
+      '- Wait for the executor report or active work to settle before reviewing.',
+      '- Inspect any available report and branch/status cues manually outside Pixel Agents.',
+      '- Do not merge until the handoff reaches ready to inspect.',
+    ],
+  };
 }
 
 export function handoffExecutionActionStatusLabel(

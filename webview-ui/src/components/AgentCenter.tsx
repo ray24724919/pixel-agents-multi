@@ -50,8 +50,8 @@ import {
   buildCreateHandoffDispatchPromptMessage,
   buildCreateHandoffWorkPackageMessage,
   buildCreateHandoffWorkPackagePromptMessage,
+  buildHandoffChecklistCopyModel,
   buildHandoffExecutionQueueSummary,
-  buildHandoffManualMergeChecklist,
   buildHandoffMergeReadiness,
   buildHandoffQueueOperatorSummary,
   buildHandoffQueueSummary,
@@ -3871,15 +3871,15 @@ function HandoffReviewCues({ item }: { item: HandoffArtifactLibraryItem }) {
   const recommendation = buildHandoffReviewRecommendedAction(item);
   const checklist = buildHandoffReviewChecklist(item);
   const readiness = item.dispatchPackage ? buildHandoffMergeReadiness(item) : undefined;
-  const manualChecklist = item.dispatchPackage ? buildHandoffManualMergeChecklist(item) : undefined;
+  const checklistCopy = buildHandoffChecklistCopyModel(item);
   const firstWarning = item.review?.warnings[0];
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
   const copyManualChecklist = () => {
-    if (!manualChecklist) {
+    if (checklistCopy.disabled || !checklistCopy.text) {
       setCopyStatus('failed');
       return;
     }
-    void copyTextToClipboard(manualChecklist)
+    void copyTextToClipboard(checklistCopy.text)
       .then(() => setCopyStatus('copied'))
       .catch(() => setCopyStatus('failed'));
   };
@@ -3927,12 +3927,12 @@ function HandoffReviewCues({ item }: { item: HandoffArtifactLibraryItem }) {
               </div>
             </div>
             <Button
-              variant={manualChecklist ? 'ghost' : 'disabled'}
+              variant={checklistCopy.canCopy ? 'ghost' : 'disabled'}
               size="sm"
-              disabled={!manualChecklist}
+              disabled={checklistCopy.disabled}
               onClick={copyManualChecklist}
             >
-              Copy merge checklist
+              {checklistCopy.actionLabel}
             </Button>
           </div>
           <div className="flex min-w-0 flex-wrap gap-1">
@@ -3955,9 +3955,7 @@ function HandoffReviewCues({ item }: { item: HandoffArtifactLibraryItem }) {
                 copyStatus === 'copied' ? 'text-status-waiting' : 'text-status-error'
               }`}
             >
-              {copyStatus === 'copied'
-                ? 'Manual merge checklist copied.'
-                : 'Checklist copy failed.'}
+              {copyStatus === 'copied' ? checklistCopy.copiedLabel : 'Checklist copy failed.'}
             </div>
           )}
         </div>
