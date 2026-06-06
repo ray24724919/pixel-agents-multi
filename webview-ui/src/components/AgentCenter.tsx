@@ -53,6 +53,7 @@ import {
   buildHandoffExecutionQueueSummary,
   buildHandoffManualMergeChecklist,
   buildHandoffMergeReadiness,
+  buildHandoffQueueOperatorSummary,
   buildHandoffQueueSummary,
   buildHandoffReviewChecklist,
   buildHandoffReviewRecommendedAction,
@@ -87,6 +88,7 @@ import {
   type HandoffMergeReadinessStatus,
   type HandoffQueueGroup,
   handoffQueueGroupLabel,
+  type HandoffQueueOperatorSummaryStatus,
   type HandoffReviewChecklistState,
   type HandoffWorkPackageStatus,
   handoffWorkPackageStatusLabel,
@@ -2872,6 +2874,7 @@ function HandoffArtifactLibraryPanel({
     executionActionStatus === 'opening_report';
   const executionSummary = buildHandoffExecutionQueueSummary(state.items);
   const queueSummary = buildHandoffQueueSummary(state.items);
+  const operatorSummary = buildHandoffQueueOperatorSummary(state.items);
   const queueItems = filterHandoffQueueItems(state.items, queueGroup);
   const selectedAgentIdForItem = (item: HandoffArtifactLibraryItem): number | undefined =>
     executionAgentSelections[item.relativePath] ??
@@ -3010,6 +3013,27 @@ function HandoffArtifactLibraryPanel({
                 {queueSummary.totalPackages} packages / {queueSummary.needsDispatch} needs dispatch
                 / {queueSummary.activeWaiting} active or waiting / {queueSummary.reportReady} report
                 ready / {queueSummary.done} done
+              </div>
+              <div
+                className={`mt-2 flex max-w-2xl flex-wrap items-center justify-between gap-2 border bg-bg px-3 py-2 text-xs ${handoffQueueOperatorSummaryClass(
+                  operatorSummary.status,
+                )}`}
+              >
+                <div className="min-w-0">
+                  <div className="break-words uppercase tracking-wide">{operatorSummary.label}</div>
+                  <div className="mt-1 break-words normal-case tracking-normal text-text-muted">
+                    {operatorSummary.detail}
+                  </div>
+                </div>
+                {operatorSummary.actionLabel && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setQueueGroup(operatorSummary.targetGroup)}
+                  >
+                    {operatorSummary.actionLabel}
+                  </Button>
+                )}
               </div>
             </div>
             <label className="min-w-[180px] text-xs uppercase tracking-wide text-text-muted">
@@ -3957,6 +3981,14 @@ function handoffMergeReadinessClass(status: HandoffMergeReadinessStatus): string
     return 'border-status-permission bg-bg text-status-permission';
   }
   return 'border-border bg-bg text-text-muted';
+}
+
+function handoffQueueOperatorSummaryClass(status: HandoffQueueOperatorSummaryStatus): string {
+  if (status === 'warning') return 'border-status-error text-status-error';
+  if (status === 'ready') return 'border-accent text-accent-bright';
+  if (status === 'active') return 'border-status-active text-status-active';
+  if (status === 'done') return 'border-status-waiting text-status-waiting';
+  return 'border-border text-text-muted';
 }
 
 function usageHistoryCopyLabel(status: 'idle' | 'copied' | 'failed'): string {

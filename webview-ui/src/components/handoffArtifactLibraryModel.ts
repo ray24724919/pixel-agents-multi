@@ -295,6 +295,16 @@ export interface HandoffQueueSummary {
   done: number;
 }
 
+export type HandoffQueueOperatorSummaryStatus = 'idle' | 'warning' | 'active' | 'ready' | 'done';
+
+export interface HandoffQueueOperatorSummary {
+  status: HandoffQueueOperatorSummaryStatus;
+  label: string;
+  detail: string;
+  targetGroup: HandoffQueueGroup;
+  actionLabel: string;
+}
+
 export type HandoffReviewChecklistState = 'ok' | 'missing' | 'warning' | 'unknown';
 export type HandoffReviewChecklistId =
   | 'summary'
@@ -716,6 +726,85 @@ export function buildHandoffQueueSummary(
     if (group === 'done') summary.done += 1;
   }
   return summary;
+}
+
+export function buildHandoffQueueOperatorSummary(
+  items: readonly Pick<HandoffArtifactLibraryItem, 'dispatchPackage' | 'completion' | 'review'>[],
+): HandoffQueueOperatorSummary {
+  const summary = buildHandoffQueueSummary(items);
+  if (summary.totalPackages === 0) {
+    return {
+      status: 'idle',
+      label: 'No package-backed handoffs yet',
+      detail: 'Create work packages to start queue supervision.',
+      targetGroup: 'all',
+      actionLabel: '',
+    };
+  }
+  if (summary.blocked > 0) {
+    return {
+      status: 'warning',
+      label:
+        summary.blocked === 1
+          ? '1 blocked package needs attention'
+          : `${summary.blocked} blocked packages need attention`,
+      detail: 'Open blockers before dispatching more work.',
+      targetGroup: 'blocked',
+      actionLabel: 'Show blocked',
+    };
+  }
+  if (summary.reportReady > 0) {
+    return {
+      status: 'ready',
+      label:
+        summary.reportReady === 1
+          ? '1 report ready for review'
+          : `${summary.reportReady} reports ready for review`,
+      detail: 'Inspect executor reports before closing handoffs.',
+      targetGroup: 'report_ready',
+      actionLabel: 'Show report ready',
+    };
+  }
+  if (summary.activeWaiting > 0) {
+    return {
+      status: 'active',
+      label:
+        summary.activeWaiting === 1
+          ? '1 package active or waiting'
+          : `${summary.activeWaiting} packages active or waiting`,
+      detail: 'Check executor state before dispatching more work.',
+      targetGroup: 'active_waiting',
+      actionLabel: 'Show active / waiting',
+    };
+  }
+  if (summary.needsDispatch > 0) {
+    return {
+      status: 'idle',
+      label:
+        summary.needsDispatch === 1
+          ? '1 package needs dispatch'
+          : `${summary.needsDispatch} packages need dispatch`,
+      detail: 'Launch or link an executor to move the queue forward.',
+      targetGroup: 'needs_dispatch',
+      actionLabel: 'Show needs dispatch',
+    };
+  }
+  if (summary.done > 0) {
+    return {
+      status: 'done',
+      label: summary.done === 1 ? '1 package done' : `${summary.done} packages done`,
+      detail: 'No active handoff queue attention needed.',
+      targetGroup: 'done',
+      actionLabel: 'Show done',
+    };
+  }
+  return {
+    status: 'idle',
+    label: `${summary.totalPackages} packages queued`,
+    detail: 'Pick a queue group to inspect package state.',
+    targetGroup: 'all',
+    actionLabel: 'Show all',
+  };
 }
 
 export function filterHandoffQueueItems(

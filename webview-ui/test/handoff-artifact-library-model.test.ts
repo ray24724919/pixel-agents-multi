@@ -8,6 +8,7 @@ import {
   buildHandoffExecutionQueueSummary,
   buildHandoffManualMergeChecklist,
   buildHandoffMergeReadiness,
+  buildHandoffQueueOperatorSummary,
   buildHandoffQueueSummary,
   buildHandoffReviewChecklist,
   buildHandoffReviewRecommendedAction,
@@ -1315,3 +1316,159 @@ test('handoff queue summary and filters group package supervision states', () =>
     'docs/agent-handoffs/report.md',
   );
 });
+
+test('handoff queue operator summary prioritizes blocked packages over other groups', () => {
+  const summary = buildHandoffQueueOperatorSummary([
+    handoffQueuePackageItem('docs/agent-handoffs/report.md', 'dispatched', undefined, {
+      reportExists: true,
+      reportRelativePath: 'docs/roadmap/supervision/reports/report-executor-report.md',
+      branchName: 'product/handoff-report',
+      checkedAt: '2026-06-04T07:04:00.000Z',
+      statusLabel: 'Report ready / branch exists / not merged',
+    }),
+    handoffQueuePackageItem('docs/agent-handoffs/active.md', 'dispatched', 'waiting'),
+    handoffQueuePackageItem('docs/agent-handoffs/ready.md', 'ready'),
+    handoffQueuePackageItem('docs/agent-handoffs/blocked.md', 'blocked'),
+  ]);
+
+  assert.equal(summary.status, 'warning');
+  assert.equal(summary.targetGroup, 'blocked');
+  assert.equal(summary.actionLabel, 'Show blocked');
+  assert.equal(summary.label, '1 blocked package needs attention');
+  assert.match(summary.detail, /Open blockers/);
+});
+
+test('handoff queue operator summary prioritizes report ready when there are no blockers', () => {
+  const summary = buildHandoffQueueOperatorSummary([
+    handoffQueuePackageItem('docs/agent-handoffs/active.md', 'dispatched', 'active'),
+    handoffQueuePackageItem('docs/agent-handoffs/report-a.md', 'dispatched', undefined, {
+      reportExists: true,
+      reportRelativePath: 'docs/roadmap/supervision/reports/report-a-executor-report.md',
+      branchName: 'product/handoff-report-a',
+      checkedAt: '2026-06-04T07:04:00.000Z',
+      statusLabel: 'Report ready / branch exists / not merged',
+    }),
+    handoffQueuePackageItem('docs/agent-handoffs/report-b.md', 'completed', undefined, undefined, {
+      status: 'needs_review',
+      statusLabel: 'Needs review',
+      nextActionLabel: 'Open report',
+      warnings: [],
+      checkedAt: '2026-06-04T07:05:00.000Z',
+    }),
+  ]);
+
+  assert.equal(summary.status, 'ready');
+  assert.equal(summary.targetGroup, 'report_ready');
+  assert.equal(summary.actionLabel, 'Show report ready');
+  assert.equal(summary.label, '2 reports ready for review');
+});
+
+test('handoff queue operator summary prioritizes active waiting when no reports are ready', () => {
+  const summary = buildHandoffQueueOperatorSummary([
+    handoffQueuePackageItem('docs/agent-handoffs/waiting.md', 'dispatched', 'waiting'),
+    handoffQueuePackageItem('docs/agent-handoffs/linked.md', 'dispatched', 'linked'),
+    handoffQueuePackageItem('docs/agent-handoffs/ready.md', 'ready'),
+  ]);
+
+  assert.equal(summary.status, 'active');
+  assert.equal(summary.targetGroup, 'active_waiting');
+  assert.equal(summary.actionLabel, 'Show active / waiting');
+  assert.equal(summary.label, '2 packages active or waiting');
+});
+
+test('handoff queue operator summary points to needs dispatch for draft and ready packages', () => {
+  const summary = buildHandoffQueueOperatorSummary([
+    handoffQueuePackageItem('docs/agent-handoffs/draft.md', 'draft'),
+    handoffQueuePackageItem('docs/agent-handoffs/ready.md', 'ready'),
+  ]);
+
+  assert.equal(summary.status, 'idle');
+  assert.equal(summary.targetGroup, 'needs_dispatch');
+  assert.equal(summary.actionLabel, 'Show needs dispatch');
+  assert.equal(summary.label, '2 packages need dispatch');
+  assert.match(summary.detail, /Launch or link an executor/);
+});
+
+test('handoff queue operator summary handles done and empty states usefully', () => {
+  const doneSummary = buildHandoffQueueOperatorSummary([
+    handoffQueuePackageItem('docs/agent-handoffs/done-a.md', 'completed'),
+    handoffQueuePackageItem('docs/agent-handoffs/done-b.md', 'dispatched', 'completed'),
+  ]);
+  const emptySummary = buildHandoffQueueOperatorSummary([{}]);
+
+  assert.equal(doneSummary.status, 'done');
+  assert.equal(doneSummary.targetGroup, 'done');
+  assert.equal(doneSummary.actionLabel, 'Show done');
+  assert.equal(doneSummary.label, '2 packages done');
+  assert.equal(emptySummary.status, 'idle');
+  assert.equal(emptySummary.targetGroup, 'all');
+  assert.equal(emptySummary.actionLabel, '');
+  assert.match(emptySummary.label, /No package-backed handoffs/);
+});
+
+function handoffQueuePackageItem(
+  relativePath: string,
+  dispatchStatus: 'draft' | 'ready' | 'dispatched' | 'completed' | 'blocked',
+  executionStatus?: 'linked' | 'active' | 'waiting' | 'completed' | 'blocked' | 'unknown',
+  completion?: {
+    reportExists: boolean;
+    reportRelativePath: string;
+    branchName: string;
+    checkedAt: string;
+    statusLabel: string;
+  },
+  review?: {
+    status:
+      | 'not_ready'
+      | 'active'
+      | 'blocked'
+      | 'needs_report'
+      | 'needs_review'
+      | 'ready_to_merge'
+      | 'merged'
+      | 'unknown';
+    statusLabel: string;
+    nextActionLabel: string;
+    warnings: string[];
+    checkedAt: string;
+  },
+) {
+  const filename = relativePath.split('/').pop() ?? 'handoff.md';
+  return {
+    relativePath,
+    filename,
+    modifiedAt: 1_780_000_000_000,
+    sizeBytes: 512,
+    displayTitle: filename,
+    displayDetail: 'Queue package fixture',
+    statusLabel: 'Draft',
+    ...(completion ? { completion } : {}),
+    ...(review ? { review } : {}),
+    dispatchPackage: {
+      packageRelativePath: relativePath.replace(
+        'docs/agent-handoffs/',
+        'docs/roadmap/supervision/work-packages/handoffs/',
+      ),
+      branchName: `product/handoff-${filename.replace(/\.md$/, '')}`,
+      reportRelativePath: `docs/roadmap/supervision/reports/${filename.replace(
+        /\.md$/,
+        '-executor-report.md',
+      )}`,
+      status: dispatchStatus,
+      createdAt: '2026-06-04T07:00:00.000Z',
+      updatedAt: '2026-06-04T07:01:00.000Z',
+      statusLabel: dispatchStatus,
+      ...(executionStatus
+        ? {
+            execution: {
+              agentId: 12,
+              linkedAt: '2026-06-04T07:00:00.000Z',
+              updatedAt: '2026-06-04T07:01:00.000Z',
+              status: executionStatus,
+              statusLabel: executionStatus,
+            },
+          }
+        : {}),
+    },
+  };
+}
