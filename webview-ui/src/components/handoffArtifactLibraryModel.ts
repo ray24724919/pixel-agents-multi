@@ -277,6 +277,36 @@ export interface HandoffQueueSummary {
   done: number;
 }
 
+export type HandoffReviewChecklistState = 'ok' | 'missing' | 'warning' | 'unknown';
+export type HandoffReviewChecklistId =
+  | 'summary'
+  | 'files_changed'
+  | 'validation'
+  | 'warnings'
+  | 'branch';
+
+export interface HandoffReviewChecklistItem {
+  id: HandoffReviewChecklistId;
+  label: string;
+  state: HandoffReviewChecklistState;
+  detail: string;
+}
+
+export type HandoffReviewRecommendedActionKind =
+  | 'create_work_package'
+  | 'refresh_completion'
+  | 'open_report'
+  | 'mark_reviewed'
+  | 'wait_for_report'
+  | 'none';
+
+export interface HandoffReviewRecommendedAction {
+  kind: HandoffReviewRecommendedActionKind;
+  label: string;
+  disabled: boolean;
+  detail: string;
+}
+
 export const initialHandoffArtifactLibraryState: HandoffArtifactLibraryState = {
   items: [],
   unavailable: false,
@@ -673,6 +703,122 @@ export function handoffQueueGroupForItem(
   return 'needs_dispatch';
 }
 
+export function buildHandoffReviewChecklist(
+  item: Pick<HandoffArtifactLibraryItem, 'completion' | 'review'>,
+): HandoffReviewChecklistItem[] {
+  const review = item.review;
+  const report = review?.report;
+  const warnings = review?.warnings ?? [];
+  return [
+    booleanReviewCue('summary', 'Summary', report?.hasSummary),
+    booleanReviewCue('files_changed', 'Files', report?.hasFilesChanged),
+    booleanReviewCue('validation', 'Validation', report?.hasValidation),
+    {
+      id: 'warnings',
+      label: 'Warnings',
+      state: review ? (warnings.length > 0 ? 'warning' : 'ok') : 'unknown',
+      detail: review
+        ? `${warnings.length} ${pluralize(warnings.length, 'warning')}`
+        : 'not checked',
+    },
+    branchReviewCue(review?.git, item.completion),
+  ];
+}
+
+export function buildHandoffReviewRecommendedAction(
+  item: Pick<
+    HandoffArtifactLibraryItem,
+    | 'artifactId'
+    | 'completion'
+    | 'dispatchPackage'
+    | 'metadataRelativePath'
+    | 'relativePath'
+    | 'review'
+    | 'status'
+  >,
+): HandoffReviewRecommendedAction {
+  if (!item.dispatchPackage) {
+    return {
+      kind: 'create_work_package',
+      label: 'Create work package',
+      disabled: !canCreateHandoffWorkPackage(item),
+      detail: 'Package-backed handoffs can be reviewed after dispatch.',
+    };
+  }
+  const review = item.review;
+  if (!review) {
+    return {
+      kind: 'refresh_completion',
+      label: 'Refresh completion',
+      disabled: !canUseHandoffWorkPackage(item),
+      detail: 'Scan the executor report and branch status.',
+    };
+  }
+  if (review.status === 'merged') {
+    const reviewedAction = handoffArtifactStatusActions(item).find(
+      (action) => action.nextStatus === 'reviewed',
+    );
+    return {
+      kind: 'mark_reviewed',
+      label: 'Mark reviewed',
+      disabled: reviewedAction?.disabled ?? true,
+      detail: 'Branch is merged; close the local handoff review.',
+    };
+  }
+  if (review.status === 'ready_to_merge') {
+    return {
+      kind: 'open_report',
+      label: 'Inspect branch / open report',
+      disabled: item.completion?.reportExists !== true,
+      detail: 'Report is ready; inspect the branch manually before merge.',
+    };
+  }
+  if (review.status === 'needs_review') {
+    return {
+      kind: 'open_report',
+      label: 'Open report',
+      disabled: item.completion?.reportExists !== true,
+      detail: 'Review executor notes, validation, and changed-file cues.',
+    };
+  }
+  if (review.status === 'blocked') {
+    const hasReport = item.completion?.reportExists === true;
+    return {
+      kind: hasReport ? 'open_report' : 'wait_for_report',
+      label: hasReport ? 'Open report' : 'Report missing',
+      disabled: !hasReport,
+      detail: hasReport
+        ? 'Read the blocker before marking stale or re-dispatching.'
+        : 'No executor report is available yet.',
+    };
+  }
+  if (review.status === 'needs_report') {
+    return {
+      kind: 'wait_for_report',
+      label: 'Report missing',
+      disabled: true,
+      detail: 'Refresh after the executor writes its report.',
+    };
+  }
+  if (review.status === 'active' || review.status === 'unknown') {
+    return {
+      kind: 'refresh_completion',
+      label: 'Refresh completion',
+      disabled: !canUseHandoffWorkPackage(item),
+      detail:
+        review.status === 'active'
+          ? 'Executor appears active; refresh when work may be done.'
+          : 'Completion state is unclear; refresh the local scan.',
+    };
+  }
+  return {
+    kind: 'none',
+    label: review.nextActionLabel,
+    disabled: true,
+    detail: 'No review action is available yet.',
+  };
+}
+
 export function handoffExecutionActionStatusLabel(
   status: HandoffExecutionActionStatus,
   agentLabel: string,
@@ -774,6 +920,52 @@ function handoffExecutionStatusActionLabel(status: HandoffExecutionStatus): stri
   if (status === 'blocked') return 'Mark blocked';
   if (status === 'unknown') return 'Reset unknown';
   return 'Mark linked';
+}
+
+function booleanReviewCue(
+  id: Exclude<HandoffReviewChecklistId, 'warnings' | 'branch'>,
+  label: string,
+  value: boolean | undefined,
+): HandoffReviewChecklistItem {
+  if (value === true) {
+    return { id, label, state: 'ok', detail: 'present' };
+  }
+  if (value === false) {
+    return { id, label, state: 'missing', detail: 'missing' };
+  }
+  return { id, label, state: 'unknown', detail: 'not checked' };
+}
+
+function branchReviewCue(
+  git: HandoffCompletionReviewGit | undefined,
+  completion: HandoffCompletionStatus | undefined,
+): HandoffReviewChecklistItem {
+  const branchExists = git?.branchExists ?? completion?.branchExists;
+  const branchMergedToMain = git?.branchMergedToMain ?? completion?.branchMergedToMain;
+  if (branchExists === false) {
+    return { id: 'branch', label: 'Branch', state: 'missing', detail: 'missing' };
+  }
+  if (branchMergedToMain === true) {
+    return { id: 'branch', label: 'Branch', state: 'ok', detail: 'merged' };
+  }
+  if (branchMergedToMain === false) {
+    const ahead = git?.aheadCount !== undefined ? ` / ahead ${git.aheadCount}` : '';
+    const behind = git?.behindCount !== undefined ? ` / behind ${git.behindCount}` : '';
+    return {
+      id: 'branch',
+      label: 'Branch',
+      state: 'warning',
+      detail: `not merged${ahead}${behind}`,
+    };
+  }
+  if (branchExists === true) {
+    return { id: 'branch', label: 'Branch', state: 'unknown', detail: 'merge unknown' };
+  }
+  return { id: 'branch', label: 'Branch', state: 'unknown', detail: 'unknown' };
+}
+
+function pluralize(count: number, noun: string): string {
+  return count === 1 ? noun : `${noun}s`;
 }
 
 function isLocalHandoffArtifactStatus(value: unknown): value is HandoffArtifactLocalStatus {

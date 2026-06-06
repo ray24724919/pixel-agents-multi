@@ -52,6 +52,8 @@ import {
   buildCreateHandoffWorkPackagePromptMessage,
   buildHandoffExecutionQueueSummary,
   buildHandoffQueueSummary,
+  buildHandoffReviewChecklist,
+  buildHandoffReviewRecommendedAction,
   buildLaunchHandoffExecutorMessage,
   buildLinkHandoffExecutionAgentMessage,
   buildOpenHandoffArtifactMessage,
@@ -81,6 +83,7 @@ import {
   handoffExecutionStatusActions,
   type HandoffQueueGroup,
   handoffQueueGroupLabel,
+  type HandoffReviewChecklistState,
   type HandoffWorkPackageStatus,
   handoffWorkPackageStatusLabel,
   initialHandoffArtifactLibraryState,
@@ -2937,7 +2940,7 @@ function HandoffArtifactLibraryPanel({
                       {item.statusLabel}
                     </span>
                     {item.review && (
-                      <span className="shrink-0 border border-border bg-bg px-2 py-1 text-xs uppercase tracking-wide text-text-muted">
+                      <span className="shrink-0 border border-accent bg-bg px-2 py-1 text-xs uppercase tracking-wide text-accent-bright">
                         {item.review.statusLabel}
                       </span>
                     )}
@@ -2945,16 +2948,8 @@ function HandoffArtifactLibraryPanel({
                   <div className="mt-1 break-words text-xs text-text-muted">
                     {item.displayDetail}
                   </div>
-                  {item.review && (
-                    <div className="mt-1 break-words text-xs text-text-muted">
-                      Review next: {item.review.nextActionLabel}
-                      {handoffReviewSignalLabel(item)}
-                    </div>
-                  )}
-                  {item.review?.warnings[0] && (
-                    <div className="mt-1 break-words text-xs text-status-permission">
-                      Warning: {item.review.warnings[0]}
-                    </div>
+                  {(item.dispatchPackage || item.completion || item.review) && (
+                    <HandoffReviewCues item={item} />
                   )}
                   <div className="mt-1 truncate font-mono text-xs text-text-muted">
                     {item.relativePath}
@@ -3222,21 +3217,12 @@ function HandoffArtifactLibraryPanel({
                         {item.dispatchPackage?.execution?.statusLabel ?? 'No agent'}
                       </span>
                       {item.review && (
-                        <span className="border border-border bg-bg px-2 py-1 text-xs uppercase tracking-wide text-text-muted">
+                        <span className="border border-accent bg-bg px-2 py-1 text-xs uppercase tracking-wide text-accent-bright">
                           {item.review.statusLabel}
                         </span>
                       )}
                     </div>
-                    <div className="mt-1 break-words text-xs text-text-muted">
-                      {item.review
-                        ? `Next: ${item.review.nextActionLabel}${handoffReviewSignalLabel(item)}`
-                        : (item.completion?.statusLabel ?? 'Completion not checked')}
-                    </div>
-                    {item.review?.warnings[0] && (
-                      <div className="mt-1 break-words text-xs text-status-permission">
-                        Warning: {item.review.warnings[0]}
-                      </div>
-                    )}
+                    <HandoffReviewCues item={item} />
                     {item.completion && (
                       <div className="mt-1 break-words text-xs text-text-muted">
                         {item.completion.statusLabel}
@@ -3762,15 +3748,44 @@ function handoffExecutionDetailLabel(
   return [packageLabel, `Execution ${linkedLabel}`, liveHint].filter(Boolean).join(' / ');
 }
 
-function handoffReviewSignalLabel(item: HandoffArtifactLibraryItem): string {
-  const review = item.review;
-  if (!review) return '';
-  const validation = review.report?.validationLines[0];
-  if (validation) return ` / Validation: ${validation}`;
-  const changedFile = review.report?.changedFileLines[0];
-  if (changedFile) return ` / Files: ${changedFile}`;
-  if (review.git?.aheadCount !== undefined) return ` / Branch ahead ${review.git.aheadCount}`;
-  return '';
+function HandoffReviewCues({ item }: { item: HandoffArtifactLibraryItem }) {
+  const recommendation = buildHandoffReviewRecommendedAction(item);
+  const checklist = buildHandoffReviewChecklist(item);
+  const firstWarning = item.review?.warnings[0];
+  return (
+    <div className="mt-2 grid gap-2">
+      <div className="break-words text-xs text-text-muted">
+        Review:{' '}
+        <span className={recommendation.disabled ? 'text-text-muted' : 'text-accent-bright'}>
+          {recommendation.label}
+        </span>
+        <span> / {recommendation.detail}</span>
+      </div>
+      <div className="flex min-w-0 flex-wrap gap-1">
+        {checklist.map((cue) => (
+          <span
+            key={cue.id}
+            className={`shrink-0 border bg-bg px-2 py-1 text-xs uppercase tracking-wide ${handoffReviewChecklistClass(
+              cue.state,
+            )}`}
+            title={`${cue.label}: ${cue.detail}`}
+          >
+            {cue.label}: {cue.detail}
+          </span>
+        ))}
+      </div>
+      {firstWarning && (
+        <div className="break-words text-xs text-status-permission">Warning: {firstWarning}</div>
+      )}
+    </div>
+  );
+}
+
+function handoffReviewChecklistClass(state: HandoffReviewChecklistState): string {
+  if (state === 'ok') return 'border-status-waiting text-status-waiting';
+  if (state === 'missing') return 'border-status-error text-status-error';
+  if (state === 'warning') return 'border-status-permission text-status-permission';
+  return 'border-border text-text-muted';
 }
 
 function usageHistoryCopyLabel(status: 'idle' | 'copied' | 'failed'): string {
