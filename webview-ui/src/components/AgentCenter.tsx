@@ -56,6 +56,7 @@ import {
   buildHandoffQueueSummary,
   buildHandoffReviewChecklist,
   buildHandoffReviewRecommendedAction,
+  buildHandoffStatusSelectModel,
   buildLaunchHandoffExecutorMessage,
   buildLinkHandoffExecutionAgentMessage,
   buildOpenHandoffArtifactMessage,
@@ -3455,18 +3456,14 @@ function HandoffStatusSelect<TStatus extends string>({
   ariaLabel: string;
   onChange: (nextStatus: TStatus) => void;
 }) {
-  const hasCurrentOption = actions.some((action) => action.nextStatus === value);
-  const options = hasCurrentOption
-    ? actions
-    : [{ nextStatus: value, label: selectedLabel, disabled: true }, ...actions];
-  const selectDisabled = disabled || actions.every((action) => action.disabled);
+  const model = buildHandoffStatusSelectModel(value, selectedLabel, actions, disabled);
   return (
     <label className="grid min-w-[150px] gap-1 text-[10px] uppercase tracking-wide text-text-muted">
       {label}
       <select
         className="h-8 w-full border border-border bg-bg px-2 text-xs normal-case tracking-normal text-text outline-none focus:border-accent disabled:bg-btn-bg disabled:text-text-muted"
         value={value}
-        disabled={selectDisabled}
+        disabled={model.disabled}
         aria-label={ariaLabel}
         onChange={(event) => {
           const nextStatus = event.currentTarget.value as TStatus;
@@ -3475,13 +3472,9 @@ function HandoffStatusSelect<TStatus extends string>({
           onChange(nextStatus);
         }}
       >
-        {options.map((action) => (
-          <option
-            key={action.nextStatus}
-            value={action.nextStatus}
-            disabled={disabled || action.disabled}
-          >
-            {action.nextStatus === value ? `Current: ${selectedLabel}` : action.label}
+        {model.options.map((action) => (
+          <option key={action.value} value={action.value} disabled={action.disabled}>
+            {action.label}
           </option>
         ))}
       </select>

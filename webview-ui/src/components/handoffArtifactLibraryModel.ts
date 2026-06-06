@@ -246,6 +246,24 @@ export interface HandoffExecutionStatusAction {
   disabled: boolean;
 }
 
+export interface HandoffStatusSelectAction<TStatus extends string> {
+  nextStatus: TStatus;
+  label: string;
+  disabled: boolean;
+}
+
+export interface HandoffStatusSelectOption<TStatus extends string> {
+  value: TStatus;
+  label: string;
+  disabled: boolean;
+  current: boolean;
+}
+
+export interface HandoffStatusSelectModel<TStatus extends string> {
+  options: HandoffStatusSelectOption<TStatus>[];
+  disabled: boolean;
+}
+
 export type HandoffExecutionActionStatus =
   | 'idle'
   | 'linking'
@@ -537,6 +555,27 @@ export function handoffExecutionStatusActions(
     label: handoffExecutionStatusActionLabel(nextStatus),
     disabled: !canUpdate || item.dispatchPackage?.execution?.status === nextStatus,
   }));
+}
+
+export function buildHandoffStatusSelectModel<TStatus extends string>(
+  value: TStatus,
+  selectedLabel: string,
+  actions: readonly HandoffStatusSelectAction<TStatus>[],
+  disabled = false,
+): HandoffStatusSelectModel<TStatus> {
+  const hasCurrentOption = actions.some((action) => action.nextStatus === value);
+  const optionActions = hasCurrentOption
+    ? actions
+    : [{ nextStatus: value, label: selectedLabel, disabled: true }, ...actions];
+  return {
+    disabled: disabled || actions.every((action) => action.disabled),
+    options: optionActions.map((action) => ({
+      value: action.nextStatus,
+      label: action.nextStatus === value ? `Current: ${selectedLabel}` : action.label,
+      disabled: disabled || action.disabled,
+      current: action.nextStatus === value,
+    })),
+  };
 }
 
 export function buildUpdateHandoffExecutionStatusMessage(

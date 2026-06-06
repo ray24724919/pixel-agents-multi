@@ -11,6 +11,7 @@ import {
   buildHandoffQueueSummary,
   buildHandoffReviewChecklist,
   buildHandoffReviewRecommendedAction,
+  buildHandoffStatusSelectModel,
   buildLaunchHandoffExecutorMessage,
   buildLinkHandoffExecutionAgentMessage,
   buildOpenHandoffArtifactMessage,
@@ -563,6 +564,71 @@ test('handoff execution status actions and queue summary reflect package executi
     ),
     /Codex executor #12/,
   );
+});
+
+test('handoff status select model marks an existing current action option', () => {
+  const model = buildHandoffStatusSelectModel('waiting', 'Waiting', [
+    { nextStatus: 'active', label: 'Mark active', disabled: false },
+    { nextStatus: 'waiting', label: 'Mark waiting', disabled: true },
+  ]);
+
+  assert.equal(model.disabled, false);
+  assert.deepEqual(model.options, [
+    { value: 'active', label: 'Mark active', disabled: false, current: false },
+    { value: 'waiting', label: 'Current: Waiting', disabled: true, current: true },
+  ]);
+});
+
+test('handoff status select model keeps a missing current state visible', () => {
+  const model = buildHandoffStatusSelectModel<'linked' | 'active' | 'waiting'>('linked', 'Linked', [
+    { nextStatus: 'active', label: 'Mark active', disabled: false },
+    { nextStatus: 'waiting', label: 'Mark waiting', disabled: false },
+  ]);
+
+  assert.equal(model.disabled, false);
+  assert.deepEqual(model.options, [
+    { value: 'linked', label: 'Current: Linked', disabled: true, current: true },
+    { value: 'active', label: 'Mark active', disabled: false, current: false },
+    { value: 'waiting', label: 'Mark waiting', disabled: false, current: false },
+  ]);
+});
+
+test('handoff status select model disables everything while globally busy', () => {
+  const model = buildHandoffStatusSelectModel(
+    'active',
+    'Active',
+    [
+      { nextStatus: 'active', label: 'Mark active', disabled: true },
+      { nextStatus: 'waiting', label: 'Mark waiting', disabled: false },
+    ],
+    true,
+  );
+
+  assert.equal(model.disabled, true);
+  assert.deepEqual(
+    model.options.map((option) => option.disabled),
+    [true, true],
+  );
+});
+
+test('handoff status select model disables the select when no transition is available', () => {
+  const model = buildHandoffStatusSelectModel('waiting', 'Waiting', [
+    { nextStatus: 'active', label: 'Mark active', disabled: true },
+    { nextStatus: 'waiting', label: 'Mark waiting', disabled: true },
+  ]);
+
+  assert.equal(model.disabled, true);
+});
+
+test('handoff status select model allows transitions from a non-transition current state', () => {
+  const model = buildHandoffStatusSelectModel<'linked' | 'active' | 'waiting'>('linked', 'Linked', [
+    { nextStatus: 'active', label: 'Mark active', disabled: false },
+    { nextStatus: 'waiting', label: 'Mark waiting', disabled: true },
+  ]);
+
+  assert.equal(model.disabled, false);
+  assert.equal(model.options[0]?.value, 'linked');
+  assert.equal(model.options[1]?.disabled, false);
 });
 
 test('handoff work package feedback labels include generated branch and report names', () => {
