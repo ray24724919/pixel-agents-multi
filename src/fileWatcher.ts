@@ -40,6 +40,7 @@ import {
 } from '../server/src/constants.js';
 import type { TeamProvider } from '../server/src/teamProvider.js';
 import { removeAgent } from './agentManager.js';
+import { readClaudeCodeSessionMetadata } from './claudeCodeSessionMetadata.js';
 import { TERMINAL_NAME_PREFIX } from './constants.js';
 import { getExtensionConfigValue } from './settings.js';
 import { cancelPermissionTimer, cancelWaitingTimer, clearAgentActivity } from './timerManager.js';
@@ -153,7 +154,16 @@ interface ClaudeHeaderTitle {
   resolved: boolean;
 }
 
-function extractClaudeTitleFromJsonlHeader(jsonlFile: string): ClaudeHeaderTitle | undefined {
+function extractClaudeTitleFromJsonlHeader(
+  jsonlFile: string,
+  cwd?: string,
+): ClaudeHeaderTitle | undefined {
+  const claudeCodeMetadataTitle = readClaudeCodeSessionMetadata(
+    path.basename(jsonlFile, '.jsonl'),
+    cwd,
+  )?.title;
+  if (claudeCodeMetadataTitle) return { title: claudeCodeMetadataTitle, resolved: true };
+
   let fallbackTitle: string | undefined;
   let sawClaudeDesktopCode = false;
   for (const record of readClaudeJsonlHeaderRecords(jsonlFile).slice(0, 50)) {
@@ -583,6 +593,8 @@ function adoptTerminalForFile(
     folderNameFromProjectDir(path.basename(projectDir)),
   );
   const effectiveProjectDir = metadata.cwd ?? projectDir;
+  const agentName = metadata.threadName;
+  const claudeTitleResolved = metadata.threadNameResolved;
   // Skip to end of file -- adopted terminals show live activity only, not replay history
   let fileOffset = 0;
   try {
@@ -618,7 +630,8 @@ function adoptTerminalForFile(
     providerId: 'claude',
     folderName: metadata.projectName,
     projectName: metadata.projectName,
-    agentName: metadata.threadName,
+    agentName,
+    claudeTitleResolved,
   };
 
   agents.set(id, agent);
@@ -633,7 +646,7 @@ function adoptTerminalForFile(
     type: 'agentCreated',
     id,
     folderName: metadata.projectName,
-    agentName: metadata.threadName,
+    agentName,
     providerId: 'claude',
     projectDir: effectiveProjectDir,
     transcriptPath: jsonlFile,
@@ -1087,8 +1100,10 @@ function adoptExternalSession(
   const metadata = readClaudeSessionMetadata(jsonlFile, projectDir, folderName);
   const effectiveProjectDir = metadataOverride?.projectDir ?? metadata.cwd ?? projectDir;
   const metadataTitle =
-    metadata.threadName && metadata.threadName !== 'Claude' ? metadata.threadName : undefined;
-  const headerTitle = extractClaudeTitleFromJsonlHeader(jsonlFile);
+    metadata.threadNameResolved && metadata.threadName !== 'Claude'
+      ? metadata.threadName
+      : undefined;
+  const headerTitle = extractClaudeTitleFromJsonlHeader(jsonlFile, effectiveProjectDir);
   const extractedTitle = metadataOverride?.agentName ?? metadataTitle ?? headerTitle?.title;
   const agentName = extractedTitle ?? 'Claude';
   const claudeTitleResolved =
@@ -1369,16 +1384,32 @@ export function syncClaudeAgentMetadata(
       agent.projectDir,
       agent.projectName ?? agent.folderName,
     );
+    const hasUsableMetadataName = metadata.threadNameResolved || metadata.threadName !== 'Claude';
+    const nextAgentName =
+      hasUsableMetadataName || !agent.agentName ? metadata.threadName : agent.agentName;
+    const nextClaudeTitleResolved = metadata.threadNameResolved
+      ? true
+      : hasUsableMetadataName
+        ? false
+        : agent.claudeTitleResolved;
+    const changed =
+      agent.projectName !== metadata.projectName ||
+      agent.folderName !== metadata.projectName ||
+      agent.agentName !== nextAgentName ||
+      agent.claudeTitleResolved !== nextClaudeTitleResolved;
     agent.projectName = metadata.projectName;
     agent.folderName = metadata.projectName;
-    agent.agentName = metadata.threadName;
-    webview?.postMessage({
-      type: 'agentMetadata',
-      id: agent.id,
-      folderName: metadata.projectName,
-      agentName: metadata.threadName,
-      providerId: 'claude',
-    });
+    agent.agentName = nextAgentName;
+    agent.claudeTitleResolved = nextClaudeTitleResolved;
+    if (changed) {
+      webview?.postMessage({
+        type: 'agentMetadata',
+        id: agent.id,
+        folderName: metadata.projectName,
+        agentName: nextAgentName,
+        providerId: 'claude',
+      });
+    }
   }
 }
 
@@ -1517,6 +1548,7 @@ interface ClaudeSessionMetadata {
   cwd?: string;
   projectName?: string;
   threadName: string;
+  threadNameResolved: boolean;
 }
 
 export function readClaudeSessionMetadata(
@@ -1525,8 +1557,10 @@ export function readClaudeSessionMetadata(
   fallbackProjectName?: string,
 ): ClaudeSessionMetadata {
   const fallbackName = fallbackProjectName ?? folderNameFromProjectDir(path.basename(projectDir));
+  const sessionId = path.basename(jsonlFile, '.jsonl');
   let cwd: string | undefined;
   let explicitTitle: string | undefined;
+  let sawClaudeDesktopCode = false;
 
   try {
     const fd = fs.openSync(jsonlFile, 'r');
@@ -1545,7 +1579,8 @@ export function readClaudeSessionMetadata(
 
         if (!cwd && typeof record.cwd === 'string') cwd = record.cwd;
         if (!explicitTitle) explicitTitle = extractClaudeExplicitTitleFromRecord(record);
-        if (cwd && explicitTitle) break;
+        if (!sawClaudeDesktopCode) sawClaudeDesktopCode = isClaudeDesktopCodeRecord(record);
+        if (cwd && explicitTitle && sawClaudeDesktopCode) break;
       }
     } finally {
       fs.closeSync(fd);
@@ -1554,10 +1589,20 @@ export function readClaudeSessionMetadata(
     /* best-effort metadata only */
   }
 
+  const claudeCodeMetadataTitle = readClaudeCodeSessionMetadata(
+    sessionId,
+    cwd ?? projectDir,
+  )?.title;
+  const threadName =
+    claudeCodeMetadataTitle ??
+    explicitTitle ??
+    (sawClaudeDesktopCode ? CLAUDE_CODE_AGENT_NAME : 'Claude');
+
   return {
     cwd,
     projectName: cwd ? path.basename(cwd) : fallbackName,
-    threadName: explicitTitle ?? 'Claude',
+    threadName,
+    threadNameResolved: Boolean(claudeCodeMetadataTitle ?? explicitTitle),
   };
 }
 

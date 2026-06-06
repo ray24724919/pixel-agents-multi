@@ -18,6 +18,7 @@ import {
   formatCodexToolStatus,
   parseCodexTranscriptLine,
 } from '../server/src/providers/file/codex/codex.js';
+import { readClaudeCodeSessionMetadata } from './claudeCodeSessionMetadata.js';
 import {
   postCompleted,
   postError,
@@ -165,8 +166,11 @@ export function processTranscriptLine(
   }
   try {
     const record = JSON.parse(line);
+    const claudeCodeMetadataTitle = extractClaudeCodeMetadataTitleFromRecord(agent, record);
     const explicitTitle = extractClaudeExplicitTitleFromRecord(record);
-    if (explicitTitle && shouldApplyClaudeExplicitTitle(agent, explicitTitle)) {
+    if (claudeCodeMetadataTitle && shouldApplyClaudeExplicitTitle(agent, claudeCodeMetadataTitle)) {
+      updateClaudeAgentTitle(agentId, agent, claudeCodeMetadataTitle, true, webview);
+    } else if (explicitTitle && shouldApplyClaudeExplicitTitle(agent, explicitTitle)) {
       updateClaudeAgentTitle(agentId, agent, explicitTitle, true, webview);
     } else if (isPersistedClaudeDesktopPromptTitle(agent, record)) {
       updateClaudeAgentTitle(agentId, agent, CLAUDE_CODE_AGENT_NAME, false, webview);
@@ -586,6 +590,20 @@ function hasProtectedClaudeDisplayName(agent: AgentState): boolean {
     agent.leadAgentId !== undefined ||
     agent.sessionId.startsWith('local_cowork_'),
   );
+}
+
+function extractClaudeCodeMetadataTitleFromRecord(
+  agent: AgentState,
+  record: unknown,
+): string | undefined {
+  if (!isClaudeDesktopCodeRecord(record)) return undefined;
+  const objectRecord = asRecord(record);
+  const sessionId =
+    stringValue(objectRecord?.sessionId) ??
+    stringValue(objectRecord?.session_id) ??
+    agent.sessionId;
+  const cwd = stringValue(objectRecord?.cwd) ?? agent.projectDir;
+  return readClaudeCodeSessionMetadata(sessionId, cwd)?.title;
 }
 
 export function isClaudeDesktopCodeRecord(record: unknown): boolean {

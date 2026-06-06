@@ -28,6 +28,8 @@ const {
   isClaudeChatSession,
   scanClaudeCoworkSessions,
 } = await import('../../src/fileWatcher.js');
+const { clearClaudeCodeSessionMetadataCache, getClaudeCodeSessionsRoot } =
+  await import('../../src/claudeCodeSessionMetadata.js');
 const { PixelAgentsViewProvider } = await import('../../src/PixelAgentsViewProvider.js');
 const { processTranscriptLine } = await import('../../src/transcriptParser.js');
 const vscode = await import('vscode');
@@ -80,6 +82,7 @@ describe('Claude adoption dedup and titles', () => {
     vi.clearAllTimers();
     vi.useRealTimers();
     vi.unstubAllEnvs();
+    clearClaudeCodeSessionMetadataCache();
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -260,6 +263,69 @@ describe('Claude adoption dedup and titles', () => {
     );
   });
 
+  it('uses the Claude Code desktop metadata title when adopting a desktop code session', () => {
+    vi.stubEnv('APPDATA', tmpDir);
+    const projectDir = path.join(tmpDir, 'animfy_gs1');
+    fs.mkdirSync(projectDir, { recursive: true });
+    const sessionId = 'session-desktop-code-title';
+    writeClaudeCodeMetadata(tmpDir, {
+      cliSessionId: sessionId,
+      cwd: projectDir,
+      title: 'Landing page redesign',
+      lastActivityAt: 200,
+    });
+    const jsonlFile = path.join(tmpDir, `${sessionId}.jsonl`);
+    fs.writeFileSync(
+      jsonlFile,
+      JSON.stringify({
+        type: 'queue-operation',
+        operation: 'enqueue',
+        sessionId,
+        content: 'first user prompt should not become the title',
+      }) +
+        '\n' +
+        JSON.stringify({
+          type: 'user',
+          message: {
+            role: 'user',
+            content: 'first user prompt should not become the title',
+          },
+          entrypoint: 'claude-desktop',
+          promptSource: 'sdk',
+          cwd: projectDir,
+          sessionId,
+        }) +
+        '\n',
+    );
+    const agents = new Map<number, AgentState>();
+    const webview = { postMessage: vi.fn() };
+
+    adoptExternalSessionFromHook(
+      sessionId,
+      jsonlFile,
+      projectDir,
+      new Set<string>(),
+      { current: 1 },
+      agents,
+      new Map(),
+      new Map(),
+      new Map(),
+      new Map(),
+      webview as unknown as import('vscode').Webview,
+      vi.fn(),
+    );
+
+    const agent = agents.get(1);
+    expect(agent?.agentName).toBe('Landing page redesign');
+    expect(agent?.claudeTitleResolved).toBe(true);
+    expect(webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'agentCreated',
+        agentName: 'Landing page redesign',
+      }),
+    );
+  });
+
   it('does not derive a live Claude Desktop Code title from a prompt line', () => {
     const jsonlFile = path.join(tmpDir, 'session-live-desktop-code.jsonl');
     const agent = makeAgent(1, jsonlFile);
@@ -289,6 +355,56 @@ describe('Claude adoption dedup and titles', () => {
       expect.objectContaining({
         type: 'agentMetadata',
         agentName: 'Claude Code',
+      }),
+    );
+  });
+
+  it('updates a live Claude Desktop Code agent from Claude Code desktop metadata', () => {
+    vi.stubEnv('APPDATA', tmpDir);
+    const projectDir = path.join(tmpDir, 'animfy_gs1');
+    fs.mkdirSync(projectDir, { recursive: true });
+    const sessionId = 'session-live-desktop-code-title';
+    writeClaudeCodeMetadata(tmpDir, {
+      cliSessionId: sessionId,
+      cwd: projectDir,
+      title: 'Landing page redesign',
+      lastActivityAt: 300,
+    });
+    const jsonlFile = path.join(tmpDir, `${sessionId}.jsonl`);
+    const agent = {
+      ...makeAgent(1, jsonlFile),
+      projectDir,
+      agentName: 'Claude Code',
+      claudeTitleResolved: false,
+    };
+    const agents = new Map<number, AgentState>([[1, agent]]);
+    const webview = { postMessage: vi.fn() };
+
+    processTranscriptLine(
+      1,
+      JSON.stringify({
+        type: 'user',
+        message: {
+          role: 'user',
+          content: 'first user prompt should not become the title',
+        },
+        entrypoint: 'claude-desktop',
+        promptSource: 'sdk',
+        cwd: projectDir,
+        sessionId,
+      }),
+      agents,
+      new Map(),
+      new Map(),
+      webview as unknown as import('vscode').Webview,
+    );
+
+    expect(agent.agentName).toBe('Landing page redesign');
+    expect(agent.claudeTitleResolved).toBe(true);
+    expect(webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'agentMetadata',
+        agentName: 'Landing page redesign',
       }),
     );
   });
@@ -530,6 +646,20 @@ describe('Claude adoption dedup and titles', () => {
 
   it('resolves Claude Cowork roots for each desktop platform', () => {
     expect(
+      getClaudeCodeSessionsRoot(
+        { APPDATA: 'C:\\Users\\User\\AppData\\Roaming' },
+        'win32',
+        'C:\\Users\\User',
+      ),
+    ).toBe(path.join('C:\\Users\\User\\AppData\\Roaming', 'Claude', 'claude-code-sessions'));
+    expect(getClaudeCodeSessionsRoot({}, 'darwin', '/Users/user')).toBe(
+      path.join('/Users/user', 'Library', 'Application Support', 'Claude', 'claude-code-sessions'),
+    );
+    expect(
+      getClaudeCodeSessionsRoot({ XDG_CONFIG_HOME: '/tmp/config' }, 'linux', '/home/user'),
+    ).toBe(path.join('/tmp/config', 'Claude', 'claude-code-sessions'));
+
+    expect(
       getClaudeCoworkSessionsRoot(
         { APPDATA: 'C:\\Users\\User\\AppData\\Roaming' },
         'win32',
@@ -745,4 +875,35 @@ function copyFixture(name: string, tmpDir: string, targetName: string): string {
   const target = path.join(tmpDir, targetName);
   fs.copyFileSync(path.join(fixturesDir, name), target);
   return target;
+}
+
+function writeClaudeCodeMetadata(
+  appDataRoot: string,
+  metadata: {
+    cliSessionId: string;
+    cwd: string;
+    title: string;
+    lastActivityAt: number;
+  },
+): void {
+  const metadataDir = path.join(
+    appDataRoot,
+    'Claude',
+    'claude-code-sessions',
+    'space-1',
+    'process-1',
+  );
+  fs.mkdirSync(metadataDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(metadataDir, `local_${metadata.cliSessionId}.json`),
+    JSON.stringify({
+      sessionId: `local_${metadata.cliSessionId}`,
+      cliSessionId: metadata.cliSessionId,
+      cwd: metadata.cwd,
+      originCwd: metadata.cwd,
+      title: metadata.title,
+      isArchived: false,
+      lastActivityAt: metadata.lastActivityAt,
+    }),
+  );
 }

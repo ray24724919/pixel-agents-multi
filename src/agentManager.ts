@@ -13,6 +13,7 @@ import {
   findCodexThreadById,
   findLatestCodexThread,
 } from '../server/src/providers/file/codex/codex.js';
+import { readClaudeCodeSessionMetadata } from './claudeCodeSessionMetadata.js';
 import {
   CLAUDE_TERMINAL_NAME_PREFIX,
   TERMINAL_NAME_PREFIX,
@@ -838,9 +839,17 @@ export function restoreAgents(
       if (!terminal) continue;
     }
 
+    const sessionId = p.sessionId || path.basename(p.jsonlFile, '.jsonl');
+    const claudeCodeMetadata =
+      (p.providerId ?? 'claude') === 'claude'
+        ? readClaudeCodeSessionMetadata(sessionId, p.projectDir)
+        : undefined;
+    const agentName = claudeCodeMetadata?.title ?? p.agentName;
+    const claudeTitleResolved = claudeCodeMetadata?.title ? true : p.claudeTitleResolved;
+
     const agent: AgentState = {
       id: p.id,
-      sessionId: p.sessionId || path.basename(p.jsonlFile, '.jsonl'),
+      sessionId,
       terminalRef: terminal,
       isExternal,
       providerId: p.providerId ?? 'claude',
@@ -867,11 +876,11 @@ export function restoreAgents(
       hidden: p.hidden,
       inputTokens: 0,
       outputTokens: 0,
-      claudeTitleResolved: p.claudeTitleResolved,
+      claudeTitleResolved,
       codexInputTokenBase: p.codexInputTokenBase,
       codexOutputTokenBase: p.codexOutputTokenBase,
       teamName: p.teamName,
-      agentName: p.agentName,
+      agentName,
       isTeamLead: p.isTeamLead,
       leadAgentId: p.leadAgentId,
       teamUsesTmux: p.teamUsesTmux,
