@@ -200,6 +200,136 @@ describe('Claude adoption dedup and titles', () => {
     );
   });
 
+  it('labels Claude Desktop Code sessions without prompt-derived names when no title exists yet', () => {
+    const jsonlFile = path.join(tmpDir, 'session-desktop-code.jsonl');
+    fs.writeFileSync(
+      jsonlFile,
+      JSON.stringify({
+        type: 'queue-operation',
+        operation: 'enqueue',
+        sessionId: 'session-desktop-code',
+        content: '先了解一下這個專案，我想使用 claude design',
+      }) +
+        '\n' +
+        JSON.stringify({
+          type: 'user',
+          message: {
+            role: 'user',
+            content: '先了解一下這個專案，我想使用 claude design',
+          },
+          entrypoint: 'claude-desktop',
+          promptSource: 'sdk',
+          cwd: tmpDir,
+          sessionId: 'session-desktop-code',
+        }) +
+        '\n' +
+        JSON.stringify({
+          type: 'attachment',
+          entrypoint: 'claude-desktop',
+          cwd: tmpDir,
+          sessionId: 'session-desktop-code',
+        }) +
+        '\n',
+    );
+    const agents = new Map<number, AgentState>();
+    const webview = { postMessage: vi.fn() };
+
+    adoptExternalSessionFromHook(
+      'session-desktop-code',
+      jsonlFile,
+      tmpDir,
+      new Set<string>(),
+      { current: 1 },
+      agents,
+      new Map(),
+      new Map(),
+      new Map(),
+      new Map(),
+      webview as unknown as import('vscode').Webview,
+      vi.fn(),
+    );
+
+    const agent = agents.get(1);
+    expect(agent?.agentName).toBe('Claude Code');
+    expect(agent?.claudeTitleResolved).toBe(false);
+    expect(webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'agentCreated',
+        agentName: 'Claude Code',
+      }),
+    );
+  });
+
+  it('does not derive a live Claude Desktop Code title from a prompt line', () => {
+    const jsonlFile = path.join(tmpDir, 'session-live-desktop-code.jsonl');
+    const agent = makeAgent(1, jsonlFile);
+    const agents = new Map<number, AgentState>([[1, agent]]);
+    const webview = { postMessage: vi.fn() };
+
+    processTranscriptLine(
+      1,
+      JSON.stringify({
+        type: 'user',
+        message: {
+          role: 'user',
+          content: '先了解一下這個專案，我想使用 claude design',
+        },
+        entrypoint: 'claude-desktop',
+        promptSource: 'sdk',
+      }),
+      agents,
+      new Map(),
+      new Map(),
+      webview as unknown as import('vscode').Webview,
+    );
+
+    expect(agent.agentName).toBe('Claude Code');
+    expect(agent.claudeTitleResolved).toBe(false);
+    expect(webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'agentMetadata',
+        agentName: 'Claude Code',
+      }),
+    );
+  });
+
+  it('repairs a persisted Claude Desktop Code prompt-derived title on replay', () => {
+    const jsonlFile = path.join(tmpDir, 'session-persisted-desktop-code.jsonl');
+    const agent = {
+      ...makeAgent(1, jsonlFile),
+      agentName: '先了解一下這個專案，我想使用 claude design',
+      claudeTitleResolved: true,
+    };
+    const agents = new Map<number, AgentState>([[1, agent]]);
+    const webview = { postMessage: vi.fn() };
+
+    processTranscriptLine(
+      1,
+      JSON.stringify({
+        type: 'user',
+        message: {
+          role: 'user',
+          content: '先了解一下這個專案，我想使用 claude design',
+        },
+        entrypoint: 'claude-desktop',
+        promptSource: 'sdk',
+      }),
+      agents,
+      new Map(),
+      new Map(),
+      webview as unknown as import('vscode').Webview,
+    );
+
+    expect(agent.agentName).toBe('Claude Code');
+    expect(agent.claudeTitleResolved).toBe(false);
+    expect(webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'agentMetadata',
+        agentName: 'Claude Code',
+      }),
+    );
+  });
+
   it('does not replace a Claude Cowork title with a transcript ai-title', () => {
     const jsonlFile = path.join(tmpDir, 'local_cowork_123.jsonl');
     const agent = {

@@ -26,6 +26,7 @@ import * as vscode from 'vscode';
 const debug = process.env.PIXEL_AGENTS_DEBUG !== '0';
 
 import {
+  CLAUDE_CODE_AGENT_NAME,
   CLAUDE_EXPLICIT_TITLE_MAX_LENGTH,
   CLEAR_IDLE_THRESHOLD_MS,
   DISMISSED_COOLDOWN_MS,
@@ -45,6 +46,7 @@ import { cancelPermissionTimer, cancelWaitingTimer, clearAgentActivity } from '.
 import {
   extractClaudeExplicitTitleFromRecord,
   extractClaudeUserTitleFromRecord,
+  isClaudeDesktopCodeRecord,
   processTranscriptLine,
 } from './transcriptParser.js';
 import type { AgentState } from './types.js';
@@ -153,12 +155,15 @@ interface ClaudeHeaderTitle {
 
 function extractClaudeTitleFromJsonlHeader(jsonlFile: string): ClaudeHeaderTitle | undefined {
   let fallbackTitle: string | undefined;
+  let sawClaudeDesktopCode = false;
   for (const record of readClaudeJsonlHeaderRecords(jsonlFile).slice(0, 50)) {
     const explicitTitle = extractClaudeExplicitTitleFromRecord(record);
     if (explicitTitle) return { title: explicitTitle, resolved: true };
+    if (isClaudeDesktopCodeRecord(record)) sawClaudeDesktopCode = true;
     const title = extractClaudeUserTitleFromRecord(record);
     if (title && !fallbackTitle) fallbackTitle = title;
   }
+  if (sawClaudeDesktopCode) return { title: CLAUDE_CODE_AGENT_NAME, resolved: false };
   return fallbackTitle ? { title: fallbackTitle, resolved: false } : undefined;
 }
 

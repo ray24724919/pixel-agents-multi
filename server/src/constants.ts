@@ -40,6 +40,7 @@ export const BASH_COMMAND_DISPLAY_MAX_LENGTH = 30;
 export const TASK_DESCRIPTION_DISPLAY_MAX_LENGTH = 40;
 export const CLAUDE_USER_TITLE_MAX_LENGTH = 40;
 export const CLAUDE_EXPLICIT_TITLE_MAX_LENGTH = 64;
+export const CLAUDE_CODE_AGENT_NAME = 'Claude Code';
 
 // ── Pixel Agents Server ─────────────────────────────────────
 export const SERVER_JSON_DIR = '.pixel-agents-multi';

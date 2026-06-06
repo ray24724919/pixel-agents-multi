@@ -5,6 +5,7 @@ const debug = process.env.PIXEL_AGENTS_DEBUG !== '0';
 
 import {
   BASH_COMMAND_DISPLAY_MAX_LENGTH,
+  CLAUDE_CODE_AGENT_NAME,
   CLAUDE_EXPLICIT_TITLE_MAX_LENGTH,
   CLAUDE_USER_TITLE_MAX_LENGTH,
   TASK_DESCRIPTION_DISPLAY_MAX_LENGTH,
@@ -167,8 +168,12 @@ export function processTranscriptLine(
     const explicitTitle = extractClaudeExplicitTitleFromRecord(record);
     if (explicitTitle && shouldApplyClaudeExplicitTitle(agent, explicitTitle)) {
       updateClaudeAgentTitle(agentId, agent, explicitTitle, true, webview);
+    } else if (isPersistedClaudeDesktopPromptTitle(agent, record)) {
+      updateClaudeAgentTitle(agentId, agent, CLAUDE_CODE_AGENT_NAME, false, webview);
     } else if (!agent.claudeTitleResolved && (!agent.agentName || agent.agentName === 'Claude')) {
-      const title = extractClaudeUserTitleFromRecord(record);
+      const title = isClaudeDesktopCodeRecord(record)
+        ? CLAUDE_CODE_AGENT_NAME
+        : extractClaudeUserTitleFromRecord(record);
       if (title) {
         updateClaudeAgentTitle(agentId, agent, title, false, webview);
       }
@@ -563,15 +568,30 @@ function updateClaudeAgentTitle(
 }
 
 function shouldApplyClaudeExplicitTitle(agent: AgentState, title: string): boolean {
-  if (
+  if (hasProtectedClaudeDisplayName(agent)) return false;
+  return agent.agentName !== title || !agent.claudeTitleResolved;
+}
+
+function isPersistedClaudeDesktopPromptTitle(agent: AgentState, record: unknown): boolean {
+  if (!isClaudeDesktopCodeRecord(record)) return false;
+  if (hasProtectedClaudeDisplayName(agent)) return false;
+  const promptTitle = extractClaudeUserTitleFromRecord(record);
+  return Boolean(promptTitle && agent.agentName === promptTitle);
+}
+
+function hasProtectedClaudeDisplayName(agent: AgentState): boolean {
+  return Boolean(
     agent.teamName ||
     agent.isTeamLead !== undefined ||
     agent.leadAgentId !== undefined ||
-    agent.sessionId.startsWith('local_cowork_')
-  ) {
-    return false;
-  }
-  return agent.agentName !== title || !agent.claudeTitleResolved;
+    agent.sessionId.startsWith('local_cowork_'),
+  );
+}
+
+export function isClaudeDesktopCodeRecord(record: unknown): boolean {
+  const objectRecord = asRecord(record);
+  if (!objectRecord) return false;
+  return objectRecord.entrypoint === 'claude-desktop';
 }
 
 export function extractClaudeExplicitTitleFromRecord(record: unknown): string | undefined {
