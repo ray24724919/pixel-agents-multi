@@ -375,8 +375,8 @@
           <p>
             這份 HTML 用來記錄 2026-05-27 supervisor / executor 接手清理後
             Pixel Agents Multi 的每一波主要進展：provider 顯示與採用修復、Windows 私有版發行、Agent Center、
-            Usage Intelligence、Timeline、Delegation、Session Replay，以及目前正在鋪路的
-            Handoff 工作流。
+            Usage Intelligence、Timeline、Delegation、Session Replay，以及 W13 完成的
+            repo-centered handoff supervisor / executor 工作流。
           </p>
 
           <div class="summary-grid">
@@ -389,11 +389,11 @@
               <div class="label">目前本機 VSIX 版本</div>
             </div>
             <div class="stat">
-              <div class="value">b396196</div>
+              <div class="value">6c1e1a7</div>
               <div class="label">最新功能 commit</div>
             </div>
             <div class="stat">
-              <div class="value">100 / 239</div>
+              <div class="value">148 / 281</div>
               <div class="label">最新 webview / server 測試數</div>
             </div>
           </div>
@@ -406,7 +406,7 @@
             <li>最新本機安裝驗證為 <code>raychen.pixel-agents-multi@1.3.0</code>。</li>
             <li>私有 fork 與 public <code>pixel-agents</code> 已透過 release identity 分離。</li>
             <li>接手清理主線從 <code>cleanup-baseline-2026-05-27</code> 開始。</li>
-            <li>目前最新功能主線是 W9：Replay navigation polish、Handoff draft model、Handoff UI。</li>
+            <li>目前最新功能主線是 W13：completion review、merge readiness、action groups、compact status controls。</li>
           </ul>
         </section>
 
@@ -629,6 +629,103 @@
               </ul>
             </div>
           </article>
+
+          <article class="timeline-card">
+            <div>
+              <div class="date">2026-06-04</div>
+              <div class="tag-row">
+                <span class="tag">W10</span>
+                <span class="tag important">Repo artifacts</span>
+              </div>
+            </div>
+            <div>
+              <h3>Handoff 從草稿變成 repo-centered artifact</h3>
+              <p class="note">
+                W10 把 W9 的 local preview 推進成可追溯、可 review 的本機 artifact，
+                但仍維持不自動 stage、commit、push 或分享 raw transcript。
+              </p>
+              <ul>
+                <li>W10-A：<code>Write to Repo</code> 寫入 <code>docs/agent-handoffs/</code>，由 extension host 決定安全 repo path。</li>
+                <li>W10-B：新增 Recent Handoffs artifact library，支援 refresh、open、safe metadata 與 handoff timeline events。</li>
+                <li>W10-C：每份 Markdown handoff 搭配 <code>.handoff.json</code> sidecar，保存 artifact id、status、updatedAt 等結構化 metadata。</li>
+                <li>W10-D：新增 local status actions：Mark reviewed、Mark stale、Reset draft，僅更新 sidecar，不改 Markdown body。</li>
+                <li>安全邊界：webview 不送任意 filesystem path，不輸出 raw prompt/tool output，不做 cloud sync 或 git mutation。</li>
+              </ul>
+            </div>
+          </article>
+
+          <article class="timeline-card">
+            <div>
+              <div class="date">2026-06-04 至 2026-06-05</div>
+              <div class="tag-row">
+                <span class="tag">W11</span>
+                <span class="tag important">Dispatch queue</span>
+              </div>
+            </div>
+            <div>
+              <h3>Artifact 走向 executor-ready work package 與 queue</h3>
+              <p class="note">
+                W11 建立 supervisor 派工的中段：從 reviewed handoff 產生 executor package，
+                追蹤 dispatch / execution 狀態，並把 completion 檢查保持為 read-only。
+              </p>
+              <ul>
+                <li>W11-A：Recent Handoffs 可產生 copy-only dispatch prompt，引用 handoff path 而不嵌入 Markdown body。</li>
+                <li>W11-B：建立 <code>docs/roadmap/supervision/work-packages/handoffs/</code> work-package queue 與 package prompt。</li>
+                <li>W11-C：sidecar 增加 optional execution record，可 link visible agent 並更新 execution status。</li>
+                <li>W11 remaining：Handoff Queue 顯示 needs dispatch、active/waiting、blocked、report ready、done 等 grouping。</li>
+                <li>新增 executor launch、completion refresh、report open timeline events；report/branch scan 只讀，不 checkout、不 merge。</li>
+              </ul>
+            </div>
+          </article>
+
+          <article class="timeline-card">
+            <div>
+              <div class="date">2026-06-05 至 2026-06-06</div>
+              <div class="tag-row">
+                <span class="tag">W12</span>
+                <span class="tag important">Executor launch QA</span>
+              </div>
+            </div>
+            <div>
+              <h3>Codex / Claude executor launch 與 live validation</h3>
+              <p class="note">
+                W12 把 package-backed handoff 從 copy prompt 推進到可直接 launch executor，
+                並用 installed VSIX 與 user-assisted QA 找出真實 Windows / VS Code 問題。
+              </p>
+              <ul>
+                <li>W12-A：Recent Handoffs 與 Handoff Queue 分別提供 Launch Codex / Launch Claude。</li>
+                <li>Claude handoff prompt 以 argv 傳入 terminal，不用 shell command string 拼接，Codex path 維持 provider-specific 行為。</li>
+                <li>W12-B/W12-C：build、test、package、install、identity checks 通過；Computer Use live click QA 被 Windows automation 權限擋下，未誤標為完成。</li>
+                <li>W12-D：user-assisted QA 驗證 Codex 與 Claude launch 都能寫入 sidecar execution metadata 並顯示 active。</li>
+                <li>修正 Codex CLI discovery、handoff row pathological wrapping、Claude terminal title prefix。</li>
+              </ul>
+            </div>
+          </article>
+
+          <article class="timeline-card">
+            <div>
+              <div class="date">2026-06-06</div>
+              <div class="tag-row">
+                <span class="tag">W13</span>
+                <span class="tag important">Completion review</span>
+              </div>
+            </div>
+            <div>
+              <h3>Handoff supervisor review workflow 收尾</h3>
+              <p class="note">
+                W13 補上 executor 回報後 supervisor 判讀的最後一段，將 report cues、
+                branch facts、merge readiness 與 status controls 做成 read-only / manual-first 的決策面。
+              </p>
+              <ul>
+                <li>W13-A：completion review model 解析 bounded executor report cues、validation lines、changed files 與 risk/follow-up。</li>
+                <li>W13-B：Recent Handoffs 與 Handoff Queue 顯示 review status badges、checklist cues 與 recommended next action。</li>
+                <li>W13-C：merge readiness panel 顯示 branch/report/validation/warning cues，Copy merge checklist 只複製安全文字。</li>
+                <li>W13-D：把 primary、reference、local maintenance/status actions 分組，Recent Handoffs 與 Queue 共用 action renderer。</li>
+                <li>W13-E/W13-F：dispatch / execution status 改成 compact select controls，並把 select option model 抽出成可測 helper。</li>
+                <li>安全邊界保持不變：沒有 merge button，沒有 git mutation，沒有 raw report body、transcript 或 absolute path 外洩。</li>
+              </ul>
+            </div>
+          </article>
         </section>
 
         <h2 id="versions">版本與本機安裝</h2>
@@ -671,6 +768,10 @@
               <li>Usage Intelligence live + persisted history。</li>
               <li>Timeline persisted history + Session Replay MVP。</li>
               <li>Supervisor delegation visibility 與 office visual markers。</li>
+              <li>Repo-centered Handoff artifacts：Markdown + <code>.handoff.json</code> sidecar + Recent Handoffs library。</li>
+              <li>Handoff Queue：work package、dispatch status、execution metadata、completion refresh、report open。</li>
+              <li>Executor launch：package-backed Codex / Claude launch，launch 後回寫 safe sidecar metadata。</li>
+              <li>Completion review：review badges、merge readiness panel、copy-only merge checklist、compact status selects。</li>
               <li>安全 action model：Hide、Archive、Kill、Pause、Resume。</li>
               <li>本機私有 VSIX 發行與安裝驗證。</li>
             </ul>
@@ -678,7 +779,8 @@
           <div class="panel">
             <h3>還在產品化中的能力</h3>
             <ul>
-              <li>Handoff UI：從 replay/session/timeline 產生可複製 Markdown draft。</li>
+              <li>W14 release QA / polish：針對 W13 後 handoff workflow 做更完整 installed VSIX live validation。</li>
+              <li>Handoff workflow polish：真實長 queue、dense row spacing、select wording、manual merge checklist 的視覺細節仍可再調。</li>
               <li>Usage charts：更清楚的 provider/model/project trend 視覺化。</li>
               <li>Build identity UI：在 extension 內顯示 version、commit、installed source。</li>
               <li>更完整的 replay export 或 bug-report bundle，但仍需保持 redaction。</li>
@@ -757,29 +859,119 @@
                 <td><a href="roadmap/supervision/reports/W9-E-active-workseat-fix-report.md">W9-E report</a></td>
                 <td>Active workseat restore fix、valid workstation replay after reload、office seating regression coverage。</td>
               </tr>
+              <tr>
+                <td>W10-A</td>
+                <td><a href="roadmap/supervision/reports/W10-A-handoff-artifact-writing-report.md">W10-A report</a></td>
+                <td>Write to Repo、安全 filename/path validation、repo-centered handoff Markdown artifact。</td>
+              </tr>
+              <tr>
+                <td>W10-B</td>
+                <td><a href="roadmap/supervision/reports/W10-B-handoff-artifact-library-report.md">W10-B report</a></td>
+                <td>Recent Handoffs library、safe metadata、handoff generated/opened timeline events。</td>
+              </tr>
+              <tr>
+                <td>W10-C</td>
+                <td><a href="roadmap/supervision/reports/W10-C-handoff-artifact-manifest-report.md">W10-C report</a></td>
+                <td>Markdown + <code>.handoff.json</code> sidecar、artifact id/status、metadata fallback rules。</td>
+              </tr>
+              <tr>
+                <td>W10-D</td>
+                <td><a href="roadmap/supervision/reports/W10-D-handoff-status-actions-report.md">W10-D report</a></td>
+                <td>Local draft/reviewed/stale status actions，僅更新 sidecar，不發布、不做 git。</td>
+              </tr>
+              <tr>
+                <td>W11-A</td>
+                <td><a href="roadmap/supervision/reports/W11-A-handoff-dispatch-workflow-report.md">W11-A report</a></td>
+                <td>Copy dispatch prompt、safe branch/report naming、executor guardrails。</td>
+              </tr>
+              <tr>
+                <td>W11-B</td>
+                <td><a href="roadmap/supervision/reports/W11-B-handoff-work-package-queue-report.md">W11-B report</a></td>
+                <td>Work package creation、Handoff Queue package actions、dispatch status controls。</td>
+              </tr>
+              <tr>
+                <td>W11-C</td>
+                <td><a href="roadmap/supervision/reports/W11-C-handoff-execution-tracking-report.md">W11-C report</a></td>
+                <td>Execution metadata、agent linking、execution status timeline events。</td>
+              </tr>
+              <tr>
+                <td>W11 remaining</td>
+                <td><a href="roadmap/supervision/reports/W11-remaining-handoff-executor-flow-report.md">W11 remaining report</a></td>
+                <td>Executor launch path、completion refresh、report open、queue grouping。</td>
+              </tr>
+              <tr>
+                <td>W12-A</td>
+                <td><a href="roadmap/supervision/reports/W12-A-claude-handoff-executor-launch-report.md">W12-A report</a></td>
+                <td>Provider-specific Launch Codex / Launch Claude，Claude prompt 以 argv 傳入。</td>
+              </tr>
+              <tr>
+                <td>W12-B</td>
+                <td><a href="roadmap/supervision/reports/W12-B-handoff-executor-live-qa-report.md">W12-B report</a></td>
+                <td>Installed VSIX validation；Windows automation blocked live click QA，未宣稱完成。</td>
+              </tr>
+              <tr>
+                <td>W12-C</td>
+                <td><a href="roadmap/supervision/reports/W12-C-handoff-executor-live-click-qa-report.md">W12-C report</a></td>
+                <td>Live click QA retry evidence；same automation access blocker，no product code change。</td>
+              </tr>
+              <tr>
+                <td>W12-D</td>
+                <td><a href="roadmap/supervision/reports/W12-D-user-assisted-handoff-launch-qa-report.md">W12-D report</a></td>
+                <td>User-assisted launch QA、Codex/Claude sidecar execution metadata、launch bug fixes。</td>
+              </tr>
+              <tr>
+                <td>W13-A</td>
+                <td><a href="roadmap/supervision/reports/W13-A-handoff-completion-review-report.md">W13-A report</a></td>
+                <td>Completion review model、bounded report parsing、safe branch/report facts。</td>
+              </tr>
+              <tr>
+                <td>W13-B</td>
+                <td><a href="roadmap/supervision/reports/W13-B-handoff-review-workflow-report.md">W13-B report</a></td>
+                <td>Review status badges、checklist cues、recommended action mapping。</td>
+              </tr>
+              <tr>
+                <td>W13-C</td>
+                <td><a href="roadmap/supervision/reports/W13-C-merge-readiness-panel-report.md">W13-C report</a></td>
+                <td>Merge readiness panel、safe branch/report/validation cues、copy-only merge checklist。</td>
+              </tr>
+              <tr>
+                <td>W13-D</td>
+                <td><a href="roadmap/supervision/reports/W13-D-handoff-action-groups-report.md">W13-D report</a></td>
+                <td>Shared action renderer、primary/reference/local maintenance action groups。</td>
+              </tr>
+              <tr>
+                <td>W13-E</td>
+                <td><a href="roadmap/supervision/reports/W13-E-compact-handoff-status-controls-report.md">W13-E report</a></td>
+                <td>Compact Dispatch / Execution select controls for dense handoff rows。</td>
+              </tr>
+              <tr>
+                <td>W13-F</td>
+                <td><a href="roadmap/supervision/reports/W13-F-handoff-status-select-model-report.md">W13-F report</a></td>
+                <td>Status select view model helper、linked/current non-transition state coverage、429 tests。</td>
+              </tr>
             </tbody>
           </table>
         </section>
 
         <h2 id="next">下一步</h2>
         <section class="panel">
-          <h3>建議下一包：W10-A Repo-Centered Handoff Artifact Writing</h3>
+          <h3>建議下一包：W14 Release QA / Handoff Workflow Polish</h3>
           <p>
-            W9-D/W9-E 已經補上 local release visibility 與 reload 後 active workseat restore。
-            下一個功能包建議進入 W10-A：把 W9-B/W9-C 的 safe handoff draft 推進到
-            repo-centered artifact writing，讓使用者可以在本機、review-first 的流程中產生
-            redacted handoff notes。
+            W10-W13 已把 handoff 從 draft 推到 repo artifact、artifact library、work package queue、
+            executor launch、completion review、merge readiness 與 compact status controls。
+            下一步建議進入 W14：針對 installed VSIX 做 release QA、真實 handoff workflow live validation、
+            dense queue 視覺 polish，以及 launch / completion / review 流程的使用者操作細節整理。
           </p>
           <div class="callout">
             Product rule: 後續若擴充 Handoff，仍應維持 local-only、user-reviewed、
             redacted by default。不要把 raw transcript export 或自動 git operation
-            放進預設路徑。W10-A 應優先寫入 repo-centered artifact，而不是 cloud sync
-            或 transcript surveillance。
+            放進預設路徑。Team/Lab Mode、cloud sync 或跨人共享應等本機 supervisor
+            workflow 經過更完整 live validation 後再評估。
           </div>
         </section>
 
         <footer>
-          Generated for Pixel Agents Multi on 2026-06-04. Keep this page updated after each merged
+          Generated for Pixel Agents Multi on 2026-06-06. Keep this page updated after each merged
           work package, local VSIX install, or release identity change.
         </footer>
       </main>
