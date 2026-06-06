@@ -9,7 +9,9 @@ const createTerminalMock = vi.hoisted(() => vi.fn());
 const showWarningMessageMock = vi.hoisted(() => vi.fn());
 const spawnSyncMock = vi.hoisted(() => vi.fn());
 const claudeCommandPathMock = vi.hoisted(() => ({ current: 'claude' }));
+const codexCommandPathMock = vi.hoisted(() => ({ current: 'codex' }));
 const buildCodexLaunchCommandMock = vi.hoisted(() => vi.fn());
+const buildCodexLaunchArgsMock = vi.hoisted(() => vi.fn());
 const findLatestCodexThreadMock = vi.hoisted(() => vi.fn());
 const ensureProjectScanMock = vi.hoisted(() => vi.fn());
 const readNewLinesMock = vi.hoisted(() => vi.fn());
@@ -25,7 +27,11 @@ vi.mock('vscode', () => ({
   workspace: {
     getConfiguration: vi.fn(() => ({
       get: vi.fn((key: string, fallback: string) =>
-        key === 'claude.commandPath' ? claudeCommandPathMock.current : fallback,
+        key === 'claude.commandPath'
+          ? claudeCommandPathMock.current
+          : key === 'codex.commandPath'
+            ? codexCommandPathMock.current
+            : fallback,
       ),
     })),
     workspaceFolders: [{ uri: { fsPath: '/workspace/project' } }],
@@ -37,6 +43,7 @@ vi.mock('child_process', () => ({
 }));
 
 vi.mock('../../server/src/providers/file/codex/codex.js', () => ({
+  buildCodexLaunchArgs: buildCodexLaunchArgsMock,
   buildCodexLaunchCommand: buildCodexLaunchCommandMock,
   findCodexThreadById: vi.fn(),
   findLatestCodexThread: findLatestCodexThreadMock,
@@ -118,16 +125,27 @@ async function launchWith(
 
 describe('launchNewTerminal provider dispatch', () => {
   let tmpDir: string;
+  let originalLocalAppData: string | undefined;
 
   beforeEach(() => {
     vi.useFakeTimers();
     vi.stubGlobal('crypto', { randomUUID: vi.fn(() => 'session-123') });
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pxl-agent-manager-'));
+    originalLocalAppData = process.env.LOCALAPPDATA;
+    process.env.LOCALAPPDATA = tmpDir;
     createTerminalMock.mockReset();
     showWarningMessageMock.mockReset();
     spawnSyncMock.mockReset();
     spawnSyncMock.mockReturnValue({ status: 0 });
     claudeCommandPathMock.current = 'claude';
+    codexCommandPathMock.current = 'codex';
+    buildCodexLaunchArgsMock.mockReset();
+    buildCodexLaunchArgsMock.mockReturnValue([
+      '--cd',
+      '/workspace/project',
+      '--no-alt-screen',
+      'summarize tests',
+    ]);
     buildCodexLaunchCommandMock.mockReset();
     buildCodexLaunchCommandMock.mockReturnValue('codex --cd /workspace/project --no-alt-screen');
     findLatestCodexThreadMock.mockReset();
@@ -141,6 +159,11 @@ describe('launchNewTerminal provider dispatch', () => {
     vi.clearAllTimers();
     vi.useRealTimers();
     vi.unstubAllGlobals();
+    if (originalLocalAppData === undefined) {
+      delete process.env.LOCALAPPDATA;
+    } else {
+      process.env.LOCALAPPDATA = originalLocalAppData;
+    }
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -149,6 +172,11 @@ describe('launchNewTerminal provider dispatch', () => {
 
     await launchWith(harness, 'claude');
 
+    expect(createTerminalMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'Claude #1',
+      }),
+    );
     expect(harness.terminal.sendText).toHaveBeenCalledWith('claude --session-id session-123');
     const agent = harness.agents.get(1);
     expect(agent?.providerId).toBe('claude');
@@ -168,15 +196,20 @@ describe('launchNewTerminal provider dispatch', () => {
     );
   });
 
-  it('launches Codex through the existing Codex command builder', async () => {
+  it('launches Codex without a handoff prompt through the existing Codex command builder', async () => {
     const harness = createLaunchHarness();
 
-    await launchWith(harness, 'codex', 'summarize tests');
+    await launchWith(harness, 'codex');
 
+    expect(createTerminalMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'Codex #1',
+      }),
+    );
     expect(buildCodexLaunchCommandMock).toHaveBeenCalledWith(
       '/workspace/project',
       false,
-      'summarize tests',
+      undefined,
     );
     expect(harness.terminal.sendText).toHaveBeenCalledWith(
       'codex --cd /workspace/project --no-alt-screen',
@@ -191,6 +224,84 @@ describe('launchNewTerminal provider dispatch', () => {
       }),
     );
     expect(ensureProjectScanMock).not.toHaveBeenCalled();
+  });
+
+  it('passes Codex handoff prompts as shell arguments through a resolved executable path', async () => {
+    const resolvedCodex =
+      process.platform === 'win32' ? 'C:\\Tools\\codex.exe' : '/opt/codex/bin/codex';
+    spawnSyncMock.mockReturnValue({
+      status: 0,
+      stdout:
+        process.platform === 'win32'
+          ? 'C:\\Tools\\codex\r\nC:\\Tools\\codex.exe\r\n'
+          : '/opt/codex/bin/codex\n',
+    });
+    buildCodexLaunchArgsMock.mockReturnValue([
+      '--cd',
+      '/workspace/project',
+      '--no-alt-screen',
+      'handoff prompt with spaces',
+    ]);
+    const harness = createLaunchHarness();
+
+    await launchWith(harness, 'codex', 'handoff prompt with spaces');
+
+    expect(createTerminalMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'Codex #1',
+        shellPath: resolvedCodex,
+        shellArgs: ['--cd', '/workspace/project', '--no-alt-screen', 'handoff prompt with spaces'],
+      }),
+    );
+    expect(buildCodexLaunchArgsMock).toHaveBeenCalledWith(
+      '/workspace/project',
+      false,
+      'handoff prompt with spaces',
+    );
+    expect(harness.terminal.sendText).not.toHaveBeenCalled();
+    expect(harness.agents.get(1)?.providerId).toBe('codex');
+  });
+
+  it('does not create a Codex handoff executor agent when the CLI is missing', async () => {
+    spawnSyncMock.mockReturnValue({ status: 1, stdout: '' });
+    const harness = createLaunchHarness();
+
+    await launchWith(harness, 'codex', 'handoff executor prompt');
+
+    expect(createTerminalMock).not.toHaveBeenCalled();
+    expect(harness.agents.size).toBe(0);
+    expect(harness.persistAgents).not.toHaveBeenCalled();
+    expect(showWarningMessageMock).toHaveBeenCalledWith(
+      'Codex CLI was not found. Install the Codex CLI or make sure the codex command is available before launching a handoff executor.',
+    );
+  });
+
+  it('falls back to the local Windows Codex app install when PATH lookup misses', async () => {
+    if (process.platform !== 'win32') return;
+    spawnSyncMock.mockReturnValue({ status: 1, stdout: '' });
+    const codexDir = path.join(tmpDir, 'OpenAI', 'Codex', 'bin', 'version-1');
+    const codexExe = path.join(codexDir, 'codex.exe');
+    fs.mkdirSync(codexDir, { recursive: true });
+    fs.writeFileSync(codexExe, '');
+    buildCodexLaunchArgsMock.mockReturnValue([
+      '--cd',
+      '/workspace/project',
+      '--no-alt-screen',
+      'handoff prompt',
+    ]);
+    const harness = createLaunchHarness();
+
+    await launchWith(harness, 'codex', 'handoff prompt');
+
+    expect(createTerminalMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'Codex #1',
+        shellPath: codexExe,
+        shellArgs: ['--cd', '/workspace/project', '--no-alt-screen', 'handoff prompt'],
+      }),
+    );
+    expect(harness.terminal.sendText).not.toHaveBeenCalled();
+    expect(harness.agents.get(1)?.providerId).toBe('codex');
   });
 
   it('defaults to Claude when providerId is omitted', async () => {
@@ -228,6 +339,7 @@ describe('launchNewTerminal provider dispatch', () => {
 
     expect(createTerminalMock).toHaveBeenCalledWith(
       expect.objectContaining({
+        name: 'Claude #1',
         shellPath: commandPath,
         shellArgs: ['--session-id', 'session-123'],
       }),
@@ -243,6 +355,7 @@ describe('launchNewTerminal provider dispatch', () => {
 
     expect(createTerminalMock).toHaveBeenCalledWith(
       expect.objectContaining({
+        name: 'Claude #1',
         shellPath: 'claude',
         shellArgs: [
           '--session-id',
@@ -267,6 +380,7 @@ describe('launchNewTerminal provider dispatch', () => {
 
     expect(createTerminalMock).toHaveBeenCalledWith(
       expect.objectContaining({
+        name: 'Claude #1',
         shellPath: commandPath,
         shellArgs: ['--session-id', 'session-123', 'handoff prompt with spaces'],
       }),
