@@ -307,6 +307,27 @@ export interface HandoffReviewRecommendedAction {
   detail: string;
 }
 
+export type HandoffMergeReadinessStatus =
+  | 'already_merged'
+  | 'ready_to_inspect'
+  | 'needs_report'
+  | 'needs_review'
+  | 'blocked'
+  | 'active'
+  | 'unknown';
+
+export interface HandoffMergeReadiness {
+  status: HandoffMergeReadinessStatus;
+  label: string;
+  detail: string;
+  branchStatus: string;
+  reportStatus: string;
+  validationStatus: string;
+  warningCount: number;
+  recommendedStep: string;
+  canCopyChecklist: boolean;
+}
+
 export const initialHandoffArtifactLibraryState: HandoffArtifactLibraryState = {
   items: [],
   unavailable: false,
@@ -819,6 +840,160 @@ export function buildHandoffReviewRecommendedAction(
   };
 }
 
+export function buildHandoffMergeReadiness(
+  item: Pick<HandoffArtifactLibraryItem, 'completion' | 'dispatchPackage' | 'review'>,
+): HandoffMergeReadiness {
+  const review = item.review;
+  const report = review?.report;
+  const warningCount = review?.warnings.length ?? 0;
+  const branchStatus = mergeReadinessBranchStatus(review?.git, item.completion);
+  const reportStatus = mergeReadinessReportStatus(item.completion, review);
+  const validationStatus =
+    report?.hasValidation === true
+      ? 'validation present'
+      : report?.hasValidation === false
+        ? 'validation missing'
+        : 'validation unknown';
+  const base = {
+    branchStatus,
+    reportStatus,
+    validationStatus,
+    warningCount,
+    canCopyChecklist: !!item.dispatchPackage,
+  };
+  if (!item.dispatchPackage) {
+    return {
+      ...base,
+      status: 'unknown',
+      label: 'No work package',
+      detail: 'Create a work package before checking merge readiness.',
+      recommendedStep: 'Create a handoff work package first.',
+      canCopyChecklist: false,
+    };
+  }
+  if (!review) {
+    const status: HandoffMergeReadinessStatus =
+      item.completion?.reportExists === false ? 'needs_report' : 'unknown';
+    return {
+      ...base,
+      status,
+      label: status === 'needs_report' ? 'Needs report' : 'Unknown',
+      detail:
+        status === 'needs_report'
+          ? 'Executor report is missing.'
+          : 'Completion review has not been loaded yet.',
+      recommendedStep:
+        status === 'needs_report'
+          ? 'Wait for the executor report, then refresh completion.'
+          : 'Refresh completion before deciding.',
+    };
+  }
+  if (review.status === 'merged') {
+    return {
+      ...base,
+      status: 'already_merged',
+      label: 'Already merged',
+      detail: 'Branch is merged into main.',
+      recommendedStep: 'Mark the handoff reviewed after confirming the local status.',
+    };
+  }
+  if (review.status === 'ready_to_merge') {
+    return {
+      ...base,
+      status: 'ready_to_inspect',
+      label: 'Ready to inspect',
+      detail: 'Report and branch signals are ready for a manual merge decision.',
+      recommendedStep:
+        'Open the report, inspect the branch manually, then merge outside Pixel Agents.',
+    };
+  }
+  if (review.status === 'needs_review') {
+    return {
+      ...base,
+      status: 'needs_review',
+      label: 'Needs review',
+      detail: 'Executor report is ready but still needs supervisor review.',
+      recommendedStep: 'Open the report and inspect validation plus changed-file cues.',
+    };
+  }
+  if (review.status === 'needs_report') {
+    return {
+      ...base,
+      status: 'needs_report',
+      label: 'Needs report',
+      detail: 'Executor report is missing.',
+      recommendedStep: 'Wait for the executor report, then refresh completion.',
+    };
+  }
+  if (review.status === 'blocked') {
+    return {
+      ...base,
+      status: 'blocked',
+      label: 'Blocked',
+      detail: 'Executor completion review found a blocker.',
+      recommendedStep: 'Open the report if available, then mark stale or re-dispatch manually.',
+    };
+  }
+  if (review.status === 'active') {
+    return {
+      ...base,
+      status: 'active',
+      label: 'Active',
+      detail: 'Executor appears active or waiting.',
+      recommendedStep: 'Refresh completion later; do not merge yet.',
+    };
+  }
+  return {
+    ...base,
+    status: 'unknown',
+    label: 'Unknown',
+    detail: 'Merge readiness is unclear from local signals.',
+    recommendedStep: 'Refresh completion and inspect the report if it exists.',
+  };
+}
+
+export function buildHandoffManualMergeChecklist(
+  item: Pick<
+    HandoffArtifactLibraryItem,
+    'completion' | 'dispatchPackage' | 'displayTitle' | 'relativePath' | 'review'
+  >,
+): string | undefined {
+  if (!item.dispatchPackage) return undefined;
+  const readiness = buildHandoffMergeReadiness(item);
+  const checklist = buildHandoffReviewChecklist(item);
+  const reportPath = item.review?.reportRelativePath ?? item.completion?.reportRelativePath;
+  const branchName = item.review?.branchName ?? item.dispatchPackage.branchName;
+  const lines = [
+    `# Manual Merge Checklist: ${item.displayTitle}`,
+    '',
+    `Readiness: ${readiness.label}`,
+    `Recommended next step: ${readiness.recommendedStep}`,
+    '',
+    `Handoff: ${item.relativePath}`,
+    `Work package: ${item.dispatchPackage.packageRelativePath}`,
+    `Executor report: ${reportPath ?? item.dispatchPackage.reportRelativePath}`,
+    `Branch: ${branchName}`,
+    '',
+    'Signals:',
+    `- Branch: ${readiness.branchStatus}`,
+    `- Report: ${readiness.reportStatus}`,
+    `- Validation: ${readiness.validationStatus}`,
+    `- Warnings: ${readiness.warningCount}`,
+    ...checklist.map((cue) => `- ${cue.label}: ${cue.detail}`),
+    '',
+    'Manual review:',
+    '- Open the executor report and inspect the summarized validation and changed-file cues.',
+    '- Inspect the executor branch manually outside Pixel Agents.',
+    '- Run any required validation locally before merging.',
+    '- If approved, merge outside Pixel Agents; then refresh completion and mark reviewed.',
+    '',
+    'Safety:',
+    '- Pixel Agents does not run git merge, push, rebase, reset, stash, or clean from this checklist.',
+    '- This checklist references repo-relative artifacts only and does not include report bodies, transcripts, tool output, credentials, or absolute paths.',
+  ];
+  return lines.join('\n');
+}
+
 export function handoffExecutionActionStatusLabel(
   status: HandoffExecutionActionStatus,
   agentLabel: string,
@@ -962,6 +1137,36 @@ function branchReviewCue(
     return { id: 'branch', label: 'Branch', state: 'unknown', detail: 'merge unknown' };
   }
   return { id: 'branch', label: 'Branch', state: 'unknown', detail: 'unknown' };
+}
+
+function mergeReadinessBranchStatus(
+  git: HandoffCompletionReviewGit | undefined,
+  completion: HandoffCompletionStatus | undefined,
+): string {
+  const branchExists = git?.branchExists ?? completion?.branchExists;
+  const branchMergedToMain = git?.branchMergedToMain ?? completion?.branchMergedToMain;
+  if (branchExists === false) return 'branch missing';
+  if (branchMergedToMain === true) return 'merged';
+  if (branchMergedToMain === false) {
+    const ahead = git?.aheadCount !== undefined ? ` / ahead ${git.aheadCount}` : '';
+    const behind = git?.behindCount !== undefined ? ` / behind ${git.behindCount}` : '';
+    return `not merged${ahead}${behind}`;
+  }
+  if (branchExists === true) return 'branch exists / merge unknown';
+  return 'branch unknown';
+}
+
+function mergeReadinessReportStatus(
+  completion: HandoffCompletionStatus | undefined,
+  review: HandoffCompletionReview | undefined,
+): string {
+  if (completion?.reportExists === true || review?.report) {
+    return 'report ready';
+  }
+  if (completion?.reportExists === false || review?.status === 'needs_report') {
+    return 'report missing';
+  }
+  return 'report unknown';
 }
 
 function pluralize(count: number, noun: string): string {

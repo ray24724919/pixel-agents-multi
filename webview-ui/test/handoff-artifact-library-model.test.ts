@@ -6,6 +6,8 @@ import {
   buildCreateHandoffWorkPackageMessage,
   buildCreateHandoffWorkPackagePromptMessage,
   buildHandoffExecutionQueueSummary,
+  buildHandoffManualMergeChecklist,
+  buildHandoffMergeReadiness,
   buildHandoffQueueSummary,
   buildHandoffReviewChecklist,
   buildHandoffReviewRecommendedAction,
@@ -876,6 +878,165 @@ test('handoff completion review recommendations map statuses to local review act
     buildHandoffReviewRecommendedAction({ ...withReview('merged'), status: 'reviewed' }).disabled,
     true,
   );
+});
+
+test('handoff merge readiness maps review statuses to supervisor decisions', () => {
+  const base = {
+    relativePath: 'docs/agent-handoffs/merge-readiness.md',
+    filename: 'merge-readiness.md',
+    modifiedAt: 1_780_000_000_000,
+    sizeBytes: 1024,
+    displayTitle: 'Merge readiness',
+    displayDetail: 'detail',
+    statusLabel: 'Draft',
+    dispatchPackage: {
+      packageRelativePath:
+        'docs/roadmap/supervision/work-packages/handoffs/merge-readiness-work-package.md',
+      branchName: 'product/handoff-merge-readiness',
+      reportRelativePath: 'docs/roadmap/supervision/reports/merge-readiness-executor-report.md',
+      status: 'dispatched' as const,
+      createdAt: '2026-06-04T07:09:00.000Z',
+      updatedAt: '2026-06-04T07:10:00.000Z',
+      statusLabel: 'Dispatched',
+    },
+    completion: {
+      reportExists: true,
+      reportRelativePath: 'docs/roadmap/supervision/reports/merge-readiness-executor-report.md',
+      branchName: 'product/handoff-merge-readiness',
+      branchExists: true,
+      branchMergedToMain: false,
+      checkedAt: '2026-06-04T07:11:00.000Z',
+      statusLabel: 'Report ready / branch exists / not merged',
+    },
+  };
+  const withReview = (
+    status:
+      | 'active'
+      | 'blocked'
+      | 'merged'
+      | 'needs_report'
+      | 'needs_review'
+      | 'ready_to_merge'
+      | 'unknown',
+  ) => ({
+    ...base,
+    review: {
+      status,
+      statusLabel: status,
+      nextActionLabel: 'Next',
+      report: {
+        hasSummary: true,
+        hasFilesChanged: true,
+        hasValidation: status !== 'needs_review',
+        hasAcceptanceCriteria: true,
+        hasDeviations: false,
+        validationLines: [],
+        changedFileLines: [],
+        riskLines: [],
+        truncated: false,
+      },
+      git: {
+        branchExists: true,
+        branchMergedToMain: status === 'merged',
+        aheadCount: status === 'merged' ? 0 : 2,
+        behindCount: 0,
+      },
+      warnings: status === 'blocked' ? ['Blocked by validation'] : [],
+      checkedAt: '2026-06-04T07:12:00.000Z',
+    },
+  });
+
+  assert.equal(buildHandoffMergeReadiness(withReview('merged')).status, 'already_merged');
+  assert.equal(buildHandoffMergeReadiness(withReview('ready_to_merge')).status, 'ready_to_inspect');
+  assert.equal(buildHandoffMergeReadiness(withReview('needs_review')).status, 'needs_review');
+  assert.equal(buildHandoffMergeReadiness(withReview('needs_report')).status, 'needs_report');
+  assert.equal(buildHandoffMergeReadiness(withReview('active')).status, 'active');
+  assert.equal(buildHandoffMergeReadiness(withReview('blocked')).status, 'blocked');
+  assert.equal(buildHandoffMergeReadiness(withReview('unknown')).status, 'unknown');
+  assert.match(buildHandoffMergeReadiness(withReview('ready_to_merge')).branchStatus, /ahead 2/);
+  assert.equal(
+    buildHandoffMergeReadiness(withReview('blocked')).recommendedStep,
+    'Open the report if available, then mark stale or re-dispatch manually.',
+  );
+});
+
+test('handoff manual merge checklist uses safe repo-relative fields only', () => {
+  const state = handoffArtifactLibraryStateFromLoadedMessage({
+    type: 'handoffArtifactsLoaded',
+    artifacts: [
+      {
+        relativePath: 'docs/agent-handoffs/safe-checklist.md',
+        filename: 'safe-checklist.md',
+        modifiedAt: 1_780_000_000_000,
+        sizeBytes: 1536,
+        title: 'Safe checklist',
+        dispatchPackage: {
+          packageRelativePath:
+            'docs/roadmap/supervision/work-packages/handoffs/safe-checklist-work-package.md',
+          branchName: 'product/handoff-safe-checklist',
+          reportRelativePath: 'docs/roadmap/supervision/reports/safe-checklist-executor-report.md',
+          status: 'completed',
+          createdAt: '2026-06-04T07:09:00.000Z',
+          updatedAt: '2026-06-04T07:10:00.000Z',
+        },
+        completion: {
+          reportExists: true,
+          reportRelativePath: 'docs/roadmap/supervision/reports/safe-checklist-executor-report.md',
+          branchName: 'product/handoff-safe-checklist',
+          branchExists: true,
+          branchMergedToMain: false,
+          checkedAt: '2026-06-04T07:11:00.000Z',
+          absolutePath: 'C:\\Users\\User\\private-report.md',
+        },
+        review: {
+          status: 'ready_to_merge',
+          statusLabel: 'Ready to merge',
+          nextActionLabel: 'Inspect branch',
+          reportRelativePath: 'docs/roadmap/supervision/reports/safe-checklist-executor-report.md',
+          branchName: 'product/handoff-safe-checklist',
+          report: {
+            title: 'C:\\Users\\User\\private-report.md',
+            hasSummary: true,
+            hasFilesChanged: true,
+            hasValidation: true,
+            hasAcceptanceCriteria: true,
+            hasDeviations: false,
+            validationLines: ['Raw prompt: hidden request'],
+            changedFileLines: ['C:\\Users\\User\\private.ts'],
+            riskLines: ['tool output: hidden output'],
+            truncated: false,
+            rawBody: 'full report body should not leak',
+          },
+          git: {
+            branchExists: true,
+            branchMergedToMain: false,
+            branchHeadSha: 'abcdef1234567890',
+            mainHeadSha: '1234567890abcdef',
+            aheadCount: 1,
+            behindCount: 0,
+            absolutePath: 'C:\\Users\\User\\.git',
+          },
+          warnings: ['C:\\Users\\User\\warning.md'],
+          checkedAt: '2026-06-04T07:12:00.000Z',
+          absolutePath: 'C:\\Users\\User\\private-review.md',
+        },
+      },
+    ],
+  });
+
+  const checklist = buildHandoffManualMergeChecklist(state.items[0]!);
+  assert.ok(checklist);
+  assert.match(checklist, /Manual Merge Checklist: Safe checklist/);
+  assert.match(checklist, /docs\/agent-handoffs\/safe-checklist\.md/);
+  assert.match(checklist, /product\/handoff-safe-checklist/);
+  assert.match(
+    checklist,
+    /Pixel Agents does not run git merge, push, rebase, reset, stash, or clean/,
+  );
+  assert.equal(checklist.includes('C:\\Users\\User'), false);
+  assert.equal(checklist.includes('full report body'), false);
+  assert.equal(checklist.includes('hidden request'), false);
+  assert.equal(checklist.includes('hidden output'), false);
 });
 
 test('handoff queue grouping prefers completion review status when available', () => {
