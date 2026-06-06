@@ -107,7 +107,7 @@ describe('Claude adoption dedup and titles', () => {
     expect(agents.get(1)?.jsonlFile).toBe(jsonlFile);
   });
 
-  it('derives a regular Claude agent title from the first user message in the JSONL header', () => {
+  it('prefers an explicit Claude title over the first user message in the JSONL header', () => {
     const jsonlFile = path.join(tmpDir, 'session-2.jsonl');
     fs.writeFileSync(
       jsonlFile,
@@ -117,7 +117,12 @@ describe('Claude adoption dedup and titles', () => {
           role: 'user',
           content: [{ type: 'text', text: 'do something specific with this repository' }],
         },
-      }) + '\n',
+      }) +
+        '\n' +
+        JSON.stringify({ type: 'attachment', sessionId: 'session-2', cwd: tmpDir }) +
+        '\n' +
+        JSON.stringify({ type: 'ai-title', sessionId: 'session-2', title: 'Repository review' }) +
+        '\n',
     );
     const agents = new Map<number, AgentState>();
     const webview = { postMessage: vi.fn() };
@@ -138,17 +143,17 @@ describe('Claude adoption dedup and titles', () => {
     );
 
     const agent = agents.get(1);
-    expect(agent?.agentName).toBe('do something specific with this repository'.slice(0, 40));
+    expect(agent?.agentName).toBe('Repository review');
     expect(agent?.claudeTitleResolved).toBe(true);
     expect(webview.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'agentCreated',
-        agentName: 'do something specific with this repository'.slice(0, 40),
+        agentName: 'Repository review',
       }),
     );
   });
 
-  it('updates a placeholder Claude title when a later user message arrives', () => {
+  it('uses a user prompt as a provisional title and replaces it when an explicit title arrives', () => {
     const jsonlFile = path.join(tmpDir, 'session-3.jsonl');
     const agent = makeAgent(1, jsonlFile);
     const agents = new Map<number, AgentState>([[1, agent]]);
@@ -168,11 +173,62 @@ describe('Claude adoption dedup and titles', () => {
     );
 
     expect(agent.agentName).toBe('please list the files in this directory');
-    expect(agent.claudeTitleResolved).toBe(true);
+    expect(agent.claudeTitleResolved).toBe(false);
     expect(webview.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'agentMetadata',
         agentName: 'please list the files in this directory',
+      }),
+    );
+
+    processTranscriptLine(
+      1,
+      JSON.stringify({ type: 'ai-title', sessionId: 'session-3', title: 'Directory listing' }),
+      agents,
+      new Map(),
+      new Map(),
+      webview as unknown as import('vscode').Webview,
+    );
+
+    expect(agent.agentName).toBe('Directory listing');
+    expect(agent.claudeTitleResolved).toBe(true);
+    expect(webview.postMessage).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        type: 'agentMetadata',
+        agentName: 'Directory listing',
+      }),
+    );
+  });
+
+  it('does not replace a Claude Cowork title with a transcript ai-title', () => {
+    const jsonlFile = path.join(tmpDir, 'local_cowork_123.jsonl');
+    const agent = {
+      ...makeAgent(1, jsonlFile),
+      sessionId: 'local_cowork_123',
+      agentName: 'Cowork Lead',
+      claudeTitleResolved: true,
+    };
+    const agents = new Map<number, AgentState>([[1, agent]]);
+    const webview = { postMessage: vi.fn() };
+
+    processTranscriptLine(
+      1,
+      JSON.stringify({
+        type: 'ai-title',
+        sessionId: 'local_cowork_123',
+        title: 'Transcript title',
+      }),
+      agents,
+      new Map(),
+      new Map(),
+      webview as unknown as import('vscode').Webview,
+    );
+
+    expect(agent.agentName).toBe('Cowork Lead');
+    expect(webview.postMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'agentMetadata',
+        agentName: 'Transcript title',
       }),
     );
   });
@@ -337,6 +393,8 @@ describe('Claude adoption dedup and titles', () => {
     );
 
     expect(agents.get(1)?.sessionId).toBe('code-session');
+    expect(agents.get(1)?.agentName).toBe('W2B code reference');
+    expect(agents.get(1)?.claudeTitleResolved).toBe(true);
     expect(isClaudeChatSession(coworkFile)).toBe(false);
   });
 

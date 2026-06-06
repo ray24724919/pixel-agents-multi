@@ -38,6 +38,8 @@ export const GLOBAL_SCAN_ACTIVE_MAX_AGE_MS = 600_000; // 10 minutes
 // ── Display Truncation ──────────────────────────────────────
 export const BASH_COMMAND_DISPLAY_MAX_LENGTH = 30;
 export const TASK_DESCRIPTION_DISPLAY_MAX_LENGTH = 40;
+export const CLAUDE_USER_TITLE_MAX_LENGTH = 40;
+export const CLAUDE_EXPLICIT_TITLE_MAX_LENGTH = 64;
 
 // ── Pixel Agents Server ─────────────────────────────────────
 export const SERVER_JSON_DIR = '.pixel-agents-multi';

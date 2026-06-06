@@ -65,7 +65,7 @@ export interface AgentState {
   codexLastTokenUsage?: TokenUsageDetails;
   codexRateLimits?: TokenRateLimitSnapshot[];
   claudeUsageByMessageKey?: Map<string, TokenUsageDetails>;
-  /** True once a regular Claude Code session title was derived from metadata/user text. */
+  /** True once a regular Claude Code session title was derived from explicit title metadata. */
   claudeTitleResolved?: boolean;
   /** Codex token total before the currently-bound thread; new thread totals are added to this. */
   codexInputTokenBase?: number;

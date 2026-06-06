@@ -5,6 +5,8 @@ const debug = process.env.PIXEL_AGENTS_DEBUG !== '0';
 
 import {
   BASH_COMMAND_DISPLAY_MAX_LENGTH,
+  CLAUDE_EXPLICIT_TITLE_MAX_LENGTH,
+  CLAUDE_USER_TITLE_MAX_LENGTH,
   TASK_DESCRIPTION_DISPLAY_MAX_LENGTH,
   TEXT_IDLE_DELAY_MS,
   TOOL_DONE_DELAY_MS,
@@ -162,20 +164,13 @@ export function processTranscriptLine(
   }
   try {
     const record = JSON.parse(line);
-    if (!agent.claudeTitleResolved && (!agent.agentName || agent.agentName === 'Claude')) {
+    const explicitTitle = extractClaudeExplicitTitleFromRecord(record);
+    if (explicitTitle && shouldApplyClaudeExplicitTitle(agent, explicitTitle)) {
+      updateClaudeAgentTitle(agentId, agent, explicitTitle, true, webview);
+    } else if (!agent.claudeTitleResolved && (!agent.agentName || agent.agentName === 'Claude')) {
       const title = extractClaudeUserTitleFromRecord(record);
       if (title) {
-        agent.agentName = title;
-        agent.claudeTitleResolved = true;
-        webview?.postMessage({
-          type: 'agentMetadata',
-          id: agentId,
-          folderName: agent.projectName ?? agent.folderName,
-          agentName: title,
-          providerId: 'claude',
-          projectDir: agent.projectDir,
-          transcriptPath: agent.jsonlFile,
-        });
+        updateClaudeAgentTitle(agentId, agent, title, false, webview);
       }
     }
 
@@ -526,7 +521,12 @@ export function processTranscriptLine(
       // Log first occurrence of unrecognized record types to help diagnose issues
       // where Claude Code changes JSONL format. Known types we intentionally skip:
       // file-history-snapshot, queue-operation (non-enqueue), etc.
-      const knownSkippableTypes = new Set(['file-history-snapshot', 'system', 'queue-operation']);
+      const knownSkippableTypes = new Set([
+        'ai-title',
+        'file-history-snapshot',
+        'system',
+        'queue-operation',
+      ]);
       if (!knownSkippableTypes.has(record.type)) {
         agent.seenUnknownRecordTypes.add(record.type);
         if (debug) {
@@ -542,6 +542,76 @@ export function processTranscriptLine(
   }
 }
 
+function updateClaudeAgentTitle(
+  agentId: number,
+  agent: AgentState,
+  title: string,
+  resolved: boolean,
+  webview: vscode.Webview | undefined,
+): void {
+  agent.agentName = title;
+  agent.claudeTitleResolved = resolved;
+  webview?.postMessage({
+    type: 'agentMetadata',
+    id: agentId,
+    folderName: agent.projectName ?? agent.folderName,
+    agentName: title,
+    providerId: 'claude',
+    projectDir: agent.projectDir,
+    transcriptPath: agent.jsonlFile,
+  });
+}
+
+function shouldApplyClaudeExplicitTitle(agent: AgentState, title: string): boolean {
+  if (
+    agent.teamName ||
+    agent.isTeamLead !== undefined ||
+    agent.leadAgentId !== undefined ||
+    agent.sessionId.startsWith('local_cowork_')
+  ) {
+    return false;
+  }
+  return agent.agentName !== title || !agent.claudeTitleResolved;
+}
+
+export function extractClaudeExplicitTitleFromRecord(record: unknown): string | undefined {
+  const objectRecord = asRecord(record);
+  if (!objectRecord) return undefined;
+  const metadata = asRecord(objectRecord.metadata);
+  const session = asRecord(objectRecord.session);
+  const message = asRecord(objectRecord.message);
+  const candidates = [
+    objectRecord.title,
+    objectRecord.threadName,
+    objectRecord.thread_name,
+    objectRecord.conversationTitle,
+    objectRecord.conversation_title,
+    objectRecord.sessionTitle,
+    objectRecord.session_title,
+    objectRecord.name,
+    objectRecord.summary,
+    metadata?.title,
+    metadata?.threadName,
+    metadata?.conversationTitle,
+    metadata?.sessionTitle,
+    metadata?.name,
+    session?.title,
+    session?.threadName,
+    session?.conversationTitle,
+    session?.sessionTitle,
+    session?.name,
+    message?.title,
+  ];
+
+  for (const candidate of candidates) {
+    const normalized = normalizeTitleText(stringValue(candidate));
+    if (!normalized) continue;
+    if (normalized.includes('<command-name>') || normalized.includes('<tool_use_id>')) continue;
+    return truncateTitle(normalized, CLAUDE_EXPLICIT_TITLE_MAX_LENGTH);
+  }
+  return undefined;
+}
+
 export function extractClaudeUserTitleFromRecord(record: unknown): string | undefined {
   const objectRecord = asRecord(record);
   if (!objectRecord) return undefined;
@@ -551,7 +621,7 @@ export function extractClaudeUserTitleFromRecord(record: unknown): string | unde
   const content = objectRecord.content ?? message?.content;
   const text = extractTextContent(content);
   if (!text) return undefined;
-  return text.slice(0, 40);
+  return text.slice(0, CLAUDE_USER_TITLE_MAX_LENGTH);
 }
 
 function extractTextContent(content: unknown): string | undefined {
@@ -583,6 +653,13 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
+}
+
+function truncateTitle(title: string, maxLength: number): string {
+  const normalized = title.trim();
+  if (normalized.length <= maxLength) return normalized;
+  const ellipsis = '...';
+  return `${normalized.slice(0, maxLength - ellipsis.length)}${ellipsis}`;
 }
 
 function processCodexTranscriptLine(
