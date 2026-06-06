@@ -26,6 +26,7 @@ import * as vscode from 'vscode';
 const debug = process.env.PIXEL_AGENTS_DEBUG !== '0';
 
 import {
+  CLAUDE_EXPLICIT_TITLE_MAX_LENGTH,
   CLEAR_IDLE_THRESHOLD_MS,
   DISMISSED_COOLDOWN_MS,
   EXTERNAL_ACTIVE_THRESHOLD_MS,
@@ -41,7 +42,11 @@ import { removeAgent } from './agentManager.js';
 import { TERMINAL_NAME_PREFIX } from './constants.js';
 import { getExtensionConfigValue } from './settings.js';
 import { cancelPermissionTimer, cancelWaitingTimer, clearAgentActivity } from './timerManager.js';
-import { extractClaudeUserTitleFromRecord, processTranscriptLine } from './transcriptParser.js';
+import {
+  extractClaudeExplicitTitleFromRecord,
+  extractClaudeUserTitleFromRecord,
+  processTranscriptLine,
+} from './transcriptParser.js';
 import type { AgentState } from './types.js';
 
 /** Files explicitly dismissed by the user (closed via X). Temporarily blocked from re-adoption. */
@@ -141,12 +146,20 @@ export function isClaudeChatSession(
   return sawCompletedConversation;
 }
 
-function extractClaudeTitleFromJsonlHeader(jsonlFile: string): string | undefined {
+interface ClaudeHeaderTitle {
+  title: string;
+  resolved: boolean;
+}
+
+function extractClaudeTitleFromJsonlHeader(jsonlFile: string): ClaudeHeaderTitle | undefined {
+  let fallbackTitle: string | undefined;
   for (const record of readClaudeJsonlHeaderRecords(jsonlFile).slice(0, 50)) {
+    const explicitTitle = extractClaudeExplicitTitleFromRecord(record);
+    if (explicitTitle) return { title: explicitTitle, resolved: true };
     const title = extractClaudeUserTitleFromRecord(record);
-    if (title) return title;
+    if (title && !fallbackTitle) fallbackTitle = title;
   }
-  return undefined;
+  return fallbackTitle ? { title: fallbackTitle, resolved: false } : undefined;
 }
 
 /** Dependencies for per-agent /clear detection in readNewLines polling.
@@ -1070,9 +1083,11 @@ function adoptExternalSession(
   const effectiveProjectDir = metadataOverride?.projectDir ?? metadata.cwd ?? projectDir;
   const metadataTitle =
     metadata.threadName && metadata.threadName !== 'Claude' ? metadata.threadName : undefined;
-  const extractedTitle =
-    metadataOverride?.agentName ?? metadataTitle ?? extractClaudeTitleFromJsonlHeader(jsonlFile);
+  const headerTitle = extractClaudeTitleFromJsonlHeader(jsonlFile);
+  const extractedTitle = metadataOverride?.agentName ?? metadataTitle ?? headerTitle?.title;
   const agentName = extractedTitle ?? 'Claude';
+  const claudeTitleResolved =
+    Boolean(metadataOverride?.agentName ?? metadataTitle) || headerTitle?.resolved === true;
   // Skip to end of file -- only show live activity going forward, not replay history
   let fileOffset = 0;
   try {
@@ -1107,7 +1122,7 @@ function adoptExternalSession(
     projectName: metadataOverride?.projectName ?? metadata.projectName,
     providerId: 'claude',
     agentName,
-    claudeTitleResolved: agentName !== 'Claude',
+    claudeTitleResolved,
     inputTokens: 0,
     outputTokens: 0,
   };
@@ -1524,7 +1539,7 @@ export function readClaudeSessionMetadata(
         }
 
         if (!cwd && typeof record.cwd === 'string') cwd = record.cwd;
-        if (!explicitTitle) explicitTitle = extractClaudeExplicitTitle(record);
+        if (!explicitTitle) explicitTitle = extractClaudeExplicitTitleFromRecord(record);
         if (cwd && explicitTitle) break;
       }
     } finally {
@@ -1541,43 +1556,6 @@ export function readClaudeSessionMetadata(
   };
 }
 
-function extractClaudeExplicitTitle(record: Record<string, unknown>): string | undefined {
-  const metadata = asRecord(record.metadata);
-  const session = asRecord(record.session);
-  const message = asRecord(record.message);
-  const candidates = [
-    record.title,
-    record.threadName,
-    record.thread_name,
-    record.conversationTitle,
-    record.conversation_title,
-    record.sessionTitle,
-    record.session_title,
-    record.name,
-    record.summary,
-    metadata?.title,
-    metadata?.threadName,
-    metadata?.conversationTitle,
-    metadata?.sessionTitle,
-    metadata?.name,
-    session?.title,
-    session?.threadName,
-    session?.conversationTitle,
-    session?.sessionTitle,
-    session?.name,
-    message?.title,
-  ];
-
-  for (const candidate of candidates) {
-    if (typeof candidate !== 'string') continue;
-    const normalized = candidate.replace(/\s+/g, ' ').trim();
-    if (!normalized) continue;
-    if (normalized.includes('<command-name>') || normalized.includes('<tool_use_id>')) continue;
-    return truncateTitle(normalized);
-  }
-  return undefined;
-}
-
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   return value as Record<string, unknown>;
@@ -1585,8 +1563,9 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 
 function truncateTitle(title: string): string {
   const normalized = title.trim();
-  if (normalized.length <= 64) return normalized;
-  return `${normalized.slice(0, 61)}...`;
+  if (normalized.length <= CLAUDE_EXPLICIT_TITLE_MAX_LENGTH) return normalized;
+  const ellipsis = '...';
+  return `${normalized.slice(0, CLAUDE_EXPLICIT_TITLE_MAX_LENGTH - ellipsis.length)}${ellipsis}`;
 }
 
 /** Scan ALL ~/.claude/projects/ directories for active sessions (global discovery). */
