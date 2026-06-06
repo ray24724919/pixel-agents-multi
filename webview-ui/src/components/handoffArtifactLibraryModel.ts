@@ -17,6 +17,7 @@ export interface HandoffArtifactLibraryItem {
   runId?: string;
   dispatchPackage?: HandoffDispatchPackage;
   completion?: HandoffCompletionStatus;
+  review?: HandoffCompletionReview;
   executionLiveHint?: HandoffExecutionLiveHint;
   displayTitle: string;
   displayDetail: string;
@@ -33,6 +34,50 @@ export interface HandoffCompletionStatus {
   branchMergedToMain?: boolean;
   checkedAt: string;
   statusLabel: string;
+}
+
+export type HandoffCompletionReviewStatus =
+  | 'not_ready'
+  | 'active'
+  | 'blocked'
+  | 'needs_report'
+  | 'needs_review'
+  | 'ready_to_merge'
+  | 'merged'
+  | 'unknown';
+
+export interface HandoffCompletionReviewReport {
+  title?: string;
+  hasSummary: boolean;
+  hasFilesChanged: boolean;
+  hasValidation: boolean;
+  hasAcceptanceCriteria: boolean;
+  hasDeviations: boolean;
+  validationLines: string[];
+  changedFileLines: string[];
+  riskLines: string[];
+  truncated: boolean;
+}
+
+export interface HandoffCompletionReviewGit {
+  branchExists?: boolean;
+  branchMergedToMain?: boolean;
+  branchHeadSha?: string;
+  mainHeadSha?: string;
+  aheadCount?: number;
+  behindCount?: number;
+}
+
+export interface HandoffCompletionReview {
+  status: HandoffCompletionReviewStatus;
+  statusLabel: string;
+  nextActionLabel: string;
+  reportRelativePath?: string;
+  branchName?: string;
+  report?: HandoffCompletionReviewReport;
+  git?: HandoffCompletionReviewGit;
+  warnings: string[];
+  checkedAt: string;
 }
 
 export type HandoffDispatchStatus = 'draft' | 'ready' | 'dispatched' | 'completed' | 'blocked';
@@ -560,7 +605,7 @@ export function buildHandoffExecutionQueueSummary(
 }
 
 export function buildHandoffQueueSummary(
-  items: readonly Pick<HandoffArtifactLibraryItem, 'dispatchPackage' | 'completion'>[],
+  items: readonly Pick<HandoffArtifactLibraryItem, 'dispatchPackage' | 'completion' | 'review'>[],
 ): HandoffQueueSummary {
   const summary: HandoffQueueSummary = {
     totalPackages: 0,
@@ -603,10 +648,16 @@ export function handoffQueueGroupLabel(group: HandoffQueueGroup): string {
 }
 
 export function handoffQueueGroupForItem(
-  item: Pick<HandoffArtifactLibraryItem, 'dispatchPackage' | 'completion'>,
+  item: Pick<HandoffArtifactLibraryItem, 'dispatchPackage' | 'completion' | 'review'>,
 ): Exclude<HandoffQueueGroup, 'all'> {
   const dispatchPackage = item.dispatchPackage;
   if (!dispatchPackage) return 'needs_dispatch';
+  if (item.review?.status === 'blocked') return 'blocked';
+  if (item.review?.status === 'merged') return 'done';
+  if (item.review?.status === 'needs_review' || item.review?.status === 'ready_to_merge') {
+    return 'report_ready';
+  }
+  if (item.review?.status === 'active') return 'active_waiting';
   const executionStatus = dispatchPackage.execution?.status;
   if (dispatchPackage.status === 'blocked' || executionStatus === 'blocked') return 'blocked';
   if (dispatchPackage.status === 'completed' || executionStatus === 'completed') return 'done';
@@ -750,6 +801,22 @@ function isHandoffExecutionStatus(value: unknown): value is HandoffExecutionStat
   );
 }
 
+function handoffCompletionReviewStatus(value: unknown): HandoffCompletionReviewStatus | undefined {
+  if (
+    value === 'not_ready' ||
+    value === 'active' ||
+    value === 'blocked' ||
+    value === 'needs_report' ||
+    value === 'needs_review' ||
+    value === 'ready_to_merge' ||
+    value === 'merged' ||
+    value === 'unknown'
+  ) {
+    return value;
+  }
+  return undefined;
+}
+
 function handoffArtifactItemFromUnknown(value: unknown): HandoffArtifactLibraryItem | undefined {
   if (typeof value !== 'object' || value === null) return undefined;
   const record = value as Record<string, unknown>;
@@ -774,6 +841,7 @@ function handoffArtifactItemFromUnknown(value: unknown): HandoffArtifactLibraryI
   const runId = stringValue(record.runId);
   const dispatchPackage = handoffDispatchPackageFromUnknown(record.dispatchPackage);
   const completion = handoffCompletionStatusFromUnknown(record.completion);
+  const review = handoffCompletionReviewFromUnknown(record.review);
   const statusLabel = handoffStatusLabel(status);
   const dispatchDetail = dispatchPackage
     ? ` / package ${dispatchPackage.statusLabel}${
@@ -781,6 +849,9 @@ function handoffArtifactItemFromUnknown(value: unknown): HandoffArtifactLibraryI
       } / ${dispatchPackage.packageRelativePath}`
     : '';
   const completionDetail = completion ? ` / ${completion.statusLabel}` : '';
+  const reviewDetail = review
+    ? ` / review ${review.statusLabel} / next ${review.nextActionLabel}`
+    : '';
   const updatedAtMs = updatedAt ? Date.parse(updatedAt) : undefined;
   const updatedLabel =
     updatedAtMs !== undefined && Number.isFinite(updatedAtMs)
@@ -805,8 +876,9 @@ function handoffArtifactItemFromUnknown(value: unknown): HandoffArtifactLibraryI
     runId,
     dispatchPackage,
     completion,
+    review,
     displayTitle: title ?? filename,
-    displayDetail: `${statusLabel}${dispatchDetail}${completionDetail} / ${filename} / ${formatBytes(
+    displayDetail: `${statusLabel}${dispatchDetail}${completionDetail}${reviewDetail} / ${filename} / ${formatBytes(
       sizeBytes,
     )} / ${updatedLabel}`,
     statusLabel,
@@ -836,6 +908,95 @@ function handoffCompletionStatusFromUnknown(value: unknown): HandoffCompletionSt
     checkedAt,
     statusLabel: handoffCompletionStatusLabel(reportExists, branchExists, branchMergedToMain),
   };
+}
+
+function handoffCompletionReviewFromUnknown(value: unknown): HandoffCompletionReview | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const record = value as Record<string, unknown>;
+  const status = handoffCompletionReviewStatus(record.status);
+  const statusLabel = safeDisplayStringValue(record.statusLabel);
+  const nextActionLabel = safeDisplayStringValue(record.nextActionLabel);
+  const checkedAt = stringValue(record.checkedAt);
+  if (!status || !statusLabel || !nextActionLabel || !checkedAt) return undefined;
+  const report = handoffCompletionReviewReportFromUnknown(record.report);
+  const git = handoffCompletionReviewGitFromUnknown(record.git);
+  return {
+    status,
+    statusLabel,
+    nextActionLabel,
+    ...(safeReportRelativePath(record.reportRelativePath)
+      ? { reportRelativePath: safeReportRelativePath(record.reportRelativePath) }
+      : {}),
+    ...(safeBranchName(record.branchName) ? { branchName: safeBranchName(record.branchName) } : {}),
+    ...(report ? { report } : {}),
+    ...(git ? { git } : {}),
+    warnings: stringArrayValue(record.warnings)
+      .map((line) => safeDisplayStringValue(line))
+      .filter((line): line is string => line !== undefined),
+    checkedAt,
+  };
+}
+
+function handoffCompletionReviewReportFromUnknown(
+  value: unknown,
+): HandoffCompletionReviewReport | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const record = value as Record<string, unknown>;
+  const hasSummary = booleanValue(record.hasSummary);
+  const hasFilesChanged = booleanValue(record.hasFilesChanged);
+  const hasValidation = booleanValue(record.hasValidation);
+  const hasAcceptanceCriteria = booleanValue(record.hasAcceptanceCriteria);
+  const hasDeviations = booleanValue(record.hasDeviations);
+  const truncated = booleanValue(record.truncated);
+  if (
+    hasSummary === undefined ||
+    hasFilesChanged === undefined ||
+    hasValidation === undefined ||
+    hasAcceptanceCriteria === undefined ||
+    hasDeviations === undefined ||
+    truncated === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    title: safeDisplayStringValue(record.title),
+    hasSummary,
+    hasFilesChanged,
+    hasValidation,
+    hasAcceptanceCriteria,
+    hasDeviations,
+    validationLines: stringArrayValue(record.validationLines)
+      .map((line) => safeDisplayStringValue(line))
+      .filter((line): line is string => line !== undefined),
+    changedFileLines: stringArrayValue(record.changedFileLines)
+      .map((line) => safeDisplayStringValue(line))
+      .filter((line): line is string => line !== undefined),
+    riskLines: stringArrayValue(record.riskLines)
+      .map((line) => safeDisplayStringValue(line))
+      .filter((line): line is string => line !== undefined),
+    truncated,
+  };
+}
+
+function handoffCompletionReviewGitFromUnknown(
+  value: unknown,
+): HandoffCompletionReviewGit | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const record = value as Record<string, unknown>;
+  const git: HandoffCompletionReviewGit = {};
+  const branchExists = booleanValue(record.branchExists);
+  const branchMergedToMain = booleanValue(record.branchMergedToMain);
+  const branchHeadSha = safeGitSha(record.branchHeadSha);
+  const mainHeadSha = safeGitSha(record.mainHeadSha);
+  const aheadCount = nonNegativeIntegerValue(record.aheadCount);
+  const behindCount = nonNegativeIntegerValue(record.behindCount);
+  if (branchExists !== undefined) git.branchExists = branchExists;
+  if (branchMergedToMain !== undefined) git.branchMergedToMain = branchMergedToMain;
+  if (branchHeadSha) git.branchHeadSha = branchHeadSha;
+  if (mainHeadSha) git.mainHeadSha = mainHeadSha;
+  if (aheadCount !== undefined) git.aheadCount = aheadCount;
+  if (behindCount !== undefined) git.behindCount = behindCount;
+  return Object.keys(git).length > 0 ? git : undefined;
 }
 
 function handoffDispatchPackageFromUnknown(value: unknown): HandoffDispatchPackage | undefined {
@@ -945,6 +1106,7 @@ function safeDisplayStringValue(value: unknown): string | undefined {
   const text = stringValue(value);
   if (!text) return undefined;
   const safe = text
+    .replace(/(^|[\s(["'`])\/(?!\/)(?:[A-Za-z0-9._-]+\/){2,}[^\s)]+/g, '$1[redacted path]')
     .replace(/\\\\\?\\[^\s)]+/g, '[redacted path]')
     .replace(/[A-Za-z]:\\[^\s)]+/g, '[redacted path]')
     .replace(/\\\\[^\s)]+/g, '[redacted path]')
@@ -952,12 +1114,53 @@ function safeDisplayStringValue(value: unknown): string | undefined {
       /(^|[\s(["'])\/(?:Users|home|var|tmp|private|mnt|Volumes)\/[^\s)]+/g,
       '$1[redacted path]',
     )
+    .replace(
+      /\b(?:raw prompt|tool output|transcript text|credential|secret|api[_-]?key)\s*[:=].*$/gi,
+      '[redacted content]',
+    )
     .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, '[redacted secret]')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 240)
     .trim();
   return safe || undefined;
+}
+
+function safeReportRelativePath(value: unknown): string | undefined {
+  const text = stringValue(value);
+  if (!text || text.includes('\\') || /^[A-Za-z]:/.test(text) || text.includes('..')) {
+    return undefined;
+  }
+  if (
+    !text.startsWith('docs/roadmap/supervision/reports/') ||
+    !text.toLowerCase().endsWith('.md')
+  ) {
+    return undefined;
+  }
+  return text;
+}
+
+function safeBranchName(value: unknown): string | undefined {
+  const text = stringValue(value);
+  if (!text || !/^product\/handoff-[a-z0-9][a-z0-9._-]{0,127}$/.test(text)) {
+    return undefined;
+  }
+  return text;
+}
+
+function safeGitSha(value: unknown): string | undefined {
+  const text = stringValue(value);
+  if (!text || !/^[0-9a-f]{7,40}$/i.test(text)) return undefined;
+  return text.toLowerCase();
+}
+
+function stringArrayValue(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((entry): entry is string => typeof entry === 'string' && entry.trim() !== '');
+}
+
+function nonNegativeIntegerValue(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : undefined;
 }
 
 function numberValue(value: unknown): number | undefined {
@@ -990,10 +1193,12 @@ function handoffCompletionStatusLabel(
 }
 
 function compareHandoffQueueItems(
-  a: Pick<HandoffArtifactLibraryItem, 'completion' | 'dispatchPackage' | 'modifiedAt'>,
-  b: Pick<HandoffArtifactLibraryItem, 'completion' | 'dispatchPackage' | 'modifiedAt'>,
+  a: Pick<HandoffArtifactLibraryItem, 'completion' | 'dispatchPackage' | 'modifiedAt' | 'review'>,
+  b: Pick<HandoffArtifactLibraryItem, 'completion' | 'dispatchPackage' | 'modifiedAt' | 'review'>,
 ): number {
-  const groupRank = (item: Pick<HandoffArtifactLibraryItem, 'completion' | 'dispatchPackage'>) => {
+  const groupRank = (
+    item: Pick<HandoffArtifactLibraryItem, 'completion' | 'dispatchPackage' | 'review'>,
+  ) => {
     const group = handoffQueueGroupForItem(item);
     if (group === 'blocked') return 0;
     if (group === 'report_ready') return 1;

@@ -45,6 +45,10 @@ export const HANDOFF_DISPATCH_PROMPT_MAX_LENGTH = 8_000;
 export const HANDOFF_WORK_PACKAGE_RELATIVE_DIR = 'docs/roadmap/supervision/work-packages/handoffs';
 export const HANDOFF_WORK_PACKAGE_SUFFIX = 'work-package';
 export const HANDOFF_WORK_PACKAGE_PROMPT_MAX_LENGTH = 8_000;
+export const HANDOFF_COMPLETION_REPORT_SCAN_BYTES = 32 * 1024;
+export const HANDOFF_COMPLETION_REVIEW_MAX_LINES = 4;
+export const HANDOFF_COMPLETION_REVIEW_MAX_LINE_LENGTH = 180;
+export const HANDOFF_COMPLETION_REVIEW_MAX_WARNINGS = 6;
 
 // ── Settings Persistence (VS Code globalState keys) ─────────
 export const GLOBAL_KEY_SOUND_ENABLED = `${EXTENSION_NAME}.soundEnabled`;

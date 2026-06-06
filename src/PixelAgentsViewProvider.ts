@@ -1018,6 +1018,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         reportExists: result.completion.reportExists,
         branchExists: result.completion.branchExists,
         branchMergedToMain: result.completion.branchMergedToMain,
+        review: result.review,
       });
       this.postHandoffTimelineEvent('handoff.completion_refreshed', result.markdown.relativePath, {
         filename: result.markdown.filename,

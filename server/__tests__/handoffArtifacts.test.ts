@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildHandoffArtifactMetadata,
   buildHandoffArtifactTarget,
+  buildHandoffCompletionReview,
   buildHandoffDispatchPrompt,
   buildHandoffWorkPackagePrompt,
   buildHandoffWorkPackageTarget,
@@ -926,11 +927,11 @@ describe('handoff artifact path safety', () => {
       const completion = detectHandoffCompletionStatus(repoRoot, workPackage.dispatchPackage, {
         nowMs: Date.UTC(2026, 5, 4, 10, 30),
         gitRunner: (_cwd, args) =>
-          args[0] === 'show-ref' || args[0] === 'merge-base' ? true : false,
+          args[0] === 'rev-parse' || args[0] === 'merge-base' ? true : false,
       });
       const refreshed = refreshHandoffCompletionStatus(repoRoot, target.relativePath, {
         nowMs: Date.UTC(2026, 5, 4, 10, 30),
-        gitRunner: (_cwd, args) => args[0] === 'show-ref',
+        gitRunner: (_cwd, args) => args[0] === 'rev-parse',
       });
       const reportOpenPath = resolveHandoffReportOpenPath(repoRoot, target.relativePath);
 
@@ -946,6 +947,267 @@ describe('handoff artifact path safety', () => {
       expect(refreshed.completion.branchMergedToMain).toBe(false);
       expect(reportOpenPath.relativePath).toBe(workPackage.dispatchPackage.reportRelativePath);
       expect(reportOpenPath.absolutePath).toBe(reportAbsolutePath);
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('builds a safe completion review from bounded report signals and read-only git facts', () => {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pixel-handoff-review-'));
+    try {
+      const target = buildHandoffArtifactTarget(
+        repoRoot,
+        { project: 'Review Scan' },
+        Date.UTC(2026, 5, 4, 7, 7),
+      );
+      fs.mkdirSync(path.dirname(target.absolutePath), { recursive: true });
+      fs.writeFileSync(target.absolutePath, '# Review handoff\n\nBody', 'utf8');
+      const metadata = buildHandoffArtifactMetadata(
+        target,
+        { title: 'Review W13-A', projectName: 'Pixel Agents Multi' },
+        Date.UTC(2026, 5, 4, 7, 7),
+      );
+      fs.writeFileSync(
+        target.metadataAbsolutePath,
+        `${JSON.stringify(metadata, null, 2)}\n`,
+        'utf8',
+      );
+      const workPackage = createHandoffWorkPackage(
+        repoRoot,
+        target.relativePath,
+        Date.UTC(2026, 5, 4, 8, 30),
+      );
+      const reportAbsolutePath = path.resolve(
+        repoRoot,
+        ...workPackage.dispatchPackage.reportRelativePath.split('/'),
+      );
+      fs.mkdirSync(path.dirname(reportAbsolutePath), { recursive: true });
+      fs.writeFileSync(
+        reportAbsolutePath,
+        [
+          '# Executor report',
+          '',
+          '## Summary',
+          '- Completed W13-A review layer.',
+          '',
+          '## Files changed',
+          '- src/handoffArtifacts.ts',
+          '- C:\\Users\\User\\private\\secret.ts',
+          '',
+          '## Validation',
+          '- npm run build passed',
+          '- npm run test:server passed',
+          '',
+          '## Deviations / Follow-up',
+          '- Follow-up: inspect /home/user/private/transcript.jsonl',
+          '- Raw prompt: do not leak this sentence',
+        ].join('\n'),
+        'utf8',
+      );
+      const completion = {
+        reportExists: true,
+        reportRelativePath: workPackage.dispatchPackage.reportRelativePath,
+        reportModifiedAt: Date.UTC(2026, 5, 4, 10, 0),
+        reportSizeBytes: 400,
+        branchName: workPackage.dispatchPackage.branchName,
+        branchExists: true,
+        branchMergedToMain: false,
+        checkedAt: '2026-06-04T10:30:00.000Z',
+      };
+      const gitCalls: string[][] = [];
+
+      const review = buildHandoffCompletionReview(repoRoot, workPackage.metadata, completion, {
+        gitReadRunner: (_cwd, args) => {
+          gitCalls.push([...args]);
+          if (args[0] === 'rev-parse' && args[2] === workPackage.dispatchPackage.branchName) {
+            return { status: 0, stdout: 'abc1234567890abcdef\n' };
+          }
+          if (args[0] === 'rev-parse' && args[2] === 'main') {
+            return { status: 0, stdout: 'def1234567890abcdef\n' };
+          }
+          if (args[0] === 'merge-base') return { status: 1 };
+          if (args[0] === 'rev-list') return { status: 0, stdout: '0\t2\n' };
+          return { status: 99 };
+        },
+      });
+
+      expect(review.status).toBe('ready_to_merge');
+      expect(review.statusLabel).toBe('Ready to merge');
+      expect(review.nextActionLabel).toBe('Inspect branch');
+      expect(review.report?.hasSummary).toBe(true);
+      expect(review.report?.hasFilesChanged).toBe(true);
+      expect(review.report?.hasValidation).toBe(true);
+      expect(review.report?.hasDeviations).toBe(true);
+      expect(review.report?.validationLines).toContain('npm run build passed');
+      expect(review.report?.changedFileLines.join('\n')).toContain('[redacted path]');
+      expect(JSON.stringify(review)).not.toContain('C:\\Users\\User');
+      expect(JSON.stringify(review)).not.toContain('/home/user/private');
+      expect(JSON.stringify(review)).not.toContain('do not leak this sentence');
+      expect(review.git).toMatchObject({
+        branchExists: true,
+        branchMergedToMain: false,
+        branchHeadSha: 'abc1234567890abcdef',
+        mainHeadSha: 'def1234567890abcdef',
+        aheadCount: 2,
+        behindCount: 0,
+      });
+      expect(gitCalls).toEqual([
+        ['rev-parse', '--verify', workPackage.dispatchPackage.branchName],
+        ['rev-parse', '--verify', 'main'],
+        ['merge-base', '--is-ancestor', workPackage.dispatchPackage.branchName, 'main'],
+        ['rev-list', '--left-right', '--count', `main...${workPackage.dispatchPackage.branchName}`],
+      ]);
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('maps completion review states for missing reports, active execution, blocked execution, and merged branches', () => {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pixel-handoff-review-states-'));
+    try {
+      const target = buildHandoffArtifactTarget(
+        repoRoot,
+        { project: 'Review States' },
+        Date.UTC(2026, 5, 4, 7, 7),
+      );
+      fs.mkdirSync(path.dirname(target.absolutePath), { recursive: true });
+      fs.writeFileSync(target.absolutePath, '# Review states\n\nBody', 'utf8');
+      const metadata = buildHandoffArtifactMetadata(
+        target,
+        { title: 'States W13-A', projectName: 'Pixel Agents Multi' },
+        Date.UTC(2026, 5, 4, 7, 7),
+      );
+      fs.writeFileSync(
+        target.metadataAbsolutePath,
+        `${JSON.stringify(metadata, null, 2)}\n`,
+        'utf8',
+      );
+      const workPackage = createHandoffWorkPackage(
+        repoRoot,
+        target.relativePath,
+        Date.UTC(2026, 5, 4, 8, 30),
+      );
+      const baseCompletion = {
+        reportExists: false,
+        reportRelativePath: workPackage.dispatchPackage.reportRelativePath,
+        branchName: workPackage.dispatchPackage.branchName,
+        checkedAt: '2026-06-04T10:30:00.000Z',
+      };
+
+      expect(
+        buildHandoffCompletionReview(repoRoot, workPackage.metadata, baseCompletion).status,
+      ).toBe('needs_report');
+      expect(
+        buildHandoffCompletionReview(
+          repoRoot,
+          {
+            ...workPackage.metadata,
+            dispatchPackage: {
+              ...workPackage.dispatchPackage,
+              status: 'dispatched',
+              execution: {
+                agentId: 12,
+                linkedAt: '2026-06-04T09:00:00.000Z',
+                updatedAt: '2026-06-04T09:00:00.000Z',
+                status: 'active',
+              },
+            },
+          },
+          baseCompletion,
+        ).status,
+      ).toBe('active');
+      expect(
+        buildHandoffCompletionReview(
+          repoRoot,
+          {
+            ...workPackage.metadata,
+            dispatchPackage: {
+              ...workPackage.dispatchPackage,
+              status: 'blocked',
+            },
+          },
+          baseCompletion,
+        ).status,
+      ).toBe('blocked');
+
+      const reportAbsolutePath = path.resolve(
+        repoRoot,
+        ...workPackage.dispatchPackage.reportRelativePath.split('/'),
+      );
+      fs.mkdirSync(path.dirname(reportAbsolutePath), { recursive: true });
+      fs.writeFileSync(
+        reportAbsolutePath,
+        '# Report\n\n## Summary\nDone\n\n## Files changed\nsrc/a.ts\n\n## Validation\nnpm run build passed',
+        'utf8',
+      );
+      const mergedReview = buildHandoffCompletionReview(
+        repoRoot,
+        workPackage.metadata,
+        {
+          ...baseCompletion,
+          reportExists: true,
+          branchExists: true,
+          branchMergedToMain: true,
+        },
+        {
+          gitReadRunner: (_cwd, args) => {
+            if (args[0] === 'rev-parse') return { status: 0, stdout: 'abc1234567890\n' };
+            if (args[0] === 'merge-base') return { status: 0 };
+            if (args[0] === 'rev-list') return { status: 0, stdout: '0 0\n' };
+            return { status: 99 };
+          },
+        },
+      );
+
+      expect(mergedReview.status).toBe('merged');
+      expect(mergedReview.nextActionLabel).toBe('Mark reviewed');
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('exposes completion review data through handoff artifact scans without absolute paths', () => {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pixel-handoff-review-scan-'));
+    try {
+      const target = buildHandoffArtifactTarget(
+        repoRoot,
+        { project: 'Review Scan Library' },
+        Date.UTC(2026, 5, 4, 7, 7),
+      );
+      fs.mkdirSync(path.dirname(target.absolutePath), { recursive: true });
+      fs.writeFileSync(target.absolutePath, '# Review scan\n\nBody', 'utf8');
+      const metadata = buildHandoffArtifactMetadata(
+        target,
+        { title: 'Library W13-A', projectName: 'Pixel Agents Multi' },
+        Date.UTC(2026, 5, 4, 7, 7),
+      );
+      fs.writeFileSync(
+        target.metadataAbsolutePath,
+        `${JSON.stringify(metadata, null, 2)}\n`,
+        'utf8',
+      );
+      const workPackage = createHandoffWorkPackage(
+        repoRoot,
+        target.relativePath,
+        Date.UTC(2026, 5, 4, 8, 30),
+      );
+      const reportAbsolutePath = path.resolve(
+        repoRoot,
+        ...workPackage.dispatchPackage.reportRelativePath.split('/'),
+      );
+      fs.mkdirSync(path.dirname(reportAbsolutePath), { recursive: true });
+      fs.writeFileSync(
+        reportAbsolutePath,
+        '# Report\n\n## Summary\nDone\n\n## Files changed\nC:\\Users\\User\\private.ts\n\n## Validation\nnpm run test:server passed',
+        'utf8',
+      );
+
+      const summary = scanHandoffArtifacts(repoRoot)[0];
+
+      expect(summary?.review?.statusLabel).toBeTruthy();
+      expect(summary?.review?.report?.validationLines).toContain('npm run test:server passed');
+      expect(JSON.stringify(summary?.review)).not.toContain('C:\\Users\\User');
+      expect(summary?.completion?.reportExists).toBe(true);
     } finally {
       fs.rmSync(repoRoot, { recursive: true, force: true });
     }

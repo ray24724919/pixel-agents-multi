@@ -2936,10 +2936,26 @@ function HandoffArtifactLibraryPanel({
                     <span className="shrink-0 border border-border bg-bg px-2 py-1 text-xs uppercase tracking-wide text-text-muted">
                       {item.statusLabel}
                     </span>
+                    {item.review && (
+                      <span className="shrink-0 border border-border bg-bg px-2 py-1 text-xs uppercase tracking-wide text-text-muted">
+                        {item.review.statusLabel}
+                      </span>
+                    )}
                   </div>
                   <div className="mt-1 break-words text-xs text-text-muted">
                     {item.displayDetail}
                   </div>
+                  {item.review && (
+                    <div className="mt-1 break-words text-xs text-text-muted">
+                      Review next: {item.review.nextActionLabel}
+                      {handoffReviewSignalLabel(item)}
+                    </div>
+                  )}
+                  {item.review?.warnings[0] && (
+                    <div className="mt-1 break-words text-xs text-status-permission">
+                      Warning: {item.review.warnings[0]}
+                    </div>
+                  )}
                   <div className="mt-1 truncate font-mono text-xs text-text-muted">
                     {item.relativePath}
                   </div>
@@ -3205,9 +3221,29 @@ function HandoffArtifactLibraryPanel({
                       <span className="border border-border bg-bg px-2 py-1 text-xs uppercase tracking-wide text-text-muted">
                         {item.dispatchPackage?.execution?.statusLabel ?? 'No agent'}
                       </span>
+                      {item.review && (
+                        <span className="border border-border bg-bg px-2 py-1 text-xs uppercase tracking-wide text-text-muted">
+                          {item.review.statusLabel}
+                        </span>
+                      )}
                     </div>
                     <div className="mt-1 break-words text-xs text-text-muted">
-                      {item.completion?.statusLabel ?? 'Completion not checked'}
+                      {item.review
+                        ? `Next: ${item.review.nextActionLabel}${handoffReviewSignalLabel(item)}`
+                        : (item.completion?.statusLabel ?? 'Completion not checked')}
+                    </div>
+                    {item.review?.warnings[0] && (
+                      <div className="mt-1 break-words text-xs text-status-permission">
+                        Warning: {item.review.warnings[0]}
+                      </div>
+                    )}
+                    {item.completion && (
+                      <div className="mt-1 break-words text-xs text-text-muted">
+                        {item.completion.statusLabel}
+                      </div>
+                    )}
+                    <div className="mt-1 truncate font-mono text-xs text-text-muted">
+                      {item.review?.branchName ?? item.dispatchPackage?.branchName}
                     </div>
                     <div className="mt-1 truncate font-mono text-xs text-text-muted">
                       {item.dispatchPackage?.packageRelativePath}
@@ -3724,6 +3760,17 @@ function handoffExecutionDetailLabel(
       ? 'Live: linked agent not visible'
       : undefined;
   return [packageLabel, `Execution ${linkedLabel}`, liveHint].filter(Boolean).join(' / ');
+}
+
+function handoffReviewSignalLabel(item: HandoffArtifactLibraryItem): string {
+  const review = item.review;
+  if (!review) return '';
+  const validation = review.report?.validationLines[0];
+  if (validation) return ` / Validation: ${validation}`;
+  const changedFile = review.report?.changedFileLines[0];
+  if (changedFile) return ` / Files: ${changedFile}`;
+  if (review.git?.aheadCount !== undefined) return ` / Branch ahead ${review.git.aheadCount}`;
+  return '';
 }
 
 function usageHistoryCopyLabel(status: 'idle' | 'copied' | 'failed'): string {

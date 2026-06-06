@@ -11,6 +11,10 @@ import {
   HANDOFF_ARTIFACT_METADATA_SCHEMA_VERSION,
   HANDOFF_ARTIFACT_TITLE_SCAN_BYTES,
   HANDOFF_ARTIFACTS_RELATIVE_DIR,
+  HANDOFF_COMPLETION_REPORT_SCAN_BYTES,
+  HANDOFF_COMPLETION_REVIEW_MAX_LINE_LENGTH,
+  HANDOFF_COMPLETION_REVIEW_MAX_LINES,
+  HANDOFF_COMPLETION_REVIEW_MAX_WARNINGS,
   HANDOFF_DISPATCH_BRANCH_PREFIX,
   HANDOFF_DISPATCH_PROMPT_MAX_LENGTH,
   HANDOFF_DISPATCH_REPORT_SUFFIX,
@@ -93,6 +97,50 @@ export interface HandoffCompletionStatusV1 {
   checkedAt: string;
 }
 
+export type HandoffCompletionReviewStatus =
+  | 'not_ready'
+  | 'active'
+  | 'blocked'
+  | 'needs_report'
+  | 'needs_review'
+  | 'ready_to_merge'
+  | 'merged'
+  | 'unknown';
+
+export interface HandoffCompletionReviewReportSignalsV1 {
+  title?: string;
+  hasSummary: boolean;
+  hasFilesChanged: boolean;
+  hasValidation: boolean;
+  hasAcceptanceCriteria: boolean;
+  hasDeviations: boolean;
+  validationLines: string[];
+  changedFileLines: string[];
+  riskLines: string[];
+  truncated: boolean;
+}
+
+export interface HandoffCompletionReviewGitFactsV1 {
+  branchExists?: boolean;
+  branchMergedToMain?: boolean;
+  branchHeadSha?: string;
+  mainHeadSha?: string;
+  aheadCount?: number;
+  behindCount?: number;
+}
+
+export interface HandoffCompletionReviewV1 {
+  status: HandoffCompletionReviewStatus;
+  statusLabel: string;
+  nextActionLabel: string;
+  reportRelativePath?: string;
+  branchName?: string;
+  report?: HandoffCompletionReviewReportSignalsV1;
+  git?: HandoffCompletionReviewGitFactsV1;
+  warnings: string[];
+  checkedAt: string;
+}
+
 export interface HandoffArtifactMetadataV1 {
   schemaVersion: typeof HANDOFF_ARTIFACT_METADATA_SCHEMA_VERSION;
   artifactId: string;
@@ -129,6 +177,8 @@ export interface HandoffArtifactSummary {
   sessionId?: string;
   runId?: string;
   dispatchPackage?: HandoffDispatchPackageV1;
+  completion?: HandoffCompletionStatusV1;
+  review?: HandoffCompletionReviewV1;
 }
 
 export interface HandoffArtifactOpenPath {
@@ -226,11 +276,21 @@ export interface HandoffWorkPackagePrompt {
   prompt: string;
 }
 
+export interface HandoffGitReadResult {
+  status: number | null;
+  stdout?: string;
+}
+
 export type HandoffGitCheckRunner = (repoRoot: string, args: readonly string[]) => boolean;
+export type HandoffGitReadRunner = (
+  repoRoot: string,
+  args: readonly string[],
+) => HandoffGitReadResult;
 
 export interface HandoffCompletionScanOptions {
   nowMs?: number;
   gitRunner?: HandoffGitCheckRunner;
+  gitReadRunner?: HandoffGitReadRunner;
 }
 
 export function buildHandoffArtifactTarget(
@@ -310,12 +370,24 @@ export function scanHandoffArtifacts(
   return summaries
     .sort((a, b) => b.modifiedAt - a.modifiedAt || a.filename.localeCompare(b.filename))
     .slice(0, Math.max(0, Math.floor(maxItems)))
-    .map((summary) => ({
-      ...summary,
-      completion: summary.dispatchPackage
+    .map((summary) => {
+      const metadata =
+        summary.relativePath && summary.artifactId
+          ? readHandoffArtifactMetadataForMarkdown(repoRoot, summary.relativePath)
+          : undefined;
+      const completion = summary.dispatchPackage
         ? detectHandoffCompletionStatus(repoRoot, summary.dispatchPackage)
-        : undefined,
-    }));
+        : undefined;
+      const review =
+        metadata && summary.dispatchPackage
+          ? buildHandoffCompletionReview(repoRoot, metadata, completion)
+          : undefined;
+      return {
+        ...summary,
+        completion,
+        review,
+      };
+    });
 }
 
 export function resolveHandoffArtifactOpenPath(
@@ -813,7 +885,7 @@ export function detectHandoffCompletionStatus(
 
   const branchExists = runReadonlyGitCheck(
     resolvedRoot,
-    ['show-ref', '--verify', '--quiet', `refs/heads/${branchName}`],
+    ['rev-parse', '--verify', branchName],
     options.gitRunner,
   );
   const branchMergedToMain =
@@ -839,6 +911,68 @@ export function detectHandoffCompletionStatus(
   };
 }
 
+export function buildHandoffCompletionReview(
+  repoRoot: string,
+  metadata: HandoffArtifactMetadataV1,
+  completion?: HandoffCompletionStatusV1,
+  options: HandoffCompletionScanOptions = {},
+): HandoffCompletionReviewV1 {
+  const checkedAt = completion?.checkedAt ?? isoTimestampFromMs(options.nowMs ?? Date.now());
+  const dispatchPackage = metadata.dispatchPackage;
+  if (!dispatchPackage) {
+    return buildCompletionReviewResult('not_ready', {
+      checkedAt,
+      warnings: [],
+    });
+  }
+
+  const resolvedRoot = path.resolve(repoRoot);
+  const reportRelativePath = normalizedHandoffReportRelativePath(
+    dispatchPackage.reportRelativePath,
+  );
+  const branchName = safeDispatchBranchName(dispatchPackage.branchName);
+  const scannedCompletion =
+    completion ?? detectHandoffCompletionStatus(resolvedRoot, dispatchPackage, options);
+  const warnings: string[] = [];
+  const report = scannedCompletion.reportExists
+    ? parseHandoffCompletionReport(resolvedRoot, reportRelativePath, warnings)
+    : undefined;
+  const git = readHandoffCompletionGitFacts(
+    resolvedRoot,
+    branchName,
+    scannedCompletion,
+    options,
+    warnings,
+  );
+
+  if (!scannedCompletion.reportExists) {
+    addCompletionReviewWarning(warnings, 'Executor report has not been written yet.');
+  } else if (!report) {
+    addCompletionReviewWarning(warnings, 'Executor report could not be parsed safely.');
+  } else {
+    if (!report.hasSummary) addCompletionReviewWarning(warnings, 'Report summary heading missing.');
+    if (!report.hasFilesChanged) {
+      addCompletionReviewWarning(warnings, 'Report files-changed heading missing.');
+    }
+    if (!report.hasValidation) {
+      addCompletionReviewWarning(warnings, 'Report validation heading missing.');
+    }
+    if (report.truncated) {
+      addCompletionReviewWarning(warnings, 'Report was truncated for queue preview.');
+    }
+  }
+
+  const status = completionReviewStatus(dispatchPackage, scannedCompletion, report, git);
+  return buildCompletionReviewResult(status, {
+    checkedAt: scannedCompletion.checkedAt,
+    reportRelativePath,
+    branchName,
+    report,
+    git,
+    warnings,
+  });
+}
+
 export function refreshHandoffCompletionStatus(
   repoRoot: string,
   markdownRelativePath: unknown,
@@ -848,6 +982,7 @@ export function refreshHandoffCompletionStatus(
   metadata: HandoffArtifactMetadataV1;
   dispatchPackage: HandoffDispatchPackageV1;
   completion: HandoffCompletionStatusV1;
+  review: HandoffCompletionReviewV1;
 } {
   const { markdown, metadata } = readRequiredHandoffArtifactMetadataForMarkdown(
     repoRoot,
@@ -856,11 +991,13 @@ export function refreshHandoffCompletionStatus(
   if (!metadata.dispatchPackage) {
     throw new Error('Handoff artifact does not have a work package yet.');
   }
+  const completion = detectHandoffCompletionStatus(repoRoot, metadata.dispatchPackage, options);
   return {
     markdown,
     metadata,
     dispatchPackage: metadata.dispatchPackage,
-    completion: detectHandoffCompletionStatus(repoRoot, metadata.dispatchPackage, options),
+    completion,
+    review: buildHandoffCompletionReview(repoRoot, metadata, completion, options),
   };
 }
 
@@ -1375,6 +1512,306 @@ function readHandoffMarkdownTitle(absolutePath: string): string | undefined {
   }
 }
 
+function parseHandoffCompletionReport(
+  repoRoot: string,
+  reportRelativePath: string,
+  warnings: string[],
+): HandoffCompletionReviewReportSignalsV1 | undefined {
+  const resolvedRoot = path.resolve(repoRoot);
+  const absolutePath = path.resolve(resolvedRoot, ...reportRelativePath.split('/'));
+  assertPathInsideRepo(resolvedRoot, absolutePath);
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(absolutePath);
+    if (!stat.isFile()) return undefined;
+  } catch {
+    return undefined;
+  }
+
+  let fd: number;
+  try {
+    fd = fs.openSync(absolutePath, 'r');
+  } catch {
+    return undefined;
+  }
+
+  let markdown = '';
+  let truncated = false;
+  try {
+    const buffer = Buffer.alloc(HANDOFF_COMPLETION_REPORT_SCAN_BYTES);
+    const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, 0);
+    markdown = buffer.subarray(0, bytesRead).toString('utf8');
+    truncated = stat.size > bytesRead;
+  } finally {
+    fs.closeSync(fd);
+  }
+
+  const signals: HandoffCompletionReviewReportSignalsV1 = {
+    hasSummary: false,
+    hasFilesChanged: false,
+    hasValidation: false,
+    hasAcceptanceCriteria: false,
+    hasDeviations: false,
+    validationLines: [],
+    changedFileLines: [],
+    riskLines: [],
+    truncated,
+  };
+  let section: 'summary' | 'files' | 'validation' | 'acceptance' | 'risk' | 'other' = 'other';
+  let inFence = false;
+  for (const rawLine of markdown.split(/\r?\n/)) {
+    const trimmed = rawLine.trim();
+    if (/^```/.test(trimmed)) {
+      inFence = !inFence;
+      continue;
+    }
+    const heading = /^(#{1,6})\s+(.+?)\s*#*$/.exec(trimmed);
+    if (heading) {
+      const headingText = safeHandoffReviewLine(heading[2] ?? '');
+      if (headingText && !signals.title) signals.title = headingText;
+      const normalized = normalizeReviewHeading(heading[2] ?? '');
+      if (/summary|overview|result/.test(normalized)) {
+        signals.hasSummary = true;
+        section = 'summary';
+      } else if (/files?.*changed|changed.*files?|files?$/.test(normalized)) {
+        signals.hasFilesChanged = true;
+        section = 'files';
+      } else if (/validation|verification|tests?|test results|build/.test(normalized)) {
+        signals.hasValidation = true;
+        section = 'validation';
+      } else if (/acceptance|criteria/.test(normalized)) {
+        signals.hasAcceptanceCriteria = true;
+        section = 'acceptance';
+      } else if (/deviation|risk|follow.?up|out.?of.?scope|blocker|limitation/.test(normalized)) {
+        signals.hasDeviations = true;
+        section = 'risk';
+      } else {
+        section = 'other';
+      }
+      continue;
+    }
+    if (!trimmed || inFence) continue;
+    const line = safeHandoffReviewLine(trimmed.replace(/^[-*+]\s+/, ''));
+    if (!line) continue;
+    if (section === 'validation') {
+      pushBoundedReviewLine(signals.validationLines, line);
+    } else if (section === 'files') {
+      pushBoundedReviewLine(signals.changedFileLines, line);
+    } else if (section === 'risk') {
+      pushBoundedReviewLine(signals.riskLines, line);
+    }
+  }
+
+  if (truncated) {
+    addCompletionReviewWarning(warnings, 'Executor report preview reached the read limit.');
+  }
+  return signals;
+}
+
+function readHandoffCompletionGitFacts(
+  repoRoot: string,
+  branchName: string,
+  completion: HandoffCompletionStatusV1,
+  options: HandoffCompletionScanOptions,
+  warnings: string[],
+): HandoffCompletionReviewGitFactsV1 {
+  const git: HandoffCompletionReviewGitFactsV1 = {};
+  const branchHead = runReadonlyGitRead(
+    repoRoot,
+    ['rev-parse', '--verify', branchName],
+    options.gitReadRunner,
+  );
+  const mainHead = runReadonlyGitRead(
+    repoRoot,
+    ['rev-parse', '--verify', 'main'],
+    options.gitReadRunner,
+  );
+
+  if (branchHead?.status === 0) {
+    git.branchExists = true;
+    const sha = safeGitSha(branchHead.stdout);
+    if (sha) git.branchHeadSha = sha;
+  } else if (branchHead?.status !== undefined && branchHead.status !== null) {
+    git.branchExists = false;
+  } else if (completion.branchExists !== undefined) {
+    git.branchExists = completion.branchExists;
+  } else {
+    addCompletionReviewWarning(warnings, 'Branch existence could not be checked.');
+  }
+
+  if (mainHead?.status === 0) {
+    const sha = safeGitSha(mainHead.stdout);
+    if (sha) git.mainHeadSha = sha;
+  } else {
+    addCompletionReviewWarning(warnings, 'Local main commit could not be checked.');
+  }
+
+  if (git.branchExists === true) {
+    const merged = runReadonlyGitRead(
+      repoRoot,
+      ['merge-base', '--is-ancestor', branchName, 'main'],
+      options.gitReadRunner,
+    );
+    if (merged?.status === 0) {
+      git.branchMergedToMain = true;
+    } else if (merged?.status === 1) {
+      git.branchMergedToMain = false;
+    } else if (completion.branchMergedToMain !== undefined) {
+      git.branchMergedToMain = completion.branchMergedToMain;
+    } else {
+      addCompletionReviewWarning(warnings, 'Branch merge state could not be checked.');
+    }
+
+    const counts = runReadonlyGitRead(
+      repoRoot,
+      ['rev-list', '--left-right', '--count', `main...${branchName}`],
+      options.gitReadRunner,
+    );
+    const parsedCounts = counts?.status === 0 ? parseAheadBehindCounts(counts.stdout) : undefined;
+    if (parsedCounts) {
+      git.behindCount = parsedCounts.behindCount;
+      git.aheadCount = parsedCounts.aheadCount;
+      if (parsedCounts.behindCount > 0) {
+        addCompletionReviewWarning(
+          warnings,
+          `Executor branch is behind local main by ${parsedCounts.behindCount} commits.`,
+        );
+      }
+    } else {
+      addCompletionReviewWarning(warnings, 'Branch ahead/behind counts could not be checked.');
+    }
+  } else if (git.branchExists === false) {
+    git.branchMergedToMain = false;
+    addCompletionReviewWarning(warnings, 'Executor branch is missing locally.');
+  }
+
+  return git;
+}
+
+function completionReviewStatus(
+  dispatchPackage: HandoffDispatchPackageV1,
+  completion: HandoffCompletionStatusV1,
+  report: HandoffCompletionReviewReportSignalsV1 | undefined,
+  git: HandoffCompletionReviewGitFactsV1,
+): HandoffCompletionReviewStatus {
+  const executionStatus = dispatchPackage.execution?.status;
+  if (dispatchPackage.status === 'blocked' || executionStatus === 'blocked') return 'blocked';
+  if (!completion.reportExists) {
+    if (
+      dispatchPackage.status === 'dispatched' ||
+      executionStatus === 'linked' ||
+      executionStatus === 'active' ||
+      executionStatus === 'waiting'
+    ) {
+      return 'active';
+    }
+    return 'needs_report';
+  }
+  if (git.branchMergedToMain === true) return 'merged';
+  if (git.branchExists !== true) return 'needs_review';
+  if (report?.hasSummary && report.hasFilesChanged && report.hasValidation) {
+    return 'ready_to_merge';
+  }
+  return 'needs_review';
+}
+
+function buildCompletionReviewResult(
+  status: HandoffCompletionReviewStatus,
+  input: {
+    checkedAt: string;
+    reportRelativePath?: string;
+    branchName?: string;
+    report?: HandoffCompletionReviewReportSignalsV1;
+    git?: HandoffCompletionReviewGitFactsV1;
+    warnings: string[];
+  },
+): HandoffCompletionReviewV1 {
+  const labels = completionReviewLabels(status);
+  return {
+    status,
+    statusLabel: labels.statusLabel,
+    nextActionLabel: labels.nextActionLabel,
+    ...(input.reportRelativePath ? { reportRelativePath: input.reportRelativePath } : {}),
+    ...(input.branchName ? { branchName: input.branchName } : {}),
+    ...(input.report ? { report: input.report } : {}),
+    ...(input.git ? { git: input.git } : {}),
+    warnings: input.warnings.slice(0, HANDOFF_COMPLETION_REVIEW_MAX_WARNINGS),
+    checkedAt: input.checkedAt,
+  };
+}
+
+function completionReviewLabels(status: HandoffCompletionReviewStatus): {
+  statusLabel: string;
+  nextActionLabel: string;
+} {
+  if (status === 'not_ready') {
+    return { statusLabel: 'Not ready', nextActionLabel: 'Create work package' };
+  }
+  if (status === 'active') return { statusLabel: 'Active', nextActionLabel: 'Wait for report' };
+  if (status === 'blocked') return { statusLabel: 'Blocked', nextActionLabel: 'Open report' };
+  if (status === 'needs_report') {
+    return { statusLabel: 'Needs report', nextActionLabel: 'Wait for executor report' };
+  }
+  if (status === 'needs_review') {
+    return { statusLabel: 'Needs review', nextActionLabel: 'Open report' };
+  }
+  if (status === 'ready_to_merge') {
+    return { statusLabel: 'Ready to merge', nextActionLabel: 'Inspect branch' };
+  }
+  if (status === 'merged') return { statusLabel: 'Merged', nextActionLabel: 'Mark reviewed' };
+  return { statusLabel: 'Unknown', nextActionLabel: 'Refresh completion' };
+}
+
+function normalizeReviewHeading(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function safeHandoffReviewLine(value: unknown): string | undefined {
+  if (typeof value !== 'string' && typeof value !== 'number') return undefined;
+  const withoutAbsolutePaths = String(value).replace(
+    /(^|[\s(["'`])\/(?!\/)(?:[A-Za-z0-9._-]+\/){2,}[^\s)]+/g,
+    '$1[redacted path]',
+  );
+  const safe = safeHandoffMetadataText(withoutAbsolutePaths);
+  if (!safe) return undefined;
+  return safe.slice(0, HANDOFF_COMPLETION_REVIEW_MAX_LINE_LENGTH).trim();
+}
+
+function pushBoundedReviewLine(lines: string[], line: string): void {
+  if (lines.length >= HANDOFF_COMPLETION_REVIEW_MAX_LINES) return;
+  if (!lines.includes(line)) lines.push(line);
+}
+
+function addCompletionReviewWarning(warnings: string[], warning: string): void {
+  const safe = safeHandoffReviewLine(warning);
+  if (!safe || warnings.includes(safe)) return;
+  if (warnings.length < HANDOFF_COMPLETION_REVIEW_MAX_WARNINGS) warnings.push(safe);
+}
+
+function safeGitSha(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const match = /\b[0-9a-f]{7,40}\b/i.exec(value.trim());
+  return match?.[0]?.toLowerCase();
+}
+
+function parseAheadBehindCounts(value: unknown):
+  | {
+      behindCount: number;
+      aheadCount: number;
+    }
+  | undefined {
+  if (typeof value !== 'string') return undefined;
+  const match = /^(\d+)\s+(\d+)\s*$/.exec(value.trim());
+  if (!match) return undefined;
+  return {
+    behindCount: Number.parseInt(match[1] ?? '0', 10),
+    aheadCount: Number.parseInt(match[2] ?? '0', 10),
+  };
+}
+
 function safeHandoffTitle(value: string): string | undefined {
   return safeHandoffMetadataText(value);
 }
@@ -1557,6 +1994,28 @@ function runReadonlyGitCheck(
     return undefined;
   }
   return undefined;
+}
+
+function runReadonlyGitRead(
+  repoRoot: string,
+  args: readonly string[],
+  runner?: HandoffGitReadRunner,
+): HandoffGitReadResult | undefined {
+  if (runner) return runner(repoRoot, args);
+  try {
+    const result = spawnSync('git', [...args], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      windowsHide: true,
+    });
+    if (result.error) return undefined;
+    return {
+      status: typeof result.status === 'number' ? result.status : null,
+      stdout: typeof result.stdout === 'string' ? result.stdout : '',
+    };
+  } catch {
+    return undefined;
+  }
 }
 
 function isoTimestamp(value: unknown): string | undefined {
