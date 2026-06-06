@@ -3257,6 +3257,10 @@ function HandoffRowActions({
   const refreshCompletionDisabled = executionBusy || !hasWorkPackage;
   const openReportDisabled = executionBusy || item.completion?.reportExists !== true;
   const linkAgentDisabled = executionBusy || !canLinkHandoffExecutionAgent(item, selectedAgentId);
+  const dispatchStatusActions = item.dispatchPackage ? handoffDispatchStatusActions(item) : [];
+  const executionStatusActions = item.dispatchPackage ? handoffExecutionStatusActions(item) : [];
+  const currentDispatchStatus = item.dispatchPackage?.status;
+  const currentExecutionStatus = item.dispatchPackage?.execution?.status ?? 'unknown';
 
   return (
     <div className="grid min-w-0 gap-2 md:justify-items-end">
@@ -3401,38 +3405,87 @@ function HandoffRowActions({
             </Button>
           );
         })}
-        {item.dispatchPackage &&
-          handoffDispatchStatusActions(item).map((action) => {
-            const disabled = action.disabled || workPackageBusy;
-            return (
-              <Button
-                key={`dispatch-${action.nextStatus}`}
-                variant={disabled ? 'disabled' : 'ghost'}
-                size="sm"
-                disabled={disabled}
-                onClick={() => onUpdateDispatchStatus(item, action.nextStatus)}
-              >
-                {action.label}
-              </Button>
-            );
-          })}
-        {item.dispatchPackage &&
-          handoffExecutionStatusActions(item).map((action) => {
-            const disabled = action.disabled || executionBusy;
-            return (
-              <Button
-                key={`execution-${action.nextStatus}`}
-                variant={disabled ? 'disabled' : 'ghost'}
-                size="sm"
-                disabled={disabled}
-                onClick={() => onUpdateExecutionStatus(item, action.nextStatus)}
-              >
-                {action.label}
-              </Button>
-            );
-          })}
+        {item.dispatchPackage && currentDispatchStatus && (
+          <HandoffStatusSelect
+            label="Dispatch"
+            value={currentDispatchStatus}
+            actions={dispatchStatusActions}
+            disabled={workPackageBusy}
+            selectedLabel={item.dispatchPackage.statusLabel}
+            ariaLabel={`Set dispatch status for ${item.displayTitle}`}
+            onChange={(nextStatus) => onUpdateDispatchStatus(item, nextStatus)}
+          />
+        )}
+        {item.dispatchPackage && (
+          <HandoffStatusSelect
+            label="Execution"
+            value={currentExecutionStatus}
+            actions={executionStatusActions}
+            disabled={executionBusy}
+            selectedLabel={item.dispatchPackage.execution?.statusLabel ?? 'No linked execution'}
+            ariaLabel={`Set execution status for ${item.displayTitle}`}
+            onChange={(nextStatus) => onUpdateExecutionStatus(item, nextStatus)}
+          />
+        )}
       </HandoffActionGroup>
     </div>
+  );
+}
+
+type HandoffStatusSelectAction<TStatus extends string> = {
+  nextStatus: TStatus;
+  label: string;
+  disabled: boolean;
+};
+
+function HandoffStatusSelect<TStatus extends string>({
+  label,
+  value,
+  actions,
+  disabled,
+  selectedLabel,
+  ariaLabel,
+  onChange,
+}: {
+  label: string;
+  value: TStatus;
+  actions: HandoffStatusSelectAction<TStatus>[];
+  disabled: boolean;
+  selectedLabel: string;
+  ariaLabel: string;
+  onChange: (nextStatus: TStatus) => void;
+}) {
+  const hasCurrentOption = actions.some((action) => action.nextStatus === value);
+  const options = hasCurrentOption
+    ? actions
+    : [{ nextStatus: value, label: selectedLabel, disabled: true }, ...actions];
+  const selectDisabled = disabled || actions.every((action) => action.disabled);
+  return (
+    <label className="grid min-w-[150px] gap-1 text-[10px] uppercase tracking-wide text-text-muted">
+      {label}
+      <select
+        className="h-8 w-full border border-border bg-bg px-2 text-xs normal-case tracking-normal text-text outline-none focus:border-accent disabled:bg-btn-bg disabled:text-text-muted"
+        value={value}
+        disabled={selectDisabled}
+        aria-label={ariaLabel}
+        onChange={(event) => {
+          const nextStatus = event.currentTarget.value as TStatus;
+          const action = actions.find((candidate) => candidate.nextStatus === nextStatus);
+          if (!action || action.disabled || disabled || nextStatus === value) return;
+          onChange(nextStatus);
+        }}
+      >
+        {options.map((action) => (
+          <option
+            key={action.nextStatus}
+            value={action.nextStatus}
+            disabled={disabled || action.disabled}
+          >
+            {action.nextStatus === value ? `Current: ${selectedLabel}` : action.label}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 
