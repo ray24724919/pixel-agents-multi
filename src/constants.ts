@@ -64,3 +64,4 @@ export const WORKSPACE_KEY_ARCHIVED_AGENTS = `${EXTENSION_NAME}.archivedAgents`;
 export const WORKSPACE_KEY_AGENT_SEATS = `${EXTENSION_NAME}.agentSeats`;
 export const WORKSPACE_KEY_LAYOUT = `${EXTENSION_NAME}.layout`;
 export const TERMINAL_NAME_PREFIX = 'Codex';
+export const CLAUDE_TERMINAL_NAME_PREFIX = 'Claude';

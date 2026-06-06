@@ -31,6 +31,11 @@
           "default": false,
           "description": "When enabled, Pixel Agents Multi adopts recent external Codex threads across all cwd values, not just cwd values matching the current VS Code workspace or an existing user-spawned agent."
         },
+        "pixel-agents-multi.codex.commandPath": {
+          "type": "string",
+          "default": "codex",
+          "description": "Command or executable path used to launch Codex handoff executors. On Windows, Pixel Agents Multi also checks the local OpenAI Codex app install when the command is not on VS Code's PATH."
+        },
         "pixel-agents-multi.claude.showChatSessions": {
           "type": "boolean",
           "default": false,

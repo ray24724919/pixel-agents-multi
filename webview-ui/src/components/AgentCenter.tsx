@@ -2926,7 +2926,7 @@ function HandoffArtifactLibraryPanel({
             {state.items.map((item) => (
               <div
                 key={item.relativePath}
-                className="grid gap-3 border border-border bg-btn-bg p-3 md:grid-cols-[minmax(0,1fr)_auto]"
+                className="grid gap-3 border border-border bg-btn-bg p-3 md:grid-cols-[minmax(16rem,1fr)_minmax(15rem,22rem)]"
               >
                 <div className="min-w-0">
                   <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -2940,11 +2940,11 @@ function HandoffArtifactLibraryPanel({
                   <div className="mt-1 break-words text-xs text-text-muted">
                     {item.displayDetail}
                   </div>
-                  <div className="mt-1 break-words font-mono text-xs text-text-muted">
+                  <div className="mt-1 truncate font-mono text-xs text-text-muted">
                     {item.relativePath}
                   </div>
                 </div>
-                <div className="flex flex-wrap items-start justify-end gap-2">
+                <div className="flex min-w-0 flex-wrap items-start justify-start gap-2 md:justify-end">
                   {handoffArtifactStatusActions(item).map((action) => {
                     const disabled = action.disabled || statusUpdateStatus === 'updating';
                     return (
@@ -3138,7 +3138,7 @@ function HandoffArtifactLibraryPanel({
                 </div>
                 {item.dispatchPackage && (
                   <div className="md:col-span-2">
-                    <div className="break-words border-t border-border pt-2 text-xs text-text-muted">
+                    <div className="min-w-0 truncate border-t border-border pt-2 text-xs text-text-muted">
                       {handoffExecutionDetailLabel(item, agents)}
                     </div>
                   </div>
@@ -3194,7 +3194,7 @@ function HandoffArtifactLibraryPanel({
               {queueItems.map((item) => (
                 <div
                   key={`queue-${item.relativePath}`}
-                  className="grid gap-3 border border-border bg-btn-bg p-3 lg:grid-cols-[minmax(0,1fr)_auto]"
+                  className="grid gap-3 border border-border bg-btn-bg p-3 lg:grid-cols-[minmax(16rem,1fr)_minmax(15rem,22rem)]"
                 >
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
@@ -3209,11 +3209,11 @@ function HandoffArtifactLibraryPanel({
                     <div className="mt-1 break-words text-xs text-text-muted">
                       {item.completion?.statusLabel ?? 'Completion not checked'}
                     </div>
-                    <div className="mt-1 break-words font-mono text-xs text-text-muted">
+                    <div className="mt-1 truncate font-mono text-xs text-text-muted">
                       {item.dispatchPackage?.packageRelativePath}
                     </div>
                   </div>
-                  <div className="flex flex-wrap items-start justify-end gap-2">
+                  <div className="flex min-w-0 flex-wrap items-start justify-start gap-2 lg:justify-end">
                     <Button
                       variant="ghost"
                       size="sm"

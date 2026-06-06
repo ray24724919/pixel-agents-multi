@@ -6,6 +6,7 @@ import * as vscode from 'vscode';
 
 import { JSONL_POLL_INTERVAL_MS } from '../server/src/constants.js';
 import {
+  buildCodexLaunchArgs,
   buildCodexLaunchCommand,
   codexPathKey,
   type CodexThread,
@@ -13,6 +14,7 @@ import {
   findLatestCodexThread,
 } from '../server/src/providers/file/codex/codex.js';
 import {
+  CLAUDE_TERMINAL_NAME_PREFIX,
   TERMINAL_NAME_PREFIX,
   WORKSPACE_KEY_AGENT_SEATS,
   WORKSPACE_KEY_AGENTS,
@@ -33,6 +35,8 @@ import { ingestAgentUsageSnapshot } from './usageIngestion.js';
 
 export const CLAUDE_CLI_MISSING_MESSAGE =
   'Claude Code CLI was not found. The Claude VS Code extension alone is not enough for Pixel Agents. Install the Claude CLI or configure the command path.';
+export const CODEX_CLI_MISSING_MESSAGE =
+  'Codex CLI was not found. Install the Codex CLI or make sure the codex command is available before launching a handoff executor.';
 
 function unquoteCommandPath(value: string): string {
   const trimmed = value.trim();
@@ -48,6 +52,11 @@ function unquoteCommandPath(value: string): string {
 function getClaudeCommandPath(): string {
   const configured = getExtensionConfigValue<string>('claude.commandPath', 'claude');
   return unquoteCommandPath(configured || 'claude') || 'claude';
+}
+
+function getCodexCommandPath(): string {
+  const configured = getExtensionConfigValue<string>('codex.commandPath', 'codex');
+  return unquoteCommandPath(configured || 'codex') || 'codex';
 }
 
 function isPathLikeCommand(commandPath: string): boolean {
@@ -82,11 +91,49 @@ function resolveBareCommand(commandPath: string): string | null {
   try {
     const result =
       process.platform === 'win32'
-        ? childProcess.spawnSync('where.exe', [commandPath], { stdio: 'ignore' })
+        ? childProcess.spawnSync('where.exe', [commandPath], { encoding: 'utf8' })
         : childProcess.spawnSync('sh', ['-c', 'command -v "$1"', 'sh', commandPath], {
-            stdio: 'ignore',
+            encoding: 'utf8',
           });
-    return result.status === 0 ? commandPath : null;
+    if (result.status !== 0) return null;
+    const rawStdout: unknown = result.stdout;
+    const stdout =
+      typeof rawStdout === 'string'
+        ? rawStdout
+        : Buffer.isBuffer(rawStdout)
+          ? rawStdout.toString('utf8')
+          : '';
+    const candidates: string[] = stdout
+      .split(/\r?\n/)
+      .map((line: string) => line.trim())
+      .filter(Boolean);
+    if (process.platform === 'win32') {
+      return (
+        candidates.find((candidate: string) => /\.(exe|cmd|bat|com)$/i.test(candidate)) ??
+        candidates[0] ??
+        commandPath
+      );
+    }
+    return candidates[0] ?? commandPath;
+  } catch {
+    return null;
+  }
+}
+
+function resolveWindowsCodexAppCommand(): string | null {
+  if (process.platform !== 'win32') return null;
+  const localAppData = process.env.LOCALAPPDATA;
+  if (!localAppData) return null;
+  const codexBinRoot = path.join(localAppData, 'OpenAI', 'Codex', 'bin');
+  try {
+    const candidates = fs
+      .readdirSync(codexBinRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => path.join(codexBinRoot, entry.name, 'codex.exe'))
+      .filter((candidate) => fs.existsSync(candidate))
+      .map((candidate) => ({ path: candidate, mtimeMs: fs.statSync(candidate).mtimeMs }))
+      .sort((a, b) => b.mtimeMs - a.mtimeMs);
+    return candidates[0]?.path ?? null;
   } catch {
     return null;
   }
@@ -96,6 +143,14 @@ export function resolveClaudeCommand(commandPath = getClaudeCommandPath()): stri
   return isPathLikeCommand(commandPath)
     ? resolvePathLikeCommand(commandPath)
     : resolveBareCommand(commandPath);
+}
+
+export function resolveCodexCommand(commandPath = getCodexCommandPath()): string | null {
+  const resolved = isPathLikeCommand(commandPath)
+    ? resolvePathLikeCommand(commandPath)
+    : resolveBareCommand(commandPath);
+  if (resolved) return resolved;
+  return commandPath.trim().toLowerCase() === 'codex' ? resolveWindowsCodexAppCommand() : null;
 }
 
 function buildClaudeArgs(
@@ -115,6 +170,10 @@ function buildClaudeArgs(
 
 function buildClaudeLaunchCommand(commandPath: string, args: string[]): string {
   return [commandPath, ...args].join(' ');
+}
+
+function terminalNamePrefixForProvider(providerId: 'claude' | 'codex'): string {
+  return providerId === 'claude' ? CLAUDE_TERMINAL_NAME_PREFIX : TERMINAL_NAME_PREFIX;
 }
 
 export function getProjectDirPath(cwd?: string): string {
@@ -184,6 +243,7 @@ export async function launchNewTerminal(
   const isMultiRoot = !!(folders && folders.length > 1);
 
   const isClaude = providerId === 'claude';
+  const isCodex = providerId === 'codex';
   const configuredClaudeCommand = isClaude ? getClaudeCommandPath() : undefined;
   const resolvedClaudeCommand = configuredClaudeCommand
     ? resolveClaudeCommand(configuredClaudeCommand)
@@ -192,8 +252,16 @@ export async function launchNewTerminal(
     vscode.window.showWarningMessage(CLAUDE_CLI_MISSING_MESSAGE);
     return undefined;
   }
+  const codexPrompt =
+    isCodex && typeof prompt === 'string' && prompt.trim().length > 0 ? prompt.trim() : undefined;
+  const resolvedCodexCommand = codexPrompt ? resolveCodexCommand() : undefined;
+  if (codexPrompt && !resolvedCodexCommand) {
+    vscode.window.showWarningMessage(CODEX_CLI_MISSING_MESSAGE);
+    return undefined;
+  }
 
   const idx = nextTerminalIndexRef.current++;
+  const terminalName = `${terminalNamePrefixForProvider(providerId)} #${idx}`;
   const sessionId = crypto.randomUUID();
   const claudePrompt =
     isClaude && typeof prompt === 'string' && prompt.trim().length > 0 ? prompt : undefined;
@@ -202,17 +270,25 @@ export async function launchNewTerminal(
     isClaude &&
     !!configuredClaudeCommand &&
     (isPathLikeCommand(configuredClaudeCommand) || claudePrompt !== undefined);
+  const launchCodexDirectly = isCodex && codexPrompt !== undefined;
   const terminalOptions: vscode.TerminalOptions = launchClaudeDirectly
     ? {
-        name: `${TERMINAL_NAME_PREFIX} #${idx}`,
+        name: terminalName,
         cwd,
         shellPath: resolvedClaudeCommand ?? undefined,
         shellArgs: claudeArgs,
       }
-    : {
-        name: `${TERMINAL_NAME_PREFIX} #${idx}`,
-        cwd,
-      };
+    : launchCodexDirectly
+      ? {
+          name: terminalName,
+          cwd,
+          shellPath: resolvedCodexCommand ?? undefined,
+          shellArgs: buildCodexLaunchArgs(cwd, bypassPermissions ?? false, codexPrompt),
+        }
+      : {
+          name: terminalName,
+          cwd,
+        };
   const terminal = vscode.window.createTerminal(terminalOptions);
   terminal.show();
 
@@ -379,7 +455,9 @@ export async function launchNewTerminal(
     return agent;
   }
 
-  terminal.sendText(buildCodexLaunchCommand(cwd, bypassPermissions ?? false, prompt));
+  if (!launchCodexDirectly) {
+    terminal.sendText(buildCodexLaunchCommand(cwd, bypassPermissions ?? false, prompt));
+  }
 
   const projectDir = cwd;
 

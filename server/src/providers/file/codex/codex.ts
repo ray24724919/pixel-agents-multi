@@ -163,6 +163,21 @@ export function buildCodexLaunchCommand(
   return `codex ${args.join(' ')}`;
 }
 
+export function buildCodexLaunchArgs(
+  cwd: string,
+  bypassApprovals = false,
+  prompt?: string,
+): string[] {
+  const args = ['--cd', cwd, '--no-alt-screen'];
+  if (bypassApprovals) {
+    args.push('--dangerously-bypass-approvals-and-sandbox');
+  }
+  if (prompt?.trim()) {
+    args.push(prompt.trim());
+  }
+  return args;
+}
+
 function parseThreadRow(row: string): CodexThread | null {
   const [id, rolloutPath, cwd, title, updatedAtMs, tokensUsed, agentNickname, agentRole] =
     row.split('\t');
