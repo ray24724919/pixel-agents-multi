@@ -646,6 +646,133 @@ test('handoff completion metadata is parsed and exposed without absolute paths',
   assert.equal('absolutePath' in (completion ?? {}), false);
 });
 
+test('handoff completion review payload is parsed with safe labels and report cues', () => {
+  const state = handoffArtifactLibraryStateFromLoadedMessage({
+    type: 'handoffArtifactsLoaded',
+    artifacts: [
+      {
+        relativePath: 'docs/agent-handoffs/2026-06-04-1507-pixel-handoff.md',
+        filename: '2026-06-04-1507-pixel-handoff.md',
+        modifiedAt: 1_780_000_000_000,
+        sizeBytes: 1536,
+        title: 'Pixel handoff',
+        dispatchPackage: {
+          packageRelativePath:
+            'docs/roadmap/supervision/work-packages/handoffs/pixel-handoff-work-package.md',
+          branchName: 'product/handoff-pixel-handoff',
+          reportRelativePath: 'docs/roadmap/supervision/reports/pixel-handoff-executor-report.md',
+          status: 'dispatched',
+          createdAt: '2026-06-04T07:09:00.000Z',
+          updatedAt: '2026-06-04T07:10:00.000Z',
+        },
+        review: {
+          status: 'ready_to_merge',
+          statusLabel: 'Ready to merge',
+          nextActionLabel: 'Inspect branch',
+          reportRelativePath: 'docs/roadmap/supervision/reports/pixel-handoff-executor-report.md',
+          branchName: 'product/handoff-pixel-handoff',
+          report: {
+            title: 'Report C:\\Users\\User\\secret.md',
+            hasSummary: true,
+            hasFilesChanged: true,
+            hasValidation: true,
+            hasAcceptanceCriteria: false,
+            hasDeviations: true,
+            validationLines: ['npm run build passed', 'Raw prompt: do not leak'],
+            changedFileLines: ['C:\\Users\\User\\private.ts'],
+            riskLines: ['/home/user/private/transcript.jsonl'],
+            truncated: false,
+            rawBody: 'full report body',
+          },
+          git: {
+            branchExists: true,
+            branchMergedToMain: false,
+            branchHeadSha: 'ABC1234567890',
+            mainHeadSha: 'def1234567890',
+            aheadCount: 2,
+            behindCount: 0,
+            absolutePath: 'C:\\Users\\User\\.git',
+          },
+          warnings: ['C:\\Users\\User\\warning.md'],
+          checkedAt: '2026-06-04T07:11:00.000Z',
+          absolutePath: 'C:\\Users\\User\\private.md',
+        },
+      },
+    ],
+  });
+
+  const review = state.items[0]?.review;
+  assert.equal(review?.status, 'ready_to_merge');
+  assert.equal(review?.statusLabel, 'Ready to merge');
+  assert.equal(review?.nextActionLabel, 'Inspect branch');
+  assert.equal(review?.git?.branchHeadSha, 'abc1234567890');
+  assert.equal(review?.git?.aheadCount, 2);
+  assert.match(review?.report?.title ?? '', /\[redacted path\]/);
+  assert.match(review?.report?.changedFileLines[0] ?? '', /\[redacted path\]/);
+  assert.match(review?.report?.riskLines[0] ?? '', /\[redacted path\]/);
+  assert.equal(JSON.stringify(review).includes('C:\\Users\\User'), false);
+  assert.equal(JSON.stringify(review).includes('/home/user/private'), false);
+  assert.equal(JSON.stringify(review).includes('full report body'), false);
+  assert.match(state.items[0]?.displayDetail ?? '', /review Ready to merge/);
+});
+
+test('handoff queue grouping prefers completion review status when available', () => {
+  const base = {
+    filename: 'handoff.md',
+    modifiedAt: 1_780_000_000_000,
+    sizeBytes: 512,
+    displayTitle: 'Handoff',
+    displayDetail: 'detail',
+    statusLabel: 'Draft',
+    dispatchPackage: {
+      packageRelativePath: 'docs/roadmap/supervision/work-packages/handoffs/handoff.md',
+      branchName: 'product/handoff-review',
+      reportRelativePath: 'docs/roadmap/supervision/reports/review-executor-report.md',
+      status: 'dispatched' as const,
+      createdAt: '2026-06-04T07:09:00.000Z',
+      updatedAt: '2026-06-04T07:10:00.000Z',
+      statusLabel: 'Dispatched',
+    },
+  };
+  const reportReady = {
+    ...base,
+    relativePath: 'docs/agent-handoffs/report.md',
+    review: {
+      status: 'needs_review' as const,
+      statusLabel: 'Needs review',
+      nextActionLabel: 'Open report',
+      warnings: [],
+      checkedAt: '2026-06-04T07:11:00.000Z',
+    },
+  };
+  const merged = {
+    ...base,
+    relativePath: 'docs/agent-handoffs/merged.md',
+    review: {
+      status: 'merged' as const,
+      statusLabel: 'Merged',
+      nextActionLabel: 'Mark reviewed',
+      warnings: [],
+      checkedAt: '2026-06-04T07:12:00.000Z',
+    },
+  };
+
+  assert.equal(handoffQueueGroupForItem(reportReady), 'report_ready');
+  assert.equal(handoffQueueGroupForItem(merged), 'done');
+  assert.deepEqual(buildHandoffQueueSummary([reportReady, merged]), {
+    totalPackages: 2,
+    needsDispatch: 0,
+    activeWaiting: 0,
+    blocked: 0,
+    reportReady: 1,
+    done: 1,
+  });
+  assert.deepEqual(
+    filterHandoffQueueItems([merged, reportReady], 'report_ready').map((item) => item.relativePath),
+    ['docs/agent-handoffs/report.md'],
+  );
+});
+
 test('handoff executor, completion, and report messages send only safe identifiers', () => {
   const item = {
     relativePath: 'docs/agent-handoffs/2026-06-04-1507-pixel-handoff.md',
