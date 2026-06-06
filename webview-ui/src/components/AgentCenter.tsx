@@ -2876,6 +2876,12 @@ function HandoffArtifactLibraryPanel({
     executionAgentSelections[item.relativePath] ??
     item.dispatchPackage?.execution?.agentId ??
     agents[0]?.id;
+  const selectExecutionAgentForItem = (item: HandoffArtifactLibraryItem, agentId: number): void => {
+    setExecutionAgentSelections((prev) => ({
+      ...prev,
+      [item.relativePath]: agentId,
+    }));
+  };
   return (
     <section className="border border-border bg-bg">
       <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border bg-btn-bg p-4">
@@ -2958,198 +2964,30 @@ function HandoffArtifactLibraryPanel({
                     {item.relativePath}
                   </div>
                 </div>
-                <div className="flex min-w-0 flex-wrap items-start justify-start gap-2 md:justify-end">
-                  {handoffArtifactStatusActions(item).map((action) => {
-                    const disabled = action.disabled || statusUpdateStatus === 'updating';
-                    return (
-                      <Button
-                        key={action.nextStatus}
-                        variant={disabled ? 'disabled' : 'ghost'}
-                        size="sm"
-                        disabled={disabled}
-                        onClick={() => onUpdateStatus(item, action.nextStatus)}
-                      >
-                        {action.label}
-                      </Button>
-                    );
-                  })}
-                  <Button
-                    variant={
-                      dispatchPromptStatus === 'creating' || !canCreateHandoffDispatchPrompt(item)
-                        ? 'disabled'
-                        : 'ghost'
-                    }
-                    size="sm"
-                    disabled={
-                      dispatchPromptStatus === 'creating' || !canCreateHandoffDispatchPrompt(item)
-                    }
-                    onClick={() => onCopyDispatchPrompt(item)}
-                  >
-                    Copy dispatch prompt
-                  </Button>
-                  {!item.dispatchPackage ? (
-                    <Button
-                      variant={
-                        workPackageBusy || !canCreateHandoffWorkPackage(item) ? 'disabled' : 'ghost'
-                      }
-                      size="sm"
-                      disabled={workPackageBusy || !canCreateHandoffWorkPackage(item)}
-                      onClick={() => onCreateWorkPackage(item)}
-                    >
-                      Create work package
-                    </Button>
-                  ) : (
-                    <>
-                      {handoffDispatchStatusActions(item).map((action) => {
-                        const disabled = action.disabled || workPackageBusy;
-                        return (
-                          <Button
-                            key={action.nextStatus}
-                            variant={disabled ? 'disabled' : 'ghost'}
-                            size="sm"
-                            disabled={disabled}
-                            onClick={() => onUpdateDispatchStatus(item, action.nextStatus)}
-                          >
-                            {action.label}
-                          </Button>
-                        );
-                      })}
-                      <div className="flex min-w-[220px] flex-wrap items-center justify-end gap-2">
-                        <select
-                          className="h-8 max-w-[220px] border border-border bg-bg px-2 text-xs text-text outline-none focus:border-accent"
-                          value={String(selectedAgentIdForItem(item) ?? '')}
-                          disabled={agents.length === 0 || executionBusy}
-                          onChange={(event) => {
-                            const agentId = Number.parseInt(event.currentTarget.value, 10);
-                            if (Number.isFinite(agentId)) {
-                              setExecutionAgentSelections((prev) => ({
-                                ...prev,
-                                [item.relativePath]: agentId,
-                              }));
-                            }
-                          }}
-                        >
-                          {agents.length === 0 ? (
-                            <option value="">No visible agents</option>
-                          ) : (
-                            agents.map((agent) => (
-                              <option key={agent.id} value={agent.id}>
-                                {handoffAgentOptionLabel(agent)}
-                              </option>
-                            ))
-                          )}
-                        </select>
-                        <Button
-                          variant={
-                            executionBusy ||
-                            !canLinkHandoffExecutionAgent(item, selectedAgentIdForItem(item))
-                              ? 'disabled'
-                              : 'ghost'
-                          }
-                          size="sm"
-                          disabled={
-                            executionBusy ||
-                            !canLinkHandoffExecutionAgent(item, selectedAgentIdForItem(item))
-                          }
-                          onClick={() => {
-                            const agentId = selectedAgentIdForItem(item);
-                            if (agentId !== undefined) onLinkExecutionAgent(item, agentId);
-                          }}
-                        >
-                          Link agent
-                        </Button>
-                      </div>
-                      {handoffExecutionStatusActions(item).map((action) => {
-                        const disabled = action.disabled || executionBusy;
-                        return (
-                          <Button
-                            key={action.nextStatus}
-                            variant={disabled ? 'disabled' : 'ghost'}
-                            size="sm"
-                            disabled={disabled}
-                            onClick={() => onUpdateExecutionStatus(item, action.nextStatus)}
-                          >
-                            {action.label}
-                          </Button>
-                        );
-                      })}
-                      <Button
-                        variant={
-                          executionBusy || !canUseHandoffWorkPackage(item) ? 'disabled' : 'default'
-                        }
-                        size="sm"
-                        disabled={executionBusy || !canUseHandoffWorkPackage(item)}
-                        onClick={() => onLaunchExecutor(item, 'codex')}
-                      >
-                        Launch Codex
-                      </Button>
-                      <Button
-                        variant={
-                          executionBusy || !canUseHandoffWorkPackage(item) ? 'disabled' : 'default'
-                        }
-                        size="sm"
-                        disabled={executionBusy || !canUseHandoffWorkPackage(item)}
-                        onClick={() => onLaunchExecutor(item, 'claude')}
-                      >
-                        Launch Claude
-                      </Button>
-                      <Button
-                        variant={
-                          executionBusy || !canUseHandoffWorkPackage(item) ? 'disabled' : 'ghost'
-                        }
-                        size="sm"
-                        disabled={executionBusy || !canUseHandoffWorkPackage(item)}
-                        onClick={() => onRefreshCompletion(item)}
-                      >
-                        Refresh completion
-                      </Button>
-                      <Button
-                        variant={
-                          executionBusy || item.completion?.reportExists !== true
-                            ? 'disabled'
-                            : 'default'
-                        }
-                        size="sm"
-                        disabled={executionBusy || item.completion?.reportExists !== true}
-                        onClick={() => onOpenReport(item)}
-                      >
-                        Open report
-                      </Button>
-                      <Button
-                        variant={
-                          workPackageBusy || !canUseHandoffWorkPackage(item) ? 'disabled' : 'ghost'
-                        }
-                        size="sm"
-                        disabled={workPackageBusy || !canUseHandoffWorkPackage(item)}
-                        onClick={() => onCopyWorkPackagePrompt(item)}
-                      >
-                        Copy work-package prompt
-                      </Button>
-                      <Button
-                        variant={
-                          workPackageStatus === 'opening' || !canUseHandoffWorkPackage(item)
-                            ? 'disabled'
-                            : 'default'
-                        }
-                        size="sm"
-                        disabled={
-                          workPackageStatus === 'opening' || !canUseHandoffWorkPackage(item)
-                        }
-                        onClick={() => onOpenWorkPackage(item)}
-                      >
-                        Open work package
-                      </Button>
-                    </>
-                  )}
-                  <Button
-                    variant={openStatus === 'opening' ? 'disabled' : 'default'}
-                    size="sm"
-                    disabled={openStatus === 'opening'}
-                    onClick={() => onOpen(item)}
-                  >
-                    Open
-                  </Button>
-                </div>
+                <HandoffRowActions
+                  agents={agents}
+                  item={item}
+                  selectedAgentId={selectedAgentIdForItem(item)}
+                  openStatus={openStatus}
+                  statusUpdateStatus={statusUpdateStatus}
+                  dispatchPromptStatus={dispatchPromptStatus}
+                  workPackageStatus={workPackageStatus}
+                  workPackageBusy={workPackageBusy}
+                  executionBusy={executionBusy}
+                  onOpen={onOpen}
+                  onUpdateStatus={onUpdateStatus}
+                  onCopyDispatchPrompt={onCopyDispatchPrompt}
+                  onCreateWorkPackage={onCreateWorkPackage}
+                  onOpenWorkPackage={onOpenWorkPackage}
+                  onCopyWorkPackagePrompt={onCopyWorkPackagePrompt}
+                  onUpdateDispatchStatus={onUpdateDispatchStatus}
+                  onSelectExecutionAgent={selectExecutionAgentForItem}
+                  onLinkExecutionAgent={onLinkExecutionAgent}
+                  onUpdateExecutionStatus={onUpdateExecutionStatus}
+                  onLaunchExecutor={onLaunchExecutor}
+                  onRefreshCompletion={onRefreshCompletion}
+                  onOpenReport={onOpenReport}
+                />
                 {item.dispatchPackage && (
                   <div className="md:col-span-2">
                     <div className="min-w-0 truncate border-t border-border pt-2 text-xs text-text-muted">
@@ -3238,100 +3076,30 @@ function HandoffArtifactLibraryPanel({
                       {item.dispatchPackage?.packageRelativePath}
                     </div>
                   </div>
-                  <div className="flex min-w-0 flex-wrap items-start justify-start gap-2 lg:justify-end">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      disabled={openStatus === 'opening'}
-                      onClick={() => onOpen(item)}
-                    >
-                      Open handoff
-                    </Button>
-                    <Button
-                      variant={
-                        workPackageStatus === 'opening' || !canUseHandoffWorkPackage(item)
-                          ? 'disabled'
-                          : 'ghost'
-                      }
-                      size="sm"
-                      disabled={workPackageStatus === 'opening' || !canUseHandoffWorkPackage(item)}
-                      onClick={() => onOpenWorkPackage(item)}
-                    >
-                      Open work package
-                    </Button>
-                    <Button
-                      variant={
-                        workPackageBusy || !canUseHandoffWorkPackage(item) ? 'disabled' : 'ghost'
-                      }
-                      size="sm"
-                      disabled={workPackageBusy || !canUseHandoffWorkPackage(item)}
-                      onClick={() => onCopyWorkPackagePrompt(item)}
-                    >
-                      Copy prompt
-                    </Button>
-                    <Button
-                      variant={
-                        executionBusy || !canUseHandoffWorkPackage(item) ? 'disabled' : 'default'
-                      }
-                      size="sm"
-                      disabled={executionBusy || !canUseHandoffWorkPackage(item)}
-                      onClick={() => onLaunchExecutor(item, 'codex')}
-                    >
-                      Launch Codex
-                    </Button>
-                    <Button
-                      variant={
-                        executionBusy || !canUseHandoffWorkPackage(item) ? 'disabled' : 'default'
-                      }
-                      size="sm"
-                      disabled={executionBusy || !canUseHandoffWorkPackage(item)}
-                      onClick={() => onLaunchExecutor(item, 'claude')}
-                    >
-                      Launch Claude
-                    </Button>
-                    <Button
-                      variant={executionBusy ? 'disabled' : 'ghost'}
-                      size="sm"
-                      disabled={executionBusy}
-                      onClick={() => onRefreshCompletion(item)}
-                    >
-                      Refresh completion
-                    </Button>
-                    <Button
-                      variant={
-                        executionBusy || item.completion?.reportExists !== true
-                          ? 'disabled'
-                          : 'default'
-                      }
-                      size="sm"
-                      disabled={executionBusy || item.completion?.reportExists !== true}
-                      onClick={() => onOpenReport(item)}
-                    >
-                      Open report
-                    </Button>
-                    {handoffDispatchStatusActions(item).map((action) => (
-                      <Button
-                        key={`queue-dispatch-${action.nextStatus}`}
-                        variant={action.disabled || workPackageBusy ? 'disabled' : 'ghost'}
-                        size="sm"
-                        disabled={action.disabled || workPackageBusy}
-                        onClick={() => onUpdateDispatchStatus(item, action.nextStatus)}
-                      >
-                        {action.label}
-                      </Button>
-                    ))}
-                    {handoffExecutionStatusActions(item).map((action) => (
-                      <Button
-                        key={`queue-exec-${action.nextStatus}`}
-                        variant={action.disabled || executionBusy ? 'disabled' : 'ghost'}
-                        size="sm"
-                        disabled={action.disabled || executionBusy}
-                        onClick={() => onUpdateExecutionStatus(item, action.nextStatus)}
-                      >
-                        {action.label}
-                      </Button>
-                    ))}
-                  </div>
+                  <HandoffRowActions
+                    agents={agents}
+                    item={item}
+                    selectedAgentId={selectedAgentIdForItem(item)}
+                    openStatus={openStatus}
+                    statusUpdateStatus={statusUpdateStatus}
+                    dispatchPromptStatus={dispatchPromptStatus}
+                    workPackageStatus={workPackageStatus}
+                    workPackageBusy={workPackageBusy}
+                    executionBusy={executionBusy}
+                    onOpen={onOpen}
+                    onUpdateStatus={onUpdateStatus}
+                    onCopyDispatchPrompt={onCopyDispatchPrompt}
+                    onCreateWorkPackage={onCreateWorkPackage}
+                    onOpenWorkPackage={onOpenWorkPackage}
+                    onCopyWorkPackagePrompt={onCopyWorkPackagePrompt}
+                    onUpdateDispatchStatus={onUpdateDispatchStatus}
+                    onSelectExecutionAgent={selectExecutionAgentForItem}
+                    onLinkExecutionAgent={onLinkExecutionAgent}
+                    onUpdateExecutionStatus={onUpdateExecutionStatus}
+                    onLaunchExecutor={onLaunchExecutor}
+                    onRefreshCompletion={onRefreshCompletion}
+                    onOpenReport={onOpenReport}
+                  />
                 </div>
               ))}
             </div>
@@ -3413,6 +3181,284 @@ function HandoffArtifactLibraryPanel({
         </div>
       </div>
     </section>
+  );
+}
+
+type HandoffRowActionsProps = {
+  agents: AgentSummary[];
+  item: HandoffArtifactLibraryItem;
+  selectedAgentId: number | undefined;
+  openStatus: HandoffOpenStatus;
+  statusUpdateStatus: HandoffStatusUpdateStatus;
+  dispatchPromptStatus: HandoffDispatchPromptStatus;
+  workPackageStatus: HandoffWorkPackageStatus;
+  workPackageBusy: boolean;
+  executionBusy: boolean;
+  onOpen: (item: HandoffArtifactLibraryItem) => void;
+  onUpdateStatus: (
+    item: HandoffArtifactLibraryItem,
+    nextStatus: HandoffArtifactLocalStatus,
+  ) => void;
+  onCopyDispatchPrompt: (item: HandoffArtifactLibraryItem) => void;
+  onCreateWorkPackage: (item: HandoffArtifactLibraryItem) => void;
+  onOpenWorkPackage: (item: HandoffArtifactLibraryItem) => void;
+  onCopyWorkPackagePrompt: (item: HandoffArtifactLibraryItem) => void;
+  onUpdateDispatchStatus: (
+    item: HandoffArtifactLibraryItem,
+    nextStatus: HandoffDispatchStatus,
+  ) => void;
+  onSelectExecutionAgent: (item: HandoffArtifactLibraryItem, agentId: number) => void;
+  onLinkExecutionAgent: (item: HandoffArtifactLibraryItem, agentId: number) => void;
+  onUpdateExecutionStatus: (
+    item: HandoffArtifactLibraryItem,
+    nextStatus: HandoffExecutionStatus,
+  ) => void;
+  onLaunchExecutor: (item: HandoffArtifactLibraryItem, providerId: 'codex' | 'claude') => void;
+  onRefreshCompletion: (item: HandoffArtifactLibraryItem) => void;
+  onOpenReport: (item: HandoffArtifactLibraryItem) => void;
+};
+
+function HandoffRowActions({
+  agents,
+  item,
+  selectedAgentId,
+  openStatus,
+  statusUpdateStatus,
+  dispatchPromptStatus,
+  workPackageStatus,
+  workPackageBusy,
+  executionBusy,
+  onOpen,
+  onUpdateStatus,
+  onCopyDispatchPrompt,
+  onCreateWorkPackage,
+  onOpenWorkPackage,
+  onCopyWorkPackagePrompt,
+  onUpdateDispatchStatus,
+  onSelectExecutionAgent,
+  onLinkExecutionAgent,
+  onUpdateExecutionStatus,
+  onLaunchExecutor,
+  onRefreshCompletion,
+  onOpenReport,
+}: HandoffRowActionsProps) {
+  const artifactActions = handoffArtifactStatusActions(item);
+  const markReviewedAction = artifactActions.find((action) => action.nextStatus === 'reviewed');
+  const maintenanceArtifactActions = artifactActions.filter(
+    (action) => action.nextStatus !== 'reviewed',
+  );
+  const hasWorkPackage = canUseHandoffWorkPackage(item);
+  const dispatchPromptDisabled =
+    dispatchPromptStatus === 'creating' || !canCreateHandoffDispatchPrompt(item);
+  const createWorkPackageDisabled = workPackageBusy || !canCreateHandoffWorkPackage(item);
+  const openWorkPackageDisabled = workPackageStatus === 'opening' || !hasWorkPackage;
+  const workPackagePromptDisabled = workPackageBusy || !hasWorkPackage;
+  const launchDisabled = executionBusy || !hasWorkPackage;
+  const refreshCompletionDisabled = executionBusy || !hasWorkPackage;
+  const openReportDisabled = executionBusy || item.completion?.reportExists !== true;
+  const linkAgentDisabled = executionBusy || !canLinkHandoffExecutionAgent(item, selectedAgentId);
+
+  return (
+    <div className="grid min-w-0 gap-2 md:justify-items-end">
+      <HandoffActionGroup label="Primary" tone="primary">
+        {markReviewedAction && !markReviewedAction.disabled && (
+          <Button
+            variant={statusUpdateStatus === 'updating' ? 'disabled' : 'default'}
+            size="sm"
+            disabled={statusUpdateStatus === 'updating'}
+            onClick={() => onUpdateStatus(item, markReviewedAction.nextStatus)}
+          >
+            {markReviewedAction.label}
+          </Button>
+        )}
+        {item.dispatchPackage ? (
+          <>
+            <Button
+              variant={launchDisabled ? 'disabled' : 'default'}
+              size="sm"
+              disabled={launchDisabled}
+              onClick={() => onLaunchExecutor(item, 'codex')}
+            >
+              Launch Codex
+            </Button>
+            <Button
+              variant={launchDisabled ? 'disabled' : 'default'}
+              size="sm"
+              disabled={launchDisabled}
+              onClick={() => onLaunchExecutor(item, 'claude')}
+            >
+              Launch Claude
+            </Button>
+            <Button
+              variant={refreshCompletionDisabled ? 'disabled' : 'ghost'}
+              size="sm"
+              disabled={refreshCompletionDisabled}
+              onClick={() => onRefreshCompletion(item)}
+            >
+              Refresh completion
+            </Button>
+            <Button
+              variant={openReportDisabled ? 'disabled' : 'default'}
+              size="sm"
+              disabled={openReportDisabled}
+              onClick={() => onOpenReport(item)}
+            >
+              Open report
+            </Button>
+          </>
+        ) : (
+          <Button
+            variant={createWorkPackageDisabled ? 'disabled' : 'default'}
+            size="sm"
+            disabled={createWorkPackageDisabled}
+            onClick={() => onCreateWorkPackage(item)}
+          >
+            Create work package
+          </Button>
+        )}
+      </HandoffActionGroup>
+      <HandoffActionGroup label="Reference" tone="secondary">
+        <Button
+          variant={openStatus === 'opening' ? 'disabled' : 'ghost'}
+          size="sm"
+          disabled={openStatus === 'opening'}
+          onClick={() => onOpen(item)}
+        >
+          Open handoff
+        </Button>
+        <Button
+          variant={dispatchPromptDisabled ? 'disabled' : 'ghost'}
+          size="sm"
+          disabled={dispatchPromptDisabled}
+          onClick={() => onCopyDispatchPrompt(item)}
+        >
+          Copy dispatch prompt
+        </Button>
+        {item.dispatchPackage && (
+          <>
+            <Button
+              variant={openWorkPackageDisabled ? 'disabled' : 'ghost'}
+              size="sm"
+              disabled={openWorkPackageDisabled}
+              onClick={() => onOpenWorkPackage(item)}
+            >
+              Open work package
+            </Button>
+            <Button
+              variant={workPackagePromptDisabled ? 'disabled' : 'ghost'}
+              size="sm"
+              disabled={workPackagePromptDisabled}
+              onClick={() => onCopyWorkPackagePrompt(item)}
+            >
+              Copy prompt
+            </Button>
+            <div className="flex min-w-[220px] flex-wrap items-center justify-end gap-2">
+              <select
+                className="h-8 max-w-[220px] border border-border bg-bg px-2 text-xs text-text outline-none focus:border-accent"
+                value={String(selectedAgentId ?? '')}
+                disabled={agents.length === 0 || executionBusy}
+                onChange={(event) => {
+                  const agentId = Number.parseInt(event.currentTarget.value, 10);
+                  if (Number.isFinite(agentId)) onSelectExecutionAgent(item, agentId);
+                }}
+              >
+                {agents.length === 0 ? (
+                  <option value="">No visible agents</option>
+                ) : (
+                  agents.map((agent) => (
+                    <option key={agent.id} value={agent.id}>
+                      {handoffAgentOptionLabel(agent)}
+                    </option>
+                  ))
+                )}
+              </select>
+              <Button
+                variant={linkAgentDisabled ? 'disabled' : 'ghost'}
+                size="sm"
+                disabled={linkAgentDisabled}
+                onClick={() => {
+                  if (selectedAgentId !== undefined) onLinkExecutionAgent(item, selectedAgentId);
+                }}
+              >
+                Link agent
+              </Button>
+            </div>
+          </>
+        )}
+      </HandoffActionGroup>
+      <HandoffActionGroup label="Status" tone="quiet">
+        {maintenanceArtifactActions.map((action) => {
+          const disabled = action.disabled || statusUpdateStatus === 'updating';
+          return (
+            <Button
+              key={`artifact-${action.nextStatus}`}
+              variant={disabled ? 'disabled' : 'ghost'}
+              size="sm"
+              disabled={disabled}
+              onClick={() => onUpdateStatus(item, action.nextStatus)}
+            >
+              {action.label}
+            </Button>
+          );
+        })}
+        {item.dispatchPackage &&
+          handoffDispatchStatusActions(item).map((action) => {
+            const disabled = action.disabled || workPackageBusy;
+            return (
+              <Button
+                key={`dispatch-${action.nextStatus}`}
+                variant={disabled ? 'disabled' : 'ghost'}
+                size="sm"
+                disabled={disabled}
+                onClick={() => onUpdateDispatchStatus(item, action.nextStatus)}
+              >
+                {action.label}
+              </Button>
+            );
+          })}
+        {item.dispatchPackage &&
+          handoffExecutionStatusActions(item).map((action) => {
+            const disabled = action.disabled || executionBusy;
+            return (
+              <Button
+                key={`execution-${action.nextStatus}`}
+                variant={disabled ? 'disabled' : 'ghost'}
+                size="sm"
+                disabled={disabled}
+                onClick={() => onUpdateExecutionStatus(item, action.nextStatus)}
+              >
+                {action.label}
+              </Button>
+            );
+          })}
+      </HandoffActionGroup>
+    </div>
+  );
+}
+
+function HandoffActionGroup({
+  label,
+  tone,
+  children,
+}: {
+  label: string;
+  tone: 'primary' | 'secondary' | 'quiet';
+  children: ReactNode;
+}) {
+  const groupClass =
+    tone === 'primary'
+      ? 'border-accent bg-bg'
+      : tone === 'secondary'
+        ? 'border-border bg-bg'
+        : 'border-border bg-btn-bg';
+  const labelClass = tone === 'primary' ? 'text-accent-bright' : 'text-text-muted';
+  return (
+    <div className={`grid w-full gap-1 border p-2 ${groupClass}`}>
+      <div className={`text-[10px] uppercase tracking-wide ${labelClass}`}>{label}</div>
+      <div className="flex min-w-0 flex-wrap items-center justify-start gap-2 md:justify-end">
+        {children}
+      </div>
+    </div>
   );
 }
 
