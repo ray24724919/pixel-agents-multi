@@ -7,6 +7,8 @@ import {
   buildCreateHandoffWorkPackagePromptMessage,
   buildHandoffExecutionQueueSummary,
   buildHandoffQueueSummary,
+  buildHandoffReviewChecklist,
+  buildHandoffReviewRecommendedAction,
   buildLaunchHandoffExecutorMessage,
   buildLinkHandoffExecutionAgentMessage,
   buildOpenHandoffArtifactMessage,
@@ -714,6 +716,166 @@ test('handoff completion review payload is parsed with safe labels and report cu
   assert.equal(JSON.stringify(review).includes('/home/user/private'), false);
   assert.equal(JSON.stringify(review).includes('full report body'), false);
   assert.match(state.items[0]?.displayDetail ?? '', /review Ready to merge/);
+});
+
+test('handoff completion review checklist summarizes report and branch cues', () => {
+  const state = handoffArtifactLibraryStateFromLoadedMessage({
+    type: 'handoffArtifactsLoaded',
+    artifacts: [
+      {
+        relativePath: 'docs/agent-handoffs/review-checklist.md',
+        filename: 'review-checklist.md',
+        modifiedAt: 1_780_000_000_000,
+        sizeBytes: 1536,
+        dispatchPackage: {
+          packageRelativePath:
+            'docs/roadmap/supervision/work-packages/handoffs/review-checklist-work-package.md',
+          branchName: 'product/handoff-review-checklist',
+          reportRelativePath:
+            'docs/roadmap/supervision/reports/review-checklist-executor-report.md',
+          status: 'dispatched',
+          createdAt: '2026-06-04T07:09:00.000Z',
+          updatedAt: '2026-06-04T07:10:00.000Z',
+        },
+        completion: {
+          reportExists: true,
+          reportRelativePath:
+            'docs/roadmap/supervision/reports/review-checklist-executor-report.md',
+          branchName: 'product/handoff-review-checklist',
+          branchExists: true,
+          branchMergedToMain: false,
+          checkedAt: '2026-06-04T07:11:00.000Z',
+        },
+        review: {
+          status: 'needs_review',
+          statusLabel: 'Needs review',
+          nextActionLabel: 'Open report',
+          reportRelativePath:
+            'docs/roadmap/supervision/reports/review-checklist-executor-report.md',
+          branchName: 'product/handoff-review-checklist',
+          report: {
+            hasSummary: true,
+            hasFilesChanged: false,
+            hasValidation: true,
+            hasAcceptanceCriteria: true,
+            hasDeviations: false,
+            validationLines: ['npm run build passed'],
+            changedFileLines: [],
+            riskLines: [],
+            truncated: false,
+          },
+          git: {
+            branchExists: true,
+            branchMergedToMain: false,
+            aheadCount: 2,
+            behindCount: 0,
+          },
+          warnings: ['Validation should be manually confirmed'],
+          checkedAt: '2026-06-04T07:12:00.000Z',
+        },
+      },
+    ],
+  });
+
+  const checklist = buildHandoffReviewChecklist(state.items[0]!);
+  assert.deepEqual(
+    checklist.map((item) => [item.id, item.state, item.detail]),
+    [
+      ['summary', 'ok', 'present'],
+      ['files_changed', 'missing', 'missing'],
+      ['validation', 'ok', 'present'],
+      ['warnings', 'warning', '1 warning'],
+      ['branch', 'warning', 'not merged / ahead 2 / behind 0'],
+    ],
+  );
+});
+
+test('handoff completion review recommendations map statuses to local review actions', () => {
+  const base = {
+    relativePath: 'docs/agent-handoffs/review-action.md',
+    artifactId: 'review-action',
+    metadataRelativePath: 'docs/agent-handoffs/review-action.handoff.json',
+    status: 'draft',
+    dispatchPackage: {
+      packageRelativePath:
+        'docs/roadmap/supervision/work-packages/handoffs/review-action-work-package.md',
+      branchName: 'product/handoff-review-action',
+      reportRelativePath: 'docs/roadmap/supervision/reports/review-action-executor-report.md',
+      status: 'dispatched' as const,
+      createdAt: '2026-06-04T07:09:00.000Z',
+      updatedAt: '2026-06-04T07:10:00.000Z',
+      statusLabel: 'Dispatched',
+    },
+    completion: {
+      reportExists: true,
+      reportRelativePath: 'docs/roadmap/supervision/reports/review-action-executor-report.md',
+      branchName: 'product/handoff-review-action',
+      branchExists: true,
+      branchMergedToMain: false,
+      checkedAt: '2026-06-04T07:11:00.000Z',
+      statusLabel: 'Report ready / branch exists / not merged',
+    },
+  };
+  const withReview = (
+    status:
+      | 'active'
+      | 'blocked'
+      | 'merged'
+      | 'needs_report'
+      | 'needs_review'
+      | 'ready_to_merge'
+      | 'unknown',
+    reportExists = true,
+  ) => ({
+    ...base,
+    completion: { ...base.completion, reportExists },
+    review: {
+      status,
+      statusLabel: status,
+      nextActionLabel: 'Next',
+      warnings: [],
+      checkedAt: '2026-06-04T07:12:00.000Z',
+    },
+  });
+
+  assert.deepEqual(buildHandoffReviewRecommendedAction(withReview('merged')), {
+    kind: 'mark_reviewed',
+    label: 'Mark reviewed',
+    disabled: false,
+    detail: 'Branch is merged; close the local handoff review.',
+  });
+  assert.deepEqual(buildHandoffReviewRecommendedAction(withReview('ready_to_merge')), {
+    kind: 'open_report',
+    label: 'Inspect branch / open report',
+    disabled: false,
+    detail: 'Report is ready; inspect the branch manually before merge.',
+  });
+  assert.deepEqual(buildHandoffReviewRecommendedAction(withReview('needs_review')), {
+    kind: 'open_report',
+    label: 'Open report',
+    disabled: false,
+    detail: 'Review executor notes, validation, and changed-file cues.',
+  });
+  assert.deepEqual(buildHandoffReviewRecommendedAction(withReview('needs_report', false)), {
+    kind: 'wait_for_report',
+    label: 'Report missing',
+    disabled: true,
+    detail: 'Refresh after the executor writes its report.',
+  });
+  assert.deepEqual(
+    buildHandoffReviewRecommendedAction(withReview('active')).kind,
+    'refresh_completion',
+  );
+  assert.deepEqual(buildHandoffReviewRecommendedAction(withReview('blocked', false)), {
+    kind: 'wait_for_report',
+    label: 'Report missing',
+    disabled: true,
+    detail: 'No executor report is available yet.',
+  });
+  assert.equal(
+    buildHandoffReviewRecommendedAction({ ...withReview('merged'), status: 'reviewed' }).disabled,
+    true,
+  );
 });
 
 test('handoff queue grouping prefers completion review status when available', () => {
