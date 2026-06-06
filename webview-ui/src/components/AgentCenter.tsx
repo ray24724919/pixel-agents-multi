@@ -51,6 +51,8 @@ import {
   buildCreateHandoffWorkPackageMessage,
   buildCreateHandoffWorkPackagePromptMessage,
   buildHandoffExecutionQueueSummary,
+  buildHandoffManualMergeChecklist,
+  buildHandoffMergeReadiness,
   buildHandoffQueueSummary,
   buildHandoffReviewChecklist,
   buildHandoffReviewRecommendedAction,
@@ -81,6 +83,7 @@ import {
   handoffExecutionActionStatusLabel,
   type HandoffExecutionStatus,
   handoffExecutionStatusActions,
+  type HandoffMergeReadinessStatus,
   type HandoffQueueGroup,
   handoffQueueGroupLabel,
   type HandoffReviewChecklistState,
@@ -3751,7 +3754,19 @@ function handoffExecutionDetailLabel(
 function HandoffReviewCues({ item }: { item: HandoffArtifactLibraryItem }) {
   const recommendation = buildHandoffReviewRecommendedAction(item);
   const checklist = buildHandoffReviewChecklist(item);
+  const readiness = item.dispatchPackage ? buildHandoffMergeReadiness(item) : undefined;
+  const manualChecklist = item.dispatchPackage ? buildHandoffManualMergeChecklist(item) : undefined;
   const firstWarning = item.review?.warnings[0];
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const copyManualChecklist = () => {
+    if (!manualChecklist) {
+      setCopyStatus('failed');
+      return;
+    }
+    void copyTextToClipboard(manualChecklist)
+      .then(() => setCopyStatus('copied'))
+      .catch(() => setCopyStatus('failed'));
+  };
   return (
     <div className="mt-2 grid gap-2">
       <div className="break-words text-xs text-text-muted">
@@ -3777,6 +3792,60 @@ function HandoffReviewCues({ item }: { item: HandoffArtifactLibraryItem }) {
       {firstWarning && (
         <div className="break-words text-xs text-status-permission">Warning: {firstWarning}</div>
       )}
+      {readiness && (
+        <div className="grid gap-2 border border-border bg-bg p-2">
+          <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+            <div className="min-w-0">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <span
+                  className={`shrink-0 border px-2 py-1 text-xs uppercase tracking-wide ${handoffMergeReadinessClass(
+                    readiness.status,
+                  )}`}
+                >
+                  {readiness.label}
+                </span>
+                <span className="break-words text-xs text-text-muted">{readiness.detail}</span>
+              </div>
+              <div className="mt-1 break-words text-xs text-text-muted">
+                {readiness.recommendedStep}
+              </div>
+            </div>
+            <Button
+              variant={manualChecklist ? 'ghost' : 'disabled'}
+              size="sm"
+              disabled={!manualChecklist}
+              onClick={copyManualChecklist}
+            >
+              Copy merge checklist
+            </Button>
+          </div>
+          <div className="flex min-w-0 flex-wrap gap-1">
+            <span className="shrink-0 border border-border bg-btn-bg px-2 py-1 text-xs uppercase tracking-wide text-text-muted">
+              Branch: {readiness.branchStatus}
+            </span>
+            <span className="shrink-0 border border-border bg-btn-bg px-2 py-1 text-xs uppercase tracking-wide text-text-muted">
+              Report: {readiness.reportStatus}
+            </span>
+            <span className="shrink-0 border border-border bg-btn-bg px-2 py-1 text-xs uppercase tracking-wide text-text-muted">
+              {readiness.validationStatus}
+            </span>
+            <span className="shrink-0 border border-border bg-btn-bg px-2 py-1 text-xs uppercase tracking-wide text-text-muted">
+              {readiness.warningCount} warnings
+            </span>
+          </div>
+          {copyStatus !== 'idle' && (
+            <div
+              className={`text-xs ${
+                copyStatus === 'copied' ? 'text-status-waiting' : 'text-status-error'
+              }`}
+            >
+              {copyStatus === 'copied'
+                ? 'Manual merge checklist copied.'
+                : 'Checklist copy failed.'}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -3786,6 +3855,16 @@ function handoffReviewChecklistClass(state: HandoffReviewChecklistState): string
   if (state === 'missing') return 'border-status-error text-status-error';
   if (state === 'warning') return 'border-status-permission text-status-permission';
   return 'border-border text-text-muted';
+}
+
+function handoffMergeReadinessClass(status: HandoffMergeReadinessStatus): string {
+  if (status === 'already_merged') return 'border-status-waiting bg-bg text-status-waiting';
+  if (status === 'ready_to_inspect') return 'border-accent bg-bg text-accent-bright';
+  if (status === 'blocked') return 'border-status-error bg-bg text-status-error';
+  if (status === 'needs_report' || status === 'needs_review' || status === 'active') {
+    return 'border-status-permission bg-bg text-status-permission';
+  }
+  return 'border-border bg-bg text-text-muted';
 }
 
 function usageHistoryCopyLabel(status: 'idle' | 'copied' | 'failed'): string {
