@@ -5,8 +5,8 @@ import {
   buildCreateHandoffDispatchPromptMessage,
   buildCreateHandoffWorkPackageMessage,
   buildCreateHandoffWorkPackagePromptMessage,
+  buildHandoffChecklistCopyModel,
   buildHandoffExecutionQueueSummary,
-  buildHandoffManualMergeChecklist,
   buildHandoffMergeReadiness,
   buildHandoffQueueOperatorSummary,
   buildHandoffQueueSummary,
@@ -1027,7 +1027,118 @@ test('handoff merge readiness maps review statuses to supervisor decisions', () 
   );
 });
 
-test('handoff manual merge checklist uses safe repo-relative fields only', () => {
+test('handoff checklist copy model matches readiness-specific labels and titles', () => {
+  const base = {
+    relativePath: 'docs/agent-handoffs/checklist-copy.md',
+    filename: 'checklist-copy.md',
+    modifiedAt: 1_780_000_000_000,
+    sizeBytes: 1024,
+    displayTitle: 'Checklist copy',
+    displayDetail: 'detail',
+    statusLabel: 'Draft',
+    dispatchPackage: {
+      packageRelativePath:
+        'docs/roadmap/supervision/work-packages/handoffs/checklist-copy-work-package.md',
+      branchName: 'product/handoff-checklist-copy',
+      reportRelativePath: 'docs/roadmap/supervision/reports/checklist-copy-executor-report.md',
+      status: 'dispatched' as const,
+      createdAt: '2026-06-04T07:09:00.000Z',
+      updatedAt: '2026-06-04T07:10:00.000Z',
+      statusLabel: 'Dispatched',
+    },
+    completion: {
+      reportExists: true,
+      reportRelativePath: 'docs/roadmap/supervision/reports/checklist-copy-executor-report.md',
+      branchName: 'product/handoff-checklist-copy',
+      branchExists: true,
+      branchMergedToMain: false,
+      checkedAt: '2026-06-04T07:11:00.000Z',
+      statusLabel: 'Report ready / branch exists / not merged',
+    },
+  };
+  const withReview = (
+    status:
+      | 'active'
+      | 'blocked'
+      | 'merged'
+      | 'needs_report'
+      | 'needs_review'
+      | 'ready_to_merge'
+      | 'unknown',
+  ) => ({
+    ...base,
+    review: {
+      status,
+      statusLabel: status,
+      nextActionLabel: 'Next',
+      report: {
+        hasSummary: true,
+        hasFilesChanged: true,
+        hasValidation: status !== 'needs_review',
+        hasAcceptanceCriteria: true,
+        hasDeviations: false,
+        validationLines: [],
+        changedFileLines: [],
+        riskLines: [],
+        truncated: false,
+      },
+      git: {
+        branchExists: true,
+        branchMergedToMain: status === 'merged',
+        aheadCount: status === 'merged' ? 0 : 1,
+        behindCount: 0,
+      },
+      warnings: status === 'blocked' ? ['Blocked by validation'] : [],
+      checkedAt: '2026-06-04T07:12:00.000Z',
+    },
+  });
+
+  const mergeModel = buildHandoffChecklistCopyModel(withReview('ready_to_merge'));
+  assert.equal(mergeModel.actionLabel, 'Copy merge checklist');
+  assert.equal(mergeModel.copiedLabel, 'Merge checklist copied.');
+  assert.match(mergeModel.text ?? '', /# Manual Merge Checklist: Checklist copy/);
+
+  const reviewModel = buildHandoffChecklistCopyModel(withReview('needs_review'));
+  assert.equal(reviewModel.actionLabel, 'Copy review checklist');
+  assert.equal(reviewModel.copiedLabel, 'Review checklist copied.');
+  assert.match(reviewModel.text ?? '', /# Manual Review Checklist: Checklist copy/);
+  assert.equal(reviewModel.text?.includes('Manual Merge Checklist'), false);
+
+  const blockerModel = buildHandoffChecklistCopyModel(withReview('blocked'));
+  assert.equal(blockerModel.actionLabel, 'Copy blocker checklist');
+  assert.equal(blockerModel.copiedLabel, 'Blocker checklist copied.');
+  assert.match(blockerModel.text ?? '', /# Manual Blocker Checklist: Checklist copy/);
+  assert.match(
+    blockerModel.text ?? '',
+    /Pixel Agents does not run git checkout, merge, push, rebase, reset, stash, or clean/,
+  );
+  assert.equal(blockerModel.text?.includes('If approved, merge'), false);
+
+  const activeModel = buildHandoffChecklistCopyModel(withReview('active'));
+  assert.equal(activeModel.actionLabel, 'Copy status checklist');
+  assert.equal(activeModel.copiedLabel, 'Status checklist copied.');
+  assert.match(activeModel.text ?? '', /# Manual Status Checklist: Checklist copy/);
+  assert.equal(activeModel.text?.includes('Manual Merge Checklist'), false);
+  assert.equal(activeModel.text?.includes('Manual merge review'), false);
+
+  const needsReportModel = buildHandoffChecklistCopyModel(withReview('needs_report'));
+  assert.equal(needsReportModel.actionLabel, 'Copy status checklist');
+  assert.match(needsReportModel.text ?? '', /# Manual Status Checklist: Checklist copy/);
+
+  const closeoutModel = buildHandoffChecklistCopyModel(withReview('merged'));
+  assert.equal(closeoutModel.actionLabel, 'Copy closeout checklist');
+  assert.match(closeoutModel.text ?? '', /# Manual Closeout Checklist: Checklist copy/);
+
+  const noPackageModel = buildHandoffChecklistCopyModel({
+    ...withReview('ready_to_merge'),
+    dispatchPackage: undefined,
+  });
+  assert.equal(noPackageModel.disabled, true);
+  assert.equal(noPackageModel.canCopy, false);
+  assert.equal(noPackageModel.text, undefined);
+});
+
+test('handoff checklist copy model uses safe repo-relative fields only', () => {
   const state = handoffArtifactLibraryStateFromLoadedMessage({
     type: 'handoffArtifactsLoaded',
     artifacts: [
@@ -1091,14 +1202,16 @@ test('handoff manual merge checklist uses safe repo-relative fields only', () =>
     ],
   });
 
-  const checklist = buildHandoffManualMergeChecklist(state.items[0]!);
+  const copyModel = buildHandoffChecklistCopyModel(state.items[0]!);
+  const checklist = copyModel.text;
+  assert.equal(copyModel.disabled, false);
   assert.ok(checklist);
   assert.match(checklist, /Manual Merge Checklist: Safe checklist/);
   assert.match(checklist, /docs\/agent-handoffs\/safe-checklist\.md/);
   assert.match(checklist, /product\/handoff-safe-checklist/);
   assert.match(
     checklist,
-    /Pixel Agents does not run git merge, push, rebase, reset, stash, or clean/,
+    /Pixel Agents does not run git checkout, merge, push, rebase, reset, stash, or clean/,
   );
   assert.equal(checklist.includes('C:\\Users\\User'), false);
   assert.equal(checklist.includes('full report body'), false);
