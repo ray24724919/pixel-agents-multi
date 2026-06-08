@@ -74,10 +74,29 @@ Added focused server tests for:
 ## Installed VSIX / Live QA Status
 
 - W14-F did not use desktop automation or Computer Use.
-- W14-F did not create new disposable smoke handoffs or launch new QA agents.
 - The W14-E live pass was user-assisted and produced the stuck-Claude finding.
 - W14-F rebuilt, packaged, installed, and verified the local VSIX after the runtime fix.
 - Installed identity after reinstall: `raychen.pixel-agents-multi@1.3.0`.
+- Follow-up user-assisted installed-VSIX QA was completed on 2026-06-08:
+  - Created two disposable package-backed handoffs:
+    - `W14-F Smoke Codex Launch`
+    - `W14-F Smoke Claude Launch`
+  - Initial smoke sidecars were generated with a UTF-8 BOM by the shell helper and appeared as `MARKDOWN ONLY`; rewriting the disposable sidecars as no-BOM JSON fixed the smoke setup. This was a QA artifact setup issue, not a product bug.
+  - Handoff Queue operator summary and state-specific checklist copy labels were visible after refreshing the handoff library.
+  - `Launch Codex` opened a Codex executor and wrote sidecar metadata:
+    - `dispatchPackage.status = "dispatched"`
+    - `dispatchPackage.execution.status = "active"`
+    - `dispatchPackage.execution.providerId = "codex"`
+    - `dispatchPackage.execution.sessionId = "10bf863c-f020-4a84-8f12-9c138ef51bd3"`
+  - `Launch Claude` opened a Claude executor and wrote sidecar metadata after session evidence appeared:
+    - `dispatchPackage.status = "dispatched"`
+    - `dispatchPackage.execution.status = "active"`
+    - `dispatchPackage.execution.providerId = "claude"`
+    - `dispatchPackage.execution.sessionId = "69a02bac-14f1-402e-8c4b-4add62f71469"`
+  - Claude JSONL evidence was present for session `69a02bac-14f1-402e-8c4b-4add62f71469` under the local Claude projects directory.
+  - Claude appeared stuck because the executor reached an interactive approval prompt for `git checkout main`; the user also noted RAM pressure. This was not a Pixel Agents launch failure.
+  - Disposable W14-F smoke handoff, sidecar, work-package, and smoke executor report artifacts were removed before closing the QA pass.
+  - The user closed the QA-launched Codex and Claude terminals/agents.
 
 ## Validation
 
@@ -95,8 +114,6 @@ Added focused server tests for:
 
 ## Remaining Manual QA Gaps
 
-- A final user-assisted installed VS Code click-through should retry Launch Claude after reloading VS Code with the newly installed VSIX.
-- Expected result after this fix:
-  - If Claude starts a real session, sidecar metadata is marked dispatched/active after transcript or hook evidence appears.
-  - If Claude blocks on auth, permission, or input and no session transcript appears within the evidence window, the handoff stays unmarked and the UI shows launch failed with an explicit blocker message.
+- None for W14-F launch verification.
 - No remaining source-level blocker is known.
+- Follow-up report-only update did not rerun full build/tests because source code was unchanged after commit `d26f421`; `git diff --check` and clean worktree checks were used for the report update.
