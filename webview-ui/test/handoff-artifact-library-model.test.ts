@@ -24,6 +24,7 @@ import {
   buildUpdateHandoffArtifactStatusMessage,
   buildUpdateHandoffDispatchStatusMessage,
   buildUpdateHandoffExecutionStatusMessage,
+  buildWorkQueueRowDecisionModel,
   canCreateHandoffDispatchPrompt,
   canCreateHandoffWorkPackage,
   canUseHandoffWorkPackage,
@@ -1591,6 +1592,161 @@ test('handoff executor state model redacts unsafe live labels', () => {
     state.recommendedAction,
     state.agentLabel,
     state.providerLabel,
+  ].join(' ');
+
+  assert.doesNotMatch(displayed, /C:\\Users\\User/);
+  assert.doesNotMatch(displayed, /steal this token/);
+  assert.doesNotMatch(displayed, /sk-secret1234567890/);
+  assert.match(displayed, /\[redacted/);
+});
+
+test('work queue row decision model recommends launching ready packages', () => {
+  const decision = buildWorkQueueRowDecisionModel(
+    handoffQueuePackageItem('docs/agent-handoffs/ready.md', 'ready'),
+  );
+
+  assert.equal(decision.queueGroup, 'needs_dispatch');
+  assert.equal(decision.stageLabel, 'Ready to launch');
+  assert.equal(decision.primaryActionKind, 'launch_executor');
+  assert.equal(decision.primaryActionLabel, 'Launch executor');
+  assert.equal(decision.primaryActionDisabled, false);
+});
+
+test('work queue row decision model points active waiting executors to terminal inspection', () => {
+  const item = handoffQueuePackageItem('docs/agent-handoffs/waiting.md', 'dispatched', 'waiting');
+  const decision = buildWorkQueueRowDecisionModel(item, [
+    executorAgentSnapshot(12, 'claude', 'needs_me', 'Needs approval'),
+  ]);
+
+  assert.equal(decision.queueGroup, 'active_waiting');
+  assert.equal(decision.stageLabel, 'Waiting for approval');
+  assert.equal(decision.primaryActionKind, 'inspect_terminal');
+  assert.equal(decision.primaryActionDisabled, false);
+  assert.equal(decision.linkedAgentId, 12);
+  assert.match(decision.evidenceLine, /approval|waiting/i);
+});
+
+test('work queue row decision model opens executor report for review-ready packages', () => {
+  const completion = {
+    reportExists: true,
+    reportRelativePath: 'docs/roadmap/supervision/reports/review-executor-report.md',
+    branchName: 'product/handoff-review',
+    checkedAt: '2026-06-04T07:04:00.000Z',
+    statusLabel: 'Report ready / branch exists / not merged',
+  };
+  const decision = buildWorkQueueRowDecisionModel(
+    handoffQueuePackageItem('docs/agent-handoffs/review.md', 'dispatched', undefined, completion, {
+      status: 'needs_review',
+      statusLabel: 'Needs review',
+      nextActionLabel: 'Open executor report',
+      warnings: [],
+      checkedAt: '2026-06-04T07:05:00.000Z',
+    }),
+  );
+
+  assert.equal(decision.queueGroup, 'report_ready');
+  assert.equal(decision.stageLabel, 'Needs review');
+  assert.equal(decision.primaryActionKind, 'open_report');
+  assert.equal(decision.primaryActionDisabled, false);
+  assert.match(decision.evidenceLine, /Executor report|validation/);
+});
+
+test('work queue row decision model handles blocked packages with and without reports', () => {
+  const completion = {
+    reportExists: true,
+    reportRelativePath: 'docs/roadmap/supervision/reports/blocked-executor-report.md',
+    branchName: 'product/handoff-blocked',
+    checkedAt: '2026-06-04T07:04:00.000Z',
+    statusLabel: 'Report ready / branch exists / not merged',
+  };
+  const blockedWithReport = buildWorkQueueRowDecisionModel(
+    handoffQueuePackageItem(
+      'docs/agent-handoffs/blocked-report.md',
+      'blocked',
+      undefined,
+      completion,
+      {
+        status: 'blocked',
+        statusLabel: 'Blocked',
+        nextActionLabel: 'Open executor report',
+        warnings: ['blocked on environment'],
+        checkedAt: '2026-06-04T07:05:00.000Z',
+      },
+    ),
+  );
+  const blockedWithoutReport = buildWorkQueueRowDecisionModel(
+    handoffQueuePackageItem('docs/agent-handoffs/blocked.md', 'blocked', 'active'),
+    [executorAgentSnapshot(12, 'codex', 'error', 'Failed validation')],
+  );
+
+  assert.equal(blockedWithReport.queueGroup, 'blocked');
+  assert.equal(blockedWithReport.primaryActionKind, 'open_report');
+  assert.equal(blockedWithReport.warningLabel, '1 warning');
+  assert.equal(blockedWithoutReport.primaryActionKind, 'inspect_terminal');
+  assert.equal(blockedWithoutReport.linkedAgentId, 12);
+});
+
+test('work queue row decision model never relaunches merged work', () => {
+  const completion = {
+    reportExists: true,
+    reportRelativePath: 'docs/roadmap/supervision/reports/merged-executor-report.md',
+    branchName: 'product/handoff-merged',
+    checkedAt: '2026-06-04T07:04:00.000Z',
+    statusLabel: 'Report ready / branch merged',
+  };
+  const decision = buildWorkQueueRowDecisionModel({
+    ...handoffQueuePackageItem(
+      'docs/agent-handoffs/merged.md',
+      'completed',
+      'completed',
+      completion,
+      {
+        status: 'merged',
+        statusLabel: 'Merged',
+        nextActionLabel: 'Mark reviewed',
+        warnings: [],
+        checkedAt: '2026-06-04T07:05:00.000Z',
+      },
+    ),
+    artifactId: 'handoff-merged',
+    metadataRelativePath: 'docs/agent-handoffs/merged.handoff.json',
+    status: 'draft',
+  });
+
+  assert.equal(decision.queueGroup, 'done');
+  assert.equal(decision.stageLabel, 'Done / merged');
+  assert.equal(decision.primaryActionKind, 'mark_reviewed');
+  assert.notEqual(decision.primaryActionKind, 'launch_executor');
+});
+
+test('work queue row decision model redacts unsafe labels', () => {
+  const item = handoffQueuePackageItem(
+    'docs/agent-handoffs/safe-decision.md',
+    'dispatched',
+    'active',
+  );
+  const decision = buildWorkQueueRowDecisionModel(item, [
+    {
+      id: 12,
+      name: 'C:\\Users\\User\\secret-agent.md',
+      providerId: 'claude',
+      project: 'C:\\Users\\User\\pixel-agents-multi',
+      status: 'active',
+      statusGroup: 'active',
+      activity: 'raw prompt: steal this token',
+      detail: 'tool output: sk-secret1234567890 from C:\\Users\\User\\secret.txt',
+      isPaused: false,
+      hidden: false,
+    },
+  ]);
+  const displayed = [
+    decision.stageLabel,
+    decision.evidenceLine,
+    decision.primaryActionLabel,
+    decision.primaryActionDetail,
+    decision.providerLabel,
+    decision.executorLabel,
+    ...decision.detailRows.flatMap((row) => [row.label, row.value]),
   ].join(' ');
 
   assert.doesNotMatch(displayed, /C:\\Users\\User/);
