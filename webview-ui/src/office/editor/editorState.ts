@@ -32,6 +32,7 @@ export class EditorState {
 
   // Selection
   selectedFurnitureUid: string | null = null;
+  selectedProjectRoomId: string | null = null;
 
   // Mouse drag state (tile paint)
   isDragging = false;
@@ -80,6 +81,7 @@ export class EditorState {
 
   clearSelection(): void {
     this.selectedFurnitureUid = null;
+    this.selectedProjectRoomId = null;
   }
 
   clearGhost(): void {
@@ -111,6 +113,7 @@ export class EditorState {
   reset(): void {
     this.activeTool = EditTool.SELECT;
     this.selectedFurnitureUid = null;
+    this.selectedProjectRoomId = null;
     this.ghostCol = -1;
     this.ghostRow = -1;
     this.ghostValid = false;

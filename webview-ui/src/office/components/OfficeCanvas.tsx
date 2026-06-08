@@ -12,6 +12,7 @@ import { unlockAudio } from '../../notificationSound.js';
 import { vscode } from '../../vscodeApi.js';
 import { canPlaceFurniture, getWallPlacementRow } from '../editor/editorActions.js';
 import type { EditorState } from '../editor/editorState.js';
+import { findProjectRoomAtTile } from '../editor/roomEditorActions.js';
 import { startGameLoop } from '../engine/gameLoop.js';
 import type { OfficeState } from '../engine/officeState.js';
 import type {
@@ -157,6 +158,15 @@ export function OfficeCanvas({
             showGhostBorder,
             ghostBorderHoverCol: showGhostBorder ? editorState.ghostCol : -999,
             ghostBorderHoverRow: showGhostBorder ? editorState.ghostRow : -999,
+            selectedProjectRoomId: editorState.selectedProjectRoomId,
+            hoveredProjectRoomId:
+              editorState.activeTool === EditTool.ROOM && editorState.ghostCol >= 0
+                ? (findProjectRoomAtTile(
+                    officeState.getLayout(),
+                    editorState.ghostCol,
+                    editorState.ghostRow,
+                  )?.id ?? null)
+                : null,
           };
 
           // Ghost preview for furniture placement
@@ -286,6 +296,7 @@ export function OfficeCanvas({
           officeState.getLayout().tileColors,
           officeState.getLayout().cols,
           officeState.getLayout().rows,
+          officeState.getLayout(),
         );
         offsetRef.current = { x: offsetX, y: offsetY };
 
@@ -459,6 +470,14 @@ export function OfficeCanvas({
                 );
               });
               canvas.style.cursor = hitFurniture ? 'pointer' : 'crosshair';
+            } else if (editorState.activeTool === EditTool.ROOM && tile) {
+              canvas.style.cursor = findProjectRoomAtTile(
+                officeState.getLayout(),
+                tile.col,
+                tile.row,
+              )
+                ? 'pointer'
+                : 'crosshair';
             } else if (
               (editorState.activeTool === EditTool.SELECT ||
                 (editorState.activeTool === EditTool.FURNITURE_PLACE &&

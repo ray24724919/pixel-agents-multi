@@ -14,9 +14,10 @@ import {
   getCatalogByCategory,
 } from '../layout/furnitureCatalog.js';
 import { getCachedSprite } from '../sprites/spriteCache.js';
-import type { TileType as TileTypeVal, ZoneType } from '../types.js';
-import { EditTool } from '../types.js';
+import type { ProjectRoom, TileType as TileTypeVal, ZoneType } from '../types.js';
+import { EditTool, ProjectRoomKind } from '../types.js';
 import { getWallSetCount, getWallSetPreviewSprite } from '../wallTiles.js';
+import type { ProjectRoomEditorPatch } from './roomEditorActions.js';
 
 interface EditorToolbarProps {
   activeTool: EditTool;
@@ -24,6 +25,8 @@ interface EditorToolbarProps {
   selectedFurnitureType: string;
   selectedZone: ZoneType;
   selectedFurnitureUid: string | null;
+  selectedProjectRoomId: string | null;
+  projectRooms: ProjectRoom[];
   selectedFurnitureColor: ColorValue | null;
   floorColor: ColorValue;
   wallColor: ColorValue;
@@ -36,6 +39,10 @@ interface EditorToolbarProps {
   onSelectedFurnitureColorChange: (color: ColorValue | null) => void;
   onFurnitureTypeChange: (type: string) => void;
   onZoneChange: (zone: ZoneType) => void;
+  onRoomSelect: (roomId: string | null) => void;
+  onRoomUpdate: (patch: ProjectRoomEditorPatch) => void;
+  onRoomDelete: () => void;
+  onAutoCreateRooms: () => void;
   loadedAssets?: LoadedAssetData;
 }
 
@@ -49,6 +56,8 @@ export function EditorToolbar({
   selectedFurnitureType,
   selectedZone,
   selectedFurnitureUid,
+  selectedProjectRoomId,
+  projectRooms,
   selectedFurnitureColor,
   floorColor,
   wallColor,
@@ -61,6 +70,10 @@ export function EditorToolbar({
   onSelectedFurnitureColorChange,
   onFurnitureTypeChange,
   onZoneChange,
+  onRoomSelect,
+  onRoomUpdate,
+  onRoomDelete,
+  onAutoCreateRooms,
   loadedAssets,
 }: EditorToolbarProps) {
   const [activeCategory, setActiveCategory] = useState<FurnitureCategory>('desks');
@@ -108,8 +121,10 @@ export function EditorToolbar({
   const isWallActive = activeTool === EditTool.WALL_PAINT;
   const isEraseActive = activeTool === EditTool.ERASE;
   const isZoneActive = activeTool === EditTool.ZONE_PAINT;
+  const isRoomActive = activeTool === EditTool.ROOM;
   const isFurnitureActive =
     activeTool === EditTool.FURNITURE_PLACE || activeTool === EditTool.FURNITURE_PICK;
+  const selectedRoom = projectRooms.find((room) => room.id === selectedProjectRoomId) ?? null;
 
   return (
     <div className="absolute bottom-76 left-10 z-10 pixel-panel p-4 flex flex-col-reverse gap-4 max-w-[calc(100vw-20px)]">
@@ -146,6 +161,14 @@ export function EditorToolbar({
           title="Paint work/rest zones"
         >
           Zone
+        </Button>
+        <Button
+          variant={isRoomActive ? 'active' : 'default'}
+          size="md"
+          onClick={() => onToolChange(EditTool.ROOM)}
+          title="Edit project room metadata"
+        >
+          Rooms
         </Button>
         <Button
           variant={isEraseActive ? 'active' : 'default'}
@@ -347,7 +370,107 @@ export function EditorToolbar({
         </div>
       )}
 
-      {/* Selected furniture color panel — shows when any placed furniture item is selected */}
+      {/* Sub-panel: Project rooms */}
+      {isRoomActive && (
+        <div className="flex flex-col-reverse gap-4 min-w-[360px] max-w-[760px]">
+          <div className="flex gap-4 flex-wrap items-center">
+            <Button
+              variant="default"
+              size="sm"
+              onClick={onAutoCreateRooms}
+              title="Create rooms for visible projects"
+            >
+              Auto rooms
+            </Button>
+            <Button
+              variant={!selectedRoom ? 'active' : 'ghost'}
+              size="sm"
+              onClick={() => onRoomSelect(null)}
+              title="Clear selected room"
+            >
+              None
+            </Button>
+            {projectRooms.map((room) => (
+              <Button
+                key={room.id}
+                variant={selectedProjectRoomId === room.id ? 'active' : 'ghost'}
+                size="sm"
+                onClick={() => onRoomSelect(room.id)}
+                title={room.project?.key ?? room.kind}
+              >
+                {room.label || room.project?.displayName || room.kind}
+              </Button>
+            ))}
+          </div>
+          {selectedRoom ? (
+            <div className="grid grid-cols-[auto_1fr_auto_1fr] gap-x-4 gap-y-3 items-center text-xs text-text">
+              <label className="text-text-muted">Label</label>
+              <input
+                className="bg-bg-dark border-2 border-border px-2 py-1 text-text"
+                value={selectedRoom.label ?? ''}
+                onChange={(event) => onRoomUpdate({ label: event.target.value })}
+              />
+              <label className="text-text-muted">Kind</label>
+              <select
+                className="bg-bg-dark border-2 border-border px-2 py-1 text-text"
+                value={selectedRoom.kind}
+                onChange={(event) =>
+                  onRoomUpdate({ kind: event.target.value as ProjectRoom['kind'] })
+                }
+              >
+                {Object.values(ProjectRoomKind).map((kind) => (
+                  <option key={kind} value={kind}>
+                    {kind}
+                  </option>
+                ))}
+              </select>
+              <label className="text-text-muted">Project key</label>
+              <input
+                className="bg-bg-dark border-2 border-border px-2 py-1 text-text"
+                value={selectedRoom.project?.key ?? ''}
+                onChange={(event) => onRoomUpdate({ projectKey: event.target.value })}
+              />
+              <label className="text-text-muted">Project name</label>
+              <input
+                className="bg-bg-dark border-2 border-border px-2 py-1 text-text"
+                value={selectedRoom.project?.displayName ?? ''}
+                onChange={(event) => onRoomUpdate({ projectDisplayName: event.target.value })}
+              />
+              {(['col', 'row', 'width', 'height'] as const).map((field) => (
+                <label key={field} className="contents">
+                  <span className="text-text-muted">{field}</span>
+                  <input
+                    type="number"
+                    className="bg-bg-dark border-2 border-border px-2 py-1 text-text w-24"
+                    value={selectedRoom.bounds[field]}
+                    onChange={(event) =>
+                      onRoomUpdate({
+                        [field]: Number(event.target.value),
+                      } as ProjectRoomEditorPatch)
+                    }
+                  />
+                </label>
+              ))}
+              <div className="col-span-4 flex justify-end">
+                <Button
+                  variant="accent"
+                  size="sm"
+                  onClick={onRoomDelete}
+                  title="Delete room metadata only"
+                >
+                  Delete room
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="text-xs text-text-muted">
+              Click an existing room to select it, or click empty floor to create room metadata.
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Selected furniture color panel - shows when any placed furniture item is selected */}
       {selectedFurnitureUid && (
         <div className="flex flex-col-reverse gap-4">
           <div className="flex gap-4 items-center">

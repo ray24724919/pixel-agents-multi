@@ -37,6 +37,12 @@ import {
   GRID_LINE_COLOR,
   HOVERED_OUTLINE_ALPHA,
   OUTLINE_Z_SORT_OFFSET,
+  PROJECT_ROOM_BOUNDARY_LINE_WIDTH_PX,
+  PROJECT_ROOM_DOORPLATE_BG,
+  PROJECT_ROOM_DOORPLATE_FONT_PX,
+  PROJECT_ROOM_DOORPLATE_PADDING_X_PX,
+  PROJECT_ROOM_DOORPLATE_PADDING_Y_PX,
+  PROJECT_ROOM_DOORPLATE_TEXT,
   ROTATE_BUTTON_BG,
   SEAT_AVAILABLE_COLOR,
   SEAT_BUSY_COLOR,
@@ -49,6 +55,7 @@ import {
 } from '../../constants.js';
 import { delegationVisualMarkerText } from '../delegationVisual.js';
 import { getColorizedFloorSprite, hasFloorSprites, WALL_COLOR } from '../floorTiles.js';
+import { buildRoomRenderInstructions } from '../roomRendering.js';
 import { getCachedSprite, getOutlineSprite } from '../sprites/spriteCache.js';
 import {
   BUBBLE_PERMISSION_SPRITE,
@@ -58,6 +65,7 @@ import {
 import type {
   Character,
   FurnitureInstance,
+  OfficeLayout,
   Seat,
   SpriteData,
   TileType as TileTypeVal,
@@ -114,6 +122,61 @@ export function renderTileGrid(
       ctx.drawImage(cached, offsetX + c * s, offsetY + r * s);
     }
   }
+}
+
+/** @internal */
+export function renderProjectRooms(
+  ctx: CanvasRenderingContext2D,
+  layout: OfficeLayout,
+  offsetX: number,
+  offsetY: number,
+  zoom: number,
+  selectedRoomId: string | null = null,
+  hoveredRoomId: string | null = null,
+): void {
+  const rooms = buildRoomRenderInstructions(layout, zoom, selectedRoomId, hoveredRoomId);
+  if (rooms.length === 0) return;
+
+  ctx.save();
+  for (const room of rooms) {
+    const x = offsetX + room.x;
+    const y = offsetY + room.y;
+    ctx.fillStyle = room.fill;
+    ctx.fillRect(x, y, room.w, room.h);
+    ctx.strokeStyle = room.border;
+    ctx.lineWidth = Math.max(PROJECT_ROOM_BOUNDARY_LINE_WIDTH_PX, zoom);
+    ctx.setLineDash(room.selected || room.hovered ? [] : [4 * zoom, 2 * zoom]);
+    ctx.strokeRect(x + 0.5, y + 0.5, room.w - 1, room.h - 1);
+
+    if (!room.doorplate.visible || room.doorplate.maxWidth <= 0) continue;
+    const fontSize = Math.max(
+      PROJECT_ROOM_DOORPLATE_FONT_PX * zoom,
+      PROJECT_ROOM_DOORPLATE_FONT_PX,
+    );
+    const padX = PROJECT_ROOM_DOORPLATE_PADDING_X_PX * zoom;
+    const padY = PROJECT_ROOM_DOORPLATE_PADDING_Y_PX * zoom;
+    ctx.font = `${fontSize}px "FS Pixel Sans", monospace`;
+    ctx.textBaseline = 'top';
+    const textWidth = Math.min(
+      ctx.measureText(room.doorplate.label).width,
+      room.doorplate.maxWidth,
+    );
+    const plateW = Math.min(room.doorplate.maxWidth, textWidth + padX * 2);
+    const plateH = fontSize + padY * 2;
+    const plateX = offsetX + room.doorplate.x;
+    const plateY = offsetY + room.doorplate.y;
+    ctx.setLineDash([]);
+    ctx.fillStyle = PROJECT_ROOM_DOORPLATE_BG;
+    ctx.fillRect(plateX, plateY, plateW, plateH);
+    ctx.fillStyle = PROJECT_ROOM_DOORPLATE_TEXT;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(plateX, plateY, plateW, plateH);
+    ctx.clip();
+    ctx.fillText(room.doorplate.label, plateX + padX, plateY + padY);
+    ctx.restore();
+  }
+  ctx.restore();
 }
 
 interface ZDrawable {
@@ -632,6 +695,10 @@ export interface EditorRenderState {
   ghostBorderHoverCol: number;
   /** Hovered ghost border tile row (-1 to rows) */
   ghostBorderHoverRow: number;
+  /** Selected project room id in room edit mode */
+  selectedProjectRoomId: string | null;
+  /** Hovered project room id in room edit mode */
+  hoveredProjectRoomId: string | null;
 }
 
 export interface SelectionRenderState {
@@ -657,6 +724,7 @@ export function renderFrame(
   tileColors?: Array<ColorValue | null>,
   layoutCols?: number,
   layoutRows?: number,
+  layout?: OfficeLayout,
 ): { offsetX: number; offsetY: number } {
   // Clear
   ctx.clearRect(0, 0, canvasWidth, canvasHeight);
@@ -673,6 +741,18 @@ export function renderFrame(
 
   // Draw tiles (floor + wall base color)
   renderTileGrid(ctx, tileMap, offsetX, offsetY, zoom, tileColors, layoutCols);
+
+  if (layout) {
+    renderProjectRooms(
+      ctx,
+      layout,
+      offsetX,
+      offsetY,
+      zoom,
+      editor?.selectedProjectRoomId ?? null,
+      editor?.hoveredProjectRoomId ?? null,
+    );
+  }
 
   // Seat indicators (below furniture/characters, on top of floor)
   if (selection) {
