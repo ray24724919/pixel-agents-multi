@@ -177,9 +177,14 @@ export function lifecycleStatusDrivesOfficeWork(status: AgentLifecycleStatus): b
   return status === 'thinking' || status === 'tool_running';
 }
 
-function lifecycleStatusStopsOfficeWork(status: AgentLifecycleStatus): boolean {
+export function lifecycleStatusStopsOfficeWork(status: AgentLifecycleStatus): boolean {
   return (
-    status === 'completed' || status === 'idle' || status === 'waiting_user' || status === 'error'
+    status === 'completed' ||
+    status === 'idle' ||
+    status === 'waiting_user' ||
+    status === 'waiting_permission' ||
+    status === 'paused' ||
+    status === 'error'
   );
 }
 
@@ -942,10 +947,11 @@ export function useExtensionMessages(
         );
         if (lifecycleStatusDrivesOfficeWork(lifecycle.status)) {
           setAgentOfficeActivity(os, lifecycle.id, true, lifecycle.toolName);
-        } else if (lifecycle.status === 'paused') {
-          os.clearPermissionBubble(lifecycle.id);
         } else if (lifecycleStatusStopsOfficeWork(lifecycle.status)) {
           setAgentOfficeActivity(os, lifecycle.id, false);
+          if (lifecycle.status === 'paused') {
+            os.clearPermissionBubble(lifecycle.id);
+          }
         }
         if (lifecycle.status === 'completed') {
           window.setTimeout(() => {
@@ -1029,6 +1035,7 @@ export function useExtensionMessages(
             [id]: list.map((t) => (t.done ? t : { ...t, permissionWait: true })),
           };
         });
+        setAgentOfficeActivity(os, id, false);
         os.showPermissionBubble(id);
         playPermissionSound();
       } else if (msg.type === 'subagentToolPermission') {
