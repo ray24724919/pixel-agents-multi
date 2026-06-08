@@ -860,7 +860,7 @@ export class OfficeState {
     if (!active && !ch.isSubagent && ch.delegation?.isActive) {
       ch.isActive = true;
       ch.delegationDrivesActive = true;
-      ch.currentTool = ch.currentTool ?? SUPERVISION_TOOL_NAME;
+      ch.currentTool = SUPERVISION_TOOL_NAME;
       ch.seatTimer = 0;
       this.repairSeatingAssignments('active');
       return;

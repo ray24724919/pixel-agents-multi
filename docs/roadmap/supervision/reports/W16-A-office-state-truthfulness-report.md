@@ -45,18 +45,24 @@ The patch does not branch on provider. Codex and Claude delegation summaries bot
 
 Final counts:
 
-- Webview tests: 162 passed.
+- Webview tests: 163 passed.
 - Server tests: 284 passed.
-- Combined: 446 passed.
+- Combined: 447 passed.
 
 ## Validation
 
 - `git diff --check`: passed.
-- `npm run test:webview`: passed, 162 tests.
+- `npm run test:webview`: passed, 163 tests.
 - `npm run test:server`: passed, 284 tests.
 - `npm run build`: passed.
 - `npm run release:local`: passed; built, verified identity, verified VSIX contents, packaged, installed local VSIX, and verified installed extension.
 - `npm run verify:installed`: passed; installed extension verified as `raychen.pixel-agents-multi@1.3.0`.
+
+## Supervisor Follow-up
+
+- Tightened the delegation engine path so an inactive supervisor with active delegates always switches stale tool posture to the shared `Delegation` supervision tool instead of preserving an old typing tool such as `Bash`.
+- Added regression coverage for stale tool posture while delegation still drives the supervisor active.
+- Supervisor validation: `git diff --check`, `npm run test:webview`, `npm run test:server`, `npm run build`, and `npm run release:local` passed.
 
 ## Notes
 

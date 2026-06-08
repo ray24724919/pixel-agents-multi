@@ -222,6 +222,21 @@ test('delegating supervisor uses a supervision reading posture instead of typing
   assert.equal(isReadingTool(ch.currentTool), true);
 });
 
+test('inactive supervisor with active delegates clears stale tool typing posture', () => {
+  const state = new OfficeState(makeLayout([...workstationFurniture(), ...loungeFurniture()]));
+  addAgent(state, 1, true);
+
+  state.setAgentTool(1, 'Bash');
+  state.setAgentDelegation(1, buildDelegationVisualState(summary()));
+  state.setAgentActive(1, false);
+
+  const ch = state.characters.get(1)!;
+  assert.equal(ch.isActive, true);
+  assert.equal(ch.delegationDrivesActive, true);
+  assert.equal(ch.currentTool, SUPERVISION_TOOL_NAME);
+  assert.equal(isReadingTool(ch.currentTool), true);
+});
+
 test('Codex and Claude delegation use the same office visual state logic', () => {
   for (const providerId of ['codex', 'claude']) {
     const state = new OfficeState(makeLayout([...workstationFurniture(), ...loungeFurniture()]));
