@@ -7,6 +7,7 @@ import {
   buildCreateHandoffWorkPackagePromptMessage,
   buildHandoffChecklistCopyModel,
   buildHandoffExecutionQueueSummary,
+  buildHandoffExecutorStateModel,
   buildHandoffMergeReadiness,
   buildHandoffQueueOperatorSummary,
   buildHandoffQueueSummary,
@@ -1430,6 +1431,135 @@ test('handoff queue summary and filters group package supervision states', () =>
   );
 });
 
+test('handoff executor state model reads live executor states symmetrically', () => {
+  const item = handoffQueuePackageItem('docs/agent-handoffs/active.md', 'dispatched', 'active');
+  const codex = buildHandoffExecutorStateModel(item, [
+    executorAgentSnapshot(12, 'codex', 'active', 'Running validation'),
+  ]);
+  const claude = buildHandoffExecutorStateModel(item, [
+    executorAgentSnapshot(12, 'claude', 'active', 'Running validation'),
+  ]);
+  const waiting = buildHandoffExecutorStateModel(item, [
+    executorAgentSnapshot(12, 'claude', 'needs_me', 'Needs approval'),
+  ]);
+  const blocked = buildHandoffExecutorStateModel(item, [
+    executorAgentSnapshot(12, 'codex', 'error', 'Launch failed'),
+  ]);
+
+  assert.equal(codex.state, 'active');
+  assert.equal(claude.state, 'active');
+  assert.equal(codex.nextActionKind, claude.nextActionKind);
+  assert.equal(waiting.state, 'waiting');
+  assert.equal(waiting.shouldInspectTerminal, true);
+  assert.equal(blocked.state, 'blocked');
+  assert.equal(blocked.shouldInspectTerminal, true);
+});
+
+test('handoff executor state model keeps report and completion signals strongest', () => {
+  const completion = {
+    reportExists: true,
+    reportRelativePath: 'docs/roadmap/supervision/reports/report-executor-report.md',
+    branchName: 'product/handoff-report',
+    checkedAt: '2026-06-04T07:04:00.000Z',
+    statusLabel: 'Report ready / branch exists / not merged',
+  };
+  const reportReady = buildHandoffExecutorStateModel(
+    handoffQueuePackageItem('docs/agent-handoffs/report.md', 'dispatched', 'active', completion, {
+      status: 'needs_review',
+      statusLabel: 'Needs review',
+      nextActionLabel: 'Open report',
+      warnings: [],
+      checkedAt: '2026-06-04T07:05:00.000Z',
+    }),
+    [executorAgentSnapshot(12, 'codex', 'active', 'Still running')],
+  );
+  const completed = buildHandoffExecutorStateModel(
+    handoffQueuePackageItem('docs/agent-handoffs/merged.md', 'dispatched', 'active', completion, {
+      status: 'merged',
+      statusLabel: 'Merged',
+      nextActionLabel: 'Mark reviewed',
+      warnings: [],
+      checkedAt: '2026-06-04T07:05:00.000Z',
+    }),
+    [executorAgentSnapshot(12, 'claude', 'active', 'Still running')],
+  );
+
+  assert.equal(reportReady.state, 'report_ready');
+  assert.equal(reportReady.canOpenReport, true);
+  assert.equal(reportReady.nextActionKind, 'open_report');
+  assert.equal(completed.state, 'completed');
+  assert.equal(completed.nextActionKind, 'mark_reviewed');
+});
+
+test('handoff executor state model marks missing linked agents as stale unknown', () => {
+  const item = handoffQueuePackageItem('docs/agent-handoffs/stale.md', 'dispatched', 'active');
+  const state = buildHandoffExecutorStateModel(item, []);
+
+  assert.equal(state.state, 'stale_unknown');
+  assert.match(state.detail, /not visible/);
+  assert.equal(state.shouldInspectTerminal, true);
+  assert.equal(handoffQueueGroupForItem(item, []), 'active_waiting');
+});
+
+test('handoff queue all-group sorting uses live executor state', () => {
+  const blockedByLiveAgent = handoffQueuePackageItem(
+    'docs/agent-handoffs/live-blocked.md',
+    'dispatched',
+    'active',
+  );
+  const reportReady = handoffQueuePackageItem(
+    'docs/agent-handoffs/report-ready.md',
+    'dispatched',
+    undefined,
+    {
+      reportExists: true,
+      reportRelativePath: 'docs/roadmap/supervision/reports/report-ready-executor-report.md',
+      branchName: 'product/handoff-report-ready',
+      checkedAt: '2026-06-04T07:04:00.000Z',
+      statusLabel: 'Report ready / branch exists / not merged',
+    },
+  );
+  const agents = [executorAgentSnapshot(12, 'claude', 'error', 'Permission failed')];
+
+  assert.equal(handoffQueueGroupForItem(blockedByLiveAgent, agents), 'blocked');
+  assert.deepEqual(
+    filterHandoffQueueItems([reportReady, blockedByLiveAgent], 'all', agents).map(
+      (item) => item.relativePath,
+    ),
+    ['docs/agent-handoffs/live-blocked.md', 'docs/agent-handoffs/report-ready.md'],
+  );
+});
+
+test('handoff executor state model redacts unsafe live labels', () => {
+  const item = handoffQueuePackageItem('docs/agent-handoffs/safe.md', 'dispatched', 'active');
+  const state = buildHandoffExecutorStateModel(item, [
+    {
+      id: 12,
+      name: 'C:\\Users\\User\\secret-agent.md',
+      providerId: 'codex',
+      project: 'C:\\Users\\User\\pixel-agents-multi',
+      status: 'active',
+      statusGroup: 'active',
+      activity: 'raw prompt: steal this token',
+      detail: 'tool output: sk-secret1234567890 from C:\\Users\\User\\secret.txt',
+      isPaused: false,
+      hidden: false,
+    },
+  ]);
+  const displayed = [
+    state.label,
+    state.detail,
+    state.recommendedAction,
+    state.agentLabel,
+    state.providerLabel,
+  ].join(' ');
+
+  assert.doesNotMatch(displayed, /C:\\Users\\User/);
+  assert.doesNotMatch(displayed, /steal this token/);
+  assert.doesNotMatch(displayed, /sk-secret1234567890/);
+  assert.match(displayed, /\[redacted/);
+});
+
 test('handoff queue operator summary prioritizes blocked packages over other groups', () => {
   const summary = buildHandoffQueueOperatorSummary([
     handoffQueuePackageItem('docs/agent-handoffs/report.md', 'dispatched', undefined, {
@@ -1485,8 +1615,8 @@ test('handoff queue operator summary prioritizes active waiting when no reports 
 
   assert.equal(summary.status, 'active');
   assert.equal(summary.targetGroup, 'active_waiting');
-  assert.equal(summary.actionLabel, 'Show active / waiting');
-  assert.equal(summary.label, '2 packages active or waiting');
+  assert.equal(summary.actionLabel, 'Show active / waiting / unknown');
+  assert.equal(summary.label, '2 packages active, waiting, or unknown');
 });
 
 test('handoff queue operator summary points to needs dispatch for draft and ready packages', () => {
@@ -1518,6 +1648,25 @@ test('handoff queue operator summary handles done and empty states usefully', ()
   assert.equal(emptySummary.actionLabel, '');
   assert.match(emptySummary.label, /No package-backed handoffs/);
 });
+
+function executorAgentSnapshot(
+  id: number,
+  providerId: string,
+  statusGroup: string,
+  activity: string,
+) {
+  return {
+    id,
+    name: `${providerId} executor`,
+    providerId,
+    project: 'Pixel Agents Multi',
+    status: statusGroup,
+    statusGroup,
+    activity,
+    isPaused: false,
+    hidden: false,
+  };
+}
 
 function handoffQueuePackageItem(
   relativePath: string,

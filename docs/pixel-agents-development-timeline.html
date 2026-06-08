@@ -771,7 +771,7 @@
               <li>Supervisor delegation visibility 與 office visual markers。</li>
               <li>Repo-centered Handoff artifacts：Markdown + <code>.handoff.json</code> sidecar + Recent Handoffs library。</li>
               <li>Handoff Queue：work package、dispatch status、execution metadata、completion refresh、report open。</li>
-              <li>Executor launch：package-backed Codex / Claude launch，launch 後回寫 safe sidecar metadata。</li>
+              <li>Executor launch：package-backed Codex / Claude launch，launch 後回寫 safe sidecar metadata，Queue 顯示 active / waiting / blocked / completed / report-ready / stale unknown cues。</li>
               <li>Completion review：review badges、merge readiness panel、copy-only merge checklist、compact status selects。</li>
               <li>安全 action model：Hide、Archive、Kill、Pause、Resume。</li>
               <li>本機私有 VSIX 發行與安裝驗證。</li>
@@ -780,7 +780,7 @@
           <div class="panel">
             <h3>還在產品化中的能力</h3>
             <ul>
-              <li>W14 release QA / polish：W14-A 已完成 installed VSIX release QA；下一步聚焦 W13 後 handoff workflow live validation。</li>
+              <li>W14/W15 handoff launch polish：W14-A through W14-F 已完成 installed/live executor launch QA；W15-A 聚焦 launch 後 executor state observability。</li>
               <li>Handoff workflow polish：真實長 queue、dense row spacing、select wording、manual merge checklist 的視覺細節仍可再調。</li>
               <li>Usage charts：更清楚的 provider/model/project trend 視覺化。</li>
               <li>Build identity UI：在 extension 內顯示 version、commit、installed source。</li>
@@ -961,12 +961,12 @@
 
         <h2 id="next">下一步</h2>
         <section class="panel">
-          <h3>建議下一包：W14 Release QA / Handoff Workflow Polish</h3>
+          <h3>建議下一包：Post-W15 Handoff Workflow Polish</h3>
           <p>
-            W10-W13 已把 handoff 從 draft 推到 repo artifact、artifact library、work package queue、
-            executor launch、completion review、merge readiness 與 compact status controls。
-            W14-A 已完成 installed VSIX release QA；下一步建議延續 W14：真實 handoff workflow live validation、
-            dense queue 視覺 polish，以及 launch / completion / review 流程的使用者操作細節整理。
+            W10-W15 已把 handoff 從 draft 推到 repo artifact、artifact library、work package queue、
+            Codex / Claude executor launch、completion review、merge readiness、compact status controls，
+            以及 launch 後 executor state cues。下一步建議聚焦真實長 queue、dense row spacing、
+            stale executor cleanup affordances，以及 launch / completion / review 流程的使用者操作細節整理。
           </p>
           <div class="callout">
             Product rule: 後續若擴充 Handoff，仍應維持 local-only、user-reviewed、

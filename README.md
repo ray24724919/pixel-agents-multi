@@ -107,12 +107,12 @@ The handoff workflow is built for supervising downstream executors without losin
 3. Store structured metadata in a sidecar `.handoff.json` file.
 4. Mark handoffs as draft, reviewed, stale, dispatched, active, blocked, or completed.
 5. Generate an executor-ready work package under `docs/roadmap/supervision/work-packages/handoffs/`.
-6. Copy a dispatch prompt or launch a Codex executor directly from a package-backed handoff.
+6. Copy a dispatch prompt or launch a Codex or Claude executor directly from a package-backed handoff.
 7. Link launched executor metadata back to the handoff sidecar.
 8. Detect local completion signals from the expected report file and local branch state.
-9. Use Handoff Queue to inspect work package status, open reports, refresh completion, and continue supervision.
+9. Use Handoff Queue to inspect executor state, open reports, refresh completion, and continue supervision.
 
-Codex is currently the supported package-launch provider. Claude sessions can be tracked and used in handoff context, but direct Claude work-package prompt injection remains a follow-up until the Claude launcher path supports it safely.
+Codex and Claude both support package-backed handoff executor launch. Launch metadata is kept local and safe; the queue treats completion reports as the strongest signal, then distinguishes visible active executors, approval/input waits, blockers, completed work, and stale or unknown linked metadata.
 
 ### Layout Editor And Assets
 
@@ -202,7 +202,7 @@ Reload VS Code after installing. If the panel does not appear, run **Developer: 
 - Uses hook events when available for faster and more reliable state changes.
 - Discovers Claude Desktop/Cowork local-agent-mode metadata when active.
 - Can appear in Agent Center, Usage, Timeline, Replay, and Handoff context.
-- Direct package-backed Claude executor launch is intentionally deferred until prompt injection can be handled by the Claude launcher safely.
+- Supports direct executor launch from package-backed handoffs using the same safe handoff metadata path as Codex.
 
 ## Data And Privacy
 
@@ -270,7 +270,7 @@ Then reload VS Code and smoke-test:
 - Session sync is still adapter-based because Claude and Codex do not expose one shared live-agent API.
 - Claude Desktop/Cowork status can be less precise than Claude Code hook events.
 - Usage/cost displays are operational estimates, not provider billing records.
-- Codex is the supported direct handoff executor launch path today; Claude launch is planned.
+- Codex and Claude both support direct package-backed handoff executor launch, with launch evidence and queue state shown locally.
 - If more agents are working than there are valid work seats, some agents may wait for a desk.
 - Manual desktop QA is still useful after UI-heavy changes because VS Code webviews, terminals, and local CLIs vary by platform.
 
@@ -290,7 +290,7 @@ If agents do not appear or look stale:
 
 The near-term direction is to make local individual supervision excellent:
 
-- More reliable Claude launch and package dispatch.
+- Sharper executor observability for long-running or stale handoff packages.
 - Better usage intelligence, context health, and stale-work detection.
 - Stronger timeline replay and report-ready workflows.
 - Cleaner separation between pixel office visualization and large inspection pages.
