@@ -17,7 +17,8 @@ type RoomMode = 'work' | 'rest';
 const PROJECT_ROOM_KIND_VALUES = new Set<string>(Object.values(ProjectRoomKind));
 const PROJECT_IDENTITY_SOURCE_VALUES = new Set<string>(Object.values(ProjectIdentitySource));
 const WINDOWS_ABSOLUTE_PATH_RE = /^[a-z]:[\\/]/i;
-const POSIX_ABSOLUTE_PATH_RE = /^\/(?:users|home|var|tmp|mnt|volumes)\//i;
+const WINDOWS_UNC_PATH_RE = /^\\\\/;
+const POSIX_ABSOLUTE_PATH_RE = /^\//;
 const SECRET_OR_TRANSCRIPT_RE =
   /(api[_-]?key|password|secret|token|sk-[a-z0-9]|\.jsonl|transcript|raw prompt|tool output|BEGIN [A-Z ]*KEY)/i;
 
@@ -41,6 +42,7 @@ export function isUnsafeProjectRoomLabel(value: string | undefined): boolean {
   return (
     SECRET_OR_TRANSCRIPT_RE.test(normalized) ||
     WINDOWS_ABSOLUTE_PATH_RE.test(normalized) ||
+    WINDOWS_UNC_PATH_RE.test(normalized) ||
     POSIX_ABSOLUTE_PATH_RE.test(normalized)
   );
 }
@@ -53,6 +55,7 @@ export function safeProjectRoomLabel(value: string | undefined, fallback = 'Proj
   const withoutNamespace = cleaned.replace(/^\\\\\?\\UNC\\/i, '//').replace(/^\\\\\?\\/i, '');
   if (
     WINDOWS_ABSOLUTE_PATH_RE.test(withoutNamespace) ||
+    WINDOWS_UNC_PATH_RE.test(withoutNamespace) ||
     POSIX_ABSOLUTE_PATH_RE.test(withoutNamespace)
   ) {
     const parts = withoutNamespace.replace(/\\/g, '/').split('/').filter(Boolean);
@@ -112,7 +115,8 @@ export function deriveAgentProjectKey(ch: Pick<Character, 'folderName'>): string
 function normalizeProjectRoomProject(value: unknown): ProjectRoom['project'] | undefined {
   if (!isRecord(value)) return undefined;
   const key = normalizeProjectKey(cleanString(value.key, PROJECT_ROOM_PROJECT_KEY_MAX_LENGTH));
-  const displayName = cleanString(value.displayName, PROJECT_ROOM_LABEL_MAX_LENGTH);
+  const rawDisplayName = cleanString(value.displayName, PROJECT_ROOM_LABEL_MAX_LENGTH);
+  const displayName = rawDisplayName ? safeProjectRoomLabel(rawDisplayName, 'Project') : undefined;
   if (!key || !displayName) return undefined;
 
   const rawSource = cleanString(value.source, PROJECT_ROOM_LABEL_MAX_LENGTH);
@@ -150,7 +154,8 @@ export function normalizeProjectRoom(layout: OfficeLayout, value: unknown): Proj
   if (width <= 0 || height <= 0) return null;
 
   const project = normalizeProjectRoomProject(value.project);
-  const label = cleanString(value.label, PROJECT_ROOM_LABEL_MAX_LENGTH);
+  const rawLabel = cleanString(value.label, PROJECT_ROOM_LABEL_MAX_LENGTH);
+  const label = rawLabel ? safeProjectRoomLabel(rawLabel, '') : undefined;
   const createdAtMs = cleanTimestamp(value.createdAtMs);
   const updatedAtMs = cleanTimestamp(value.updatedAtMs);
 

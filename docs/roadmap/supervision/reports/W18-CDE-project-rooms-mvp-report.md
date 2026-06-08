@@ -43,6 +43,8 @@ Doorplate labels never render raw absolute paths, transcript filenames, raw prom
 
 The renderer receives only the safe, bounded label from the room render model.
 
+Supervisor QA hardening also covers plain Windows UNC paths and broader POSIX absolute paths during room normalization, so imported room labels and project display names are sanitized before rendering.
+
 ## Auto-Generation Behavior
 
 Auto room creation is deliberately user-triggered from the layout editor via `Rooms > Auto rooms`. This avoids surprising existing no-room layouts while still providing deterministic room creation for visible top-level projects.
@@ -102,13 +104,13 @@ Added focused webview tests for:
   - Passed.
   - Existing Vite warning: webview chunk larger than 500 kB after minification.
 - `npm run test:webview`
-  - Passed: 207 tests.
+  - Passed: 208 tests after supervisor QA hardening.
 - `npm run test:server`
   - Passed: 284 tests.
 - `git diff --check`
   - Passed.
 
-Combined automated tests: 491.
+Combined automated tests: 492.
 
 ## Manual QA
 

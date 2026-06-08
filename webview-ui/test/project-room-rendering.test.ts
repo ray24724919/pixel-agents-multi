@@ -67,6 +67,33 @@ test('project labels are sanitized and do not leak absolute paths', () => {
   assert.doesNotMatch(label, /C:\\|Users|Documents/);
 });
 
+test('UNC and POSIX absolute labels are sanitized before rendering', () => {
+  const labels = buildRoomRenderInstructions(
+    layout([
+      {
+        id: 'unc',
+        kind: 'project',
+        bounds: { col: 0, row: 0, width: 6, height: 4 },
+        label: '\\\\server\\share\\private-repo',
+      },
+      {
+        id: 'posix',
+        kind: 'project',
+        bounds: { col: 6, row: 0, width: 6, height: 4 },
+        project: {
+          key: '/srv/projects/research-lab',
+          displayName: '/srv/projects/research-lab',
+          source: 'projectDir',
+        },
+      },
+    ]),
+    1,
+  ).map((instruction) => instruction.doorplate.label);
+
+  assert.deepEqual(labels, ['private-repo', 'research-lab']);
+  assert.doesNotMatch(labels.join(' '), /server|share|srv|projects/);
+});
+
 test('secret-like and transcript labels fall back to safe names', () => {
   const room: ProjectRoom = {
     id: 'bad',
