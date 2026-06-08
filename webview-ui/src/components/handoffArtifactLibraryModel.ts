@@ -1191,7 +1191,7 @@ export function filterHandoffQueueItems(
   return items
     .filter((item) => !!item.dispatchPackage)
     .filter((item) => group === 'all' || handoffQueueGroupForItem(item, agents) === group)
-    .sort(compareHandoffQueueItems);
+    .sort((a, b) => compareHandoffQueueItems(a, b, agents));
 }
 
 export function handoffQueueGroupLabel(group: HandoffQueueGroup): string {
@@ -2214,11 +2214,12 @@ function handoffCompletionStatusLabel(
 function compareHandoffQueueItems(
   a: Pick<HandoffArtifactLibraryItem, 'completion' | 'dispatchPackage' | 'modifiedAt' | 'review'>,
   b: Pick<HandoffArtifactLibraryItem, 'completion' | 'dispatchPackage' | 'modifiedAt' | 'review'>,
+  agents: readonly HandoffExecutorAgentSnapshot[] = [],
 ): number {
   const groupRank = (
     item: Pick<HandoffArtifactLibraryItem, 'completion' | 'dispatchPackage' | 'review'>,
   ) => {
-    const group = handoffQueueGroupForItem(item);
+    const group = handoffQueueGroupForItem(item, agents);
     if (group === 'blocked') return 0;
     if (group === 'report_ready') return 1;
     if (group === 'active_waiting') return 2;

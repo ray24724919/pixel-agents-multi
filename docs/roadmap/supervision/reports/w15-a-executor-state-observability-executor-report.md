@@ -27,9 +27,16 @@
 
 - `npm run check-types`: passed
 - `npm run build`: passed after ESLint import-sort autofix on `webview-ui/src/components/AgentCenter.tsx`
-- `npm run test:webview`: passed, 158 tests
+- `npm run test:webview`: passed, 159 tests after supervisor follow-up
 - `npm run test:server`: passed, 284 tests
 - `npm run release:local`: passed
 - `npm run verify:installed`: passed
 - `git diff --check`: passed
 - `git status --short --branch`: passed pre-stage with only expected W15-A changes and handoff/report artifacts
+
+## Supervisor follow-up
+
+- Fixed Handoff Queue all-group sorting so the same live executor state model used for grouping is
+  also used for sort priority.
+- Added coverage for a visible linked executor in error state so live-blocked packages sort before
+  report-ready packages in the all queue.

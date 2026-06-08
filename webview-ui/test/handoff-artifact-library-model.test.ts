@@ -1501,6 +1501,35 @@ test('handoff executor state model marks missing linked agents as stale unknown'
   assert.equal(handoffQueueGroupForItem(item, []), 'active_waiting');
 });
 
+test('handoff queue all-group sorting uses live executor state', () => {
+  const blockedByLiveAgent = handoffQueuePackageItem(
+    'docs/agent-handoffs/live-blocked.md',
+    'dispatched',
+    'active',
+  );
+  const reportReady = handoffQueuePackageItem(
+    'docs/agent-handoffs/report-ready.md',
+    'dispatched',
+    undefined,
+    {
+      reportExists: true,
+      reportRelativePath: 'docs/roadmap/supervision/reports/report-ready-executor-report.md',
+      branchName: 'product/handoff-report-ready',
+      checkedAt: '2026-06-04T07:04:00.000Z',
+      statusLabel: 'Report ready / branch exists / not merged',
+    },
+  );
+  const agents = [executorAgentSnapshot(12, 'claude', 'error', 'Permission failed')];
+
+  assert.equal(handoffQueueGroupForItem(blockedByLiveAgent, agents), 'blocked');
+  assert.deepEqual(
+    filterHandoffQueueItems([reportReady, blockedByLiveAgent], 'all', agents).map(
+      (item) => item.relativePath,
+    ),
+    ['docs/agent-handoffs/live-blocked.md', 'docs/agent-handoffs/report-ready.md'],
+  );
+});
+
 test('handoff executor state model redacts unsafe live labels', () => {
   const item = handoffQueuePackageItem('docs/agent-handoffs/safe.md', 'dispatched', 'active');
   const state = buildHandoffExecutorStateModel(item, [
