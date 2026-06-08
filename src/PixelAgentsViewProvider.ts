@@ -58,6 +58,8 @@ import {
   GLOBAL_KEY_LAST_SEEN_VERSION,
   GLOBAL_KEY_SOUND_ENABLED,
   GLOBAL_KEY_WATCH_ALL_SESSIONS,
+  HANDOFF_CLAUDE_LAUNCH_EVIDENCE_POLL_MS,
+  HANDOFF_CLAUDE_LAUNCH_EVIDENCE_TIMEOUT_MS,
   LAYOUT_FILE_DIR,
   LAYOUT_REVISION_KEY,
   WORKSPACE_KEY_AGENT_SEATS,
@@ -100,6 +102,7 @@ import {
   updateHandoffDispatchStatus,
   updateHandoffExecutionStatus,
 } from './handoffArtifacts.js';
+import { waitForHandoffExecutorLaunchConfirmation } from './handoffLaunchEvidence.js';
 import type { LayoutWatcher } from './layoutPersistence.js';
 import { readLayoutFromFile, watchLayoutFile, writeLayoutToFile } from './layoutPersistence.js';
 import { getExtensionConfigValue, isExtensionConfigExplicitlyConfigured } from './settings.js';
@@ -929,6 +932,18 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       );
       if (!agent) {
         throw new Error(`Could not launch ${providerId} executor terminal.`);
+      }
+      const launchConfirmation = await waitForHandoffExecutorLaunchConfirmation(providerId, agent, {
+        timeoutMs: HANDOFF_CLAUDE_LAUNCH_EVIDENCE_TIMEOUT_MS,
+        pollMs: HANDOFF_CLAUDE_LAUNCH_EVIDENCE_POLL_MS,
+      });
+      if (!launchConfirmation.confirmed) {
+        const errorMessage =
+          providerId === 'claude'
+            ? 'Claude executor terminal opened, but Pixel Agents did not detect a Claude session transcript yet. Check the terminal for Claude auth, permission, or input prompts; handoff metadata was not marked active.'
+            : `Could not confirm ${providerId} executor launch. Handoff metadata was not marked active.`;
+        console.warn(`[Pixel Agents] Handoff: ${errorMessage}`);
+        throw new Error(errorMessage);
       }
       const result = markHandoffExecutorLaunched(repoRoot, prompt.markdown.relativePath, {
         agentId: agent.id,
