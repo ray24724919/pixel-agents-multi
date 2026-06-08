@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>W16-D Handoff Workflow Simplification</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #161622;
+        --panel: #242436;
+        --border: #5c5a7a;
+        --text: #ececff;
+        --muted: #aaa6c8;
+        --accent: #9f7aea;
+        --ready: #79d279;
+        --warn: #ffd166;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family:
+          Consolas,
+          Monaco,
+          "Courier New",
+          monospace;
+        line-height: 1.45;
+      }
+      main {
+        max-width: 1120px;
+        margin: 0 auto;
+        padding: 24px;
+      }
+      h1,
+      h2 {
+        margin: 0 0 12px;
+        letter-spacing: 0;
+      }
+      h1 {
+        color: var(--accent);
+        font-size: 24px;
+      }
+      h2 {
+        font-size: 16px;
+        text-transform: uppercase;
+      }
+      section {
+        border: 2px solid var(--border);
+        background: var(--panel);
+        box-shadow: 3px 3px 0 #090914;
+        margin: 16px 0;
+        padding: 16px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 12px;
+      }
+      .pill {
+        display: inline-block;
+        border: 1px solid var(--border);
+        background: var(--bg);
+        color: var(--muted);
+        padding: 4px 8px;
+        margin: 2px;
+        font-size: 12px;
+        text-transform: uppercase;
+      }
+      .primary {
+        color: var(--ready);
+      }
+      .warn {
+        color: var(--warn);
+      }
+      ul {
+        margin: 8px 0 0 20px;
+        padding: 0;
+      }
+      code {
+        color: var(--accent);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>W16-D Handoff Workflow Simplification</h1>
+      <p>
+        Product spec summary for reducing Handoff / Handoff Queue / executor workflow complexity.
+        Full report:
+        <code>W16-D-handoff-workflow-simplification-spec-report.md</code>
+      </p>
+
+      <section>
+        <h2>Recommended Mental Model</h2>
+        <div class="grid">
+          <div>
+            <span class="pill">Handoff</span>
+            <p>A safe local context note written under <code>docs/agent-handoffs/</code>.</p>
+          </div>
+          <div>
+            <span class="pill">Work Package</span>
+            <p>Executable instructions derived from a handoff for a downstream executor.</p>
+          </div>
+          <div>
+            <span class="pill">Executor</span>
+            <p>A visible Codex or Claude agent working on a package, with local evidence only.</p>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Recommended Naming</h2>
+        <ul>
+          <li><strong>Handoff Queue</strong> becomes <strong>Work Queue</strong>.</li>
+          <li><strong>Recent Handoffs</strong> becomes <strong>Handoff Library</strong>.</li>
+          <li><strong>Refresh completion</strong> becomes <strong>Refresh report status</strong>.</li>
+          <li><strong>Open report</strong> becomes <strong>Open executor report</strong>.</li>
+          <li><strong>Copy prompt</strong> becomes <strong>Copy work-package prompt</strong>.</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>Primary Flow</h2>
+        <p>
+          <span class="pill">Draft handoff</span>
+          <span class="pill">Work package ready</span>
+          <span class="pill">Dispatched</span>
+          <span class="pill">Active / waiting / blocked</span>
+          <span class="pill">Report ready</span>
+          <span class="pill">Reviewed / done</span>
+        </p>
+      </section>
+
+      <section>
+        <h2>Visible Actions</h2>
+        <div class="grid">
+          <div>
+            <h2 class="primary">Keep Prominent</h2>
+            <ul>
+              <li>Create work package</li>
+              <li>Launch Codex / Launch Claude</li>
+              <li>Refresh report status</li>
+              <li>Open executor report</li>
+              <li>Mark reviewed</li>
+            </ul>
+          </div>
+          <div>
+            <h2 class="warn">Move To More</h2>
+            <ul>
+              <li>Open handoff / Open work package</li>
+              <li>Copy handoff or work-package prompt</li>
+              <li>Mark stale / Reset draft</li>
+              <li>Manual dispatch and execution status controls</li>
+              <li>Link agent</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>W17 Sequence</h2>
+        <ul>
+          <li><strong>W17-A:</strong> Work Queue IA and naming.</li>
+          <li><strong>W17-B:</strong> Row next-action compression.</li>
+          <li><strong>W17-C:</strong> Executor state and review cue consolidation.</li>
+        </ul>
+      </section>
+    </main>
+  </body>
+</html>
