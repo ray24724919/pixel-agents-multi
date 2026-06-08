@@ -150,12 +150,20 @@ import {
   type UsageCategorySummary,
   type UsageInsight,
 } from './usageIntelligenceModel.js';
+import {
+  buildUsageOverviewDashboard,
+  type UsageOverviewDashboard as UsageOverviewDashboardModel,
+  type UsageOverviewInsight,
+  type UsageOverviewProjectRow,
+  type UsageOverviewProviderRow,
+  type UsageOverviewTrendBucket,
+} from './usageOverviewDashboardModel.js';
 
 type ProviderFilter = 'all' | 'codex' | 'claude';
 type StatusFilter = AgentListStatusFilter;
 type ProjectFilter = 'all' | string;
 type TeamFilter = 'all' | string;
-type UsagePane = 'live' | 'history';
+type UsagePane = 'overview' | 'live' | 'history';
 type HandoffWriteStatus = 'idle' | 'writing' | 'written' | 'failed';
 type HandoffOpenStatus = 'idle' | 'opening' | 'opened' | 'failed';
 type HandoffStatusUpdateStatus = 'idle' | 'updating' | 'updated' | 'failed';
@@ -678,7 +686,7 @@ function UsageDashboard({
   officeState: OfficeState;
   usageHistory: UsageHistoryState;
 }) {
-  const [usagePane, setUsagePane] = useState<UsagePane>('live');
+  const [usagePane, setUsagePane] = useState<UsagePane>('overview');
   const [historyProviderFilter, setHistoryProviderFilter] = useState<'all' | string>(
     DEFAULT_USAGE_HISTORY_PAGE_FILTERS.providerId,
   );
@@ -706,6 +714,13 @@ function UsageDashboard({
     () => buildUsageHistoryPageModel(usageHistory.records, historyFilters),
     [historyFilters, usageHistory.records],
   );
+  const overviewDashboard = buildUsageOverviewDashboard({
+    live: dashboard,
+    history: historyPageModel.source,
+    historyRecords: usageHistory.records,
+    historyUnavailable: usageHistory.unavailable,
+    historyError: usageHistory.error,
+  });
   const clearHistoryFilters = () => {
     setHistoryProviderFilter(DEFAULT_USAGE_HISTORY_PAGE_FILTERS.providerId);
     setHistoryProjectFilter(DEFAULT_USAGE_HISTORY_PAGE_FILTERS.projectKey);
@@ -734,7 +749,11 @@ function UsageDashboard({
           </div>
           <div className="flex flex-wrap gap-2 text-xs uppercase tracking-wide text-text-muted">
             <span className="border border-border bg-btn-bg px-2 py-1">
-              {usagePane === 'live' ? 'Live session usage' : 'Persisted local history'}
+              {usagePane === 'overview'
+                ? 'Operational overview'
+                : usagePane === 'live'
+                  ? 'Live session usage'
+                  : 'Persisted local history'}
             </span>
             <span className="border border-border bg-btn-bg px-2 py-1">Local only</span>
             <span className="border border-border bg-btn-bg px-2 py-1" title={usageHistory.error}>
@@ -747,19 +766,25 @@ function UsageDashboard({
 
       <section className="flex flex-wrap items-center justify-between gap-3 border border-border bg-btn-bg p-3">
         <SegmentedButtons
-          values={['live', 'history'] as const}
+          values={['overview', 'live', 'history'] as const}
           active={usagePane}
-          label={(value) => (value === 'live' ? 'Live' : 'History')}
+          label={(value) =>
+            value === 'overview' ? 'Overview' : value === 'live' ? 'Live' : 'History'
+          }
           onChange={setUsagePane}
         />
         <div className="text-xs uppercase tracking-wide text-text-muted">
-          {usagePane === 'live'
-            ? 'Current visible agents'
-            : 'Persisted local records / redacted export'}
+          {usagePane === 'overview'
+            ? 'Live agents + persisted local history'
+            : usagePane === 'live'
+              ? 'Current visible agents'
+              : 'Persisted local records / redacted export'}
         </div>
       </section>
 
-      {usagePane === 'live' ? (
+      {usagePane === 'overview' ? (
+        <UsageOverviewDashboard dashboard={overviewDashboard} />
+      ) : usagePane === 'live' ? (
         <>
           {!hasAgents && (
             <section className="border border-border bg-btn-bg p-8 text-center">
@@ -980,6 +1005,163 @@ function UsageDashboard({
         />
       )}
     </div>
+  );
+}
+
+function UsageOverviewDashboard({ dashboard }: { dashboard: UsageOverviewDashboardModel }) {
+  return (
+    <div className="grid gap-4">
+      {dashboard.emptyState && (
+        <section className="border border-border bg-btn-bg p-8 text-center">
+          <div className="text-lg text-accent-bright">{dashboard.emptyState.title}</div>
+          <div className="mt-2 text-sm text-text-muted">{dashboard.emptyState.detail}</div>
+        </section>
+      )}
+
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {dashboard.metrics.map((metric) => (
+          <UsageMetric
+            key={metric.id}
+            label={metric.label}
+            value={formatUsageOverviewMetricValue(metric.value)}
+            detail={metric.detail}
+          />
+        ))}
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+        <UsageOverviewTrendPanel buckets={dashboard.trendBuckets} />
+        <UsageOverviewProviderPanel providers={dashboard.providerRows} />
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
+        <UsageOverviewProjectPanel projects={dashboard.projectRows} />
+        <UsageInsightPanel
+          insights={dashboard.insights}
+          title="Operational Signals"
+          subtitle="Local telemetry warnings, quota pressure, and reliability cues"
+        />
+      </div>
+    </div>
+  );
+}
+
+function UsageOverviewTrendPanel({ buckets }: { buckets: UsageOverviewTrendBucket[] }) {
+  const hasUsage = buckets.some((bucket) => bucket.displayTokens > 0);
+  return (
+    <section className="border border-border bg-bg">
+      <SectionHeader title="Last 7 Days" subtitle="Persisted local display-token trend" />
+      {!hasUsage ? (
+        <div className="p-4 text-sm text-text-muted">No persisted usage in the last 7 days</div>
+      ) : (
+        <div className="grid grid-cols-7 gap-2 p-4">
+          {buckets.map((bucket) => (
+            <div key={bucket.id} className="min-w-0">
+              <div className="flex h-16 items-end border border-border bg-btn-bg px-1">
+                <div
+                  className="w-full bg-accent"
+                  style={{ height: `${usageBarPercent(bucket.displayTokens, bucket.total)}%` }}
+                  title={`${bucket.label}: ${compactNumber(bucket.displayTokens)} display tokens`}
+                />
+              </div>
+              <div className="mt-2 truncate text-center text-[10px] uppercase text-text-muted">
+                {bucket.label}
+              </div>
+              <div className="truncate text-center text-[10px] text-accent-bright">
+                {compactNumber(bucket.displayTokens)}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function UsageOverviewProviderPanel({ providers }: { providers: UsageOverviewProviderRow[] }) {
+  return (
+    <section className="border border-border bg-bg">
+      <SectionHeader title="Provider Mix" subtitle="Active now, today, and local history" />
+      <div className="divide-y divide-border">
+        {providers.map((provider) => (
+          <div key={provider.providerId} className="p-4">
+            <div className="mb-3 flex min-w-0 flex-wrap items-center justify-between gap-2">
+              <div className="min-w-0">
+                <div className="flex min-w-0 items-center gap-2">
+                  <ProviderBadge providerId={provider.providerId} />
+                  <span className="truncate text-sm text-text">{provider.label}</span>
+                </div>
+                <div className="mt-1 text-xs text-text-muted">
+                  Live {compactNumber(provider.liveProviderTokens)} / today{' '}
+                  {compactNumber(provider.todayDisplayTokens)} / 7d{' '}
+                  {compactNumber(provider.last7DaysDisplayTokens)}
+                </div>
+              </div>
+              <UsageAccuracyPill accuracy={provider.accuracy} />
+            </div>
+            <UsageBar
+              label="Combined"
+              value={provider.combinedDisplayTokens}
+              total={Math.max(
+                ...providers.map((row) => row.combinedDisplayTokens),
+                provider.combinedDisplayTokens,
+                1,
+              )}
+            />
+            {provider.quotaSignal && (
+              <div className="mt-3 text-xs text-text-muted">
+                Quota signal: {Math.round(provider.quotaSignal.usedPercent ?? 0)}% used
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function UsageOverviewProjectPanel({ projects }: { projects: UsageOverviewProjectRow[] }) {
+  return (
+    <section className="border border-border bg-bg">
+      <SectionHeader title="Project Ranking" subtitle="Combined live and persisted local usage" />
+      <div className="divide-y divide-border">
+        {projects.length === 0 ? (
+          <div className="p-4 text-sm text-text-muted">No project usage yet</div>
+        ) : (
+          projects.slice(0, 8).map((project) => (
+            <div key={project.projectName} className="p-4">
+              <div className="mb-2 flex min-w-0 flex-wrap items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="truncate text-sm text-accent-bright">{project.projectName}</div>
+                  <div className="mt-1 flex min-w-0 flex-wrap gap-2 text-xs text-text-muted">
+                    {project.providerIds.map((providerId) => (
+                      <ProviderBadge key={providerId} providerId={providerId} />
+                    ))}
+                    {project.topAgentName && (
+                      <span className="truncate">Top: {project.topAgentName}</span>
+                    )}
+                  </div>
+                </div>
+                <UsageAccuracyPill accuracy={project.accuracy} />
+              </div>
+              <UsageBar
+                label="Combined"
+                value={project.combinedDisplayTokens}
+                total={Math.max(
+                  ...projects.map((row) => row.combinedDisplayTokens),
+                  project.combinedDisplayTokens,
+                  1,
+                )}
+              />
+              <div className="mt-2 text-xs text-text-muted">
+                Live {compactNumber(project.liveDisplayTokens)} / history{' '}
+                {compactNumber(project.historyDisplayTokens)}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -3774,10 +3956,20 @@ function UsageCategoryPanel({ categories }: { categories: UsageCategorySummary[]
   );
 }
 
-function UsageInsightPanel({ insights }: { insights: UsageInsight[] }) {
+function UsageInsightPanel({
+  insights,
+  title = 'Live Signals',
+  subtitle = 'Local warnings from the current scope',
+}: {
+  insights: Array<
+    Pick<UsageInsight | UsageOverviewInsight, 'id' | 'severity' | 'title' | 'detail'>
+  >;
+  title?: string;
+  subtitle?: string;
+}) {
   return (
     <section className="border border-border bg-bg">
-      <SectionHeader title="Live Signals" subtitle="Local warnings from the current scope" />
+      <SectionHeader title={title} subtitle={subtitle} />
       <div className="divide-y divide-border">
         {insights.map((insight) => (
           <div
@@ -4121,7 +4313,7 @@ async function copyTextToClipboard(text: string): Promise<void> {
 }
 
 function UsageBar({ label, value, total }: { label: string; value: number; total: number }) {
-  const percent = total > 0 ? Math.min(100, Math.max(value > 0 ? 2 : 0, (value / total) * 100)) : 0;
+  const percent = usageBarPercent(value, total);
 
   return (
     <div className="mt-2">
@@ -4134,6 +4326,10 @@ function UsageBar({ label, value, total }: { label: string; value: number; total
       </div>
     </div>
   );
+}
+
+function usageBarPercent(value: number, total: number): number {
+  return total > 0 ? Math.min(100, Math.max(value > 0 ? 2 : 0, (value / total) * 100)) : 0;
 }
 
 function LedgerValue({
@@ -5251,6 +5447,10 @@ function usageAccuracyClass(accuracy: UsageAccuracy): string {
   if (accuracy === 'estimated') return 'border-status-permission bg-btn-bg text-text';
   if (accuracy === 'mixed') return 'border-status-active bg-btn-bg text-text';
   return 'border-border bg-btn-bg text-text-muted';
+}
+
+function formatUsageOverviewMetricValue(value: number | string): string {
+  return typeof value === 'number' ? compactNumber(value) : value;
 }
 
 function compactNumber(value: number): string {

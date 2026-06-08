@@ -727,6 +727,29 @@
               </ul>
             </div>
           </article>
+
+          <article class="timeline-card">
+            <div>
+              <div class="date">2026-06-08</div>
+              <div class="tag-row">
+                <span class="tag">W16</span>
+                <span class="tag important">Usage dashboard</span>
+              </div>
+            </div>
+            <div>
+              <h3>Office state truthfulness 與 Usage dashboard 產品化</h3>
+              <p class="note">
+                W16 把 supervision UI 往更可信、更可掃描的方向收斂：Office 不再把等待或暫停
+                agent 畫成工作中，Usage page 也從單一 live summary 變成 operational dashboard。
+              </p>
+              <ul>
+                <li>W16-A：waiting permission、paused、delegating supervisor 等狀態不再留下 stale typing posture。</li>
+                <li>W16-B：Usage page 預設 Overview，合併 live agent telemetry 與 persisted local history。</li>
+                <li>新增 provider mix、project ranking、last-7-days trend、reliability cues、quota pressure signals。</li>
+                <li>保留 Live / History pane、redacted CSV export、proxy estimate only 與 not billing truth wording。</li>
+              </ul>
+            </div>
+          </article>
         </section>
 
         <h2 id="versions">版本與本機安裝</h2>
@@ -766,7 +789,7 @@
               <li>Codex、Claude Code、Claude Cowork / Desktop visibility。</li>
               <li>跨 cwd Codex external thread adoption 與 no-workspace fallback。</li>
               <li>Agent Center page shell：Office、Agents、Usage、Timeline。</li>
-              <li>Usage Intelligence live + persisted history。</li>
+              <li>Usage Intelligence Overview / Live / History dashboard，包含 persisted history、provider/project ranking、trend 與 quota cues。</li>
               <li>Timeline persisted history + Session Replay MVP。</li>
               <li>Supervisor delegation visibility 與 office visual markers。</li>
               <li>Repo-centered Handoff artifacts：Markdown + <code>.handoff.json</code> sidecar + Recent Handoffs library。</li>
@@ -782,7 +805,7 @@
             <ul>
               <li>W14/W15 handoff launch polish：W14-A through W14-F 已完成 installed/live executor launch QA；W15-A 聚焦 launch 後 executor state observability。</li>
               <li>Handoff workflow polish：真實長 queue、dense row spacing、select wording、manual merge checklist 的視覺細節仍可再調。</li>
-              <li>Usage charts：更清楚的 provider/model/project trend 視覺化。</li>
+              <li>Usage follow-up：Overview 已完成，後續可補更細的 model/session drilldown 與 manual installed QA。</li>
               <li>Build identity UI：在 extension 內顯示 version、commit、installed source。</li>
               <li>更完整的 replay export 或 bug-report bundle，但仍需保持 redaction。</li>
               <li>Team/Lab Mode：目前只有 architecture，應等本地 handoff 完善後再做。</li>
@@ -955,29 +978,38 @@
                 <td><a href="roadmap/supervision/reports/W14-A-release-qa-after-w13-report.md">W14-A report</a></td>
                 <td>Installed VSIX release QA after W13：429 tests、local package/install、identity、VSIX contents、installed verification。</td>
               </tr>
+              <tr>
+                <td>W16-A</td>
+                <td><a href="roadmap/supervision/reports/W16-A-office-state-truthfulness-report.md">W16-A report</a></td>
+                <td>Office state truthfulness：waiting/paused/delegating visual state guardrails、stale typing repair。</td>
+              </tr>
+              <tr>
+                <td>W16-B</td>
+                <td><a href="roadmap/supervision/reports/W16-B-usage-dashboard-productization-report.md">W16-B report</a></td>
+                <td>Usage dashboard productization：Overview / Live / History、trend bars、provider/project ranking、quota/reliability cues。</td>
+              </tr>
             </tbody>
           </table>
         </section>
 
         <h2 id="next">下一步</h2>
         <section class="panel">
-          <h3>建議下一包：Post-W15 Handoff Workflow Polish</h3>
+          <h3>建議下一包：W16-C Usage Dashboard Installed QA</h3>
           <p>
-            W10-W15 已把 handoff 從 draft 推到 repo artifact、artifact library、work package queue、
-            Codex / Claude executor launch、completion review、merge readiness、compact status controls，
-            以及 launch 後 executor state cues。下一步建議聚焦真實長 queue、dense row spacing、
-            stale executor cleanup affordances，以及 launch / completion / review 流程的使用者操作細節整理。
+            W16-B 已把 Usage page 產品化為 Overview / Live / History dashboard。下一步建議用
+            installed VSIX 做人工或 user-assisted QA，確認 Usage overview、history unavailable /
+            empty state、quota cue、redacted CSV export，以及 Live / History 切換在真實 VS Code
+            webview 中都不 blank、不遮擋、不像 billing software。
           </p>
           <div class="callout">
-            Product rule: 後續若擴充 Handoff，仍應維持 local-only、user-reviewed、
-            redacted by default。不要把 raw transcript export 或自動 git operation
-            放進預設路徑。Team/Lab Mode、cloud sync 或跨人共享應等本機 supervisor
-            workflow 經過更完整 live validation 後再評估。
+            Product rule: Usage Intelligence 仍應維持 local-first、proxy estimate only、
+            not provider billing truth。後續若補更細 drilldown 或 charts，也不要輸出 raw prompt、
+            raw transcript、absolute transcript path 或 provider credential。
           </div>
         </section>
 
         <footer>
-          Generated for Pixel Agents Multi on 2026-06-06. Keep this page updated after each merged
+          Generated for Pixel Agents Multi on 2026-06-08. Keep this page updated after each merged
           work package, local VSIX install, or release identity change.
         </footer>
       </main>

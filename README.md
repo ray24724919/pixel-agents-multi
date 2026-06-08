@@ -45,7 +45,7 @@ This repository is derived from [pablodelucca/pixel-agents](https://github.com/p
 - **Keeps work visible**: active agents use computer desks, idle agents leave work seats, and refresh reassigns positions to reduce stacking.
 - **Shows live status**: characters animate for writing, reading, shell commands, task delegation, permission prompts, and waiting-for-input states.
 - **Tracks providers and projects**: overlays and Agent Center show project, provider, thread/session name, and status in a compact scan-friendly format.
-- **Surfaces usage intelligence**: token totals, exact/estimated labels, provider/project/session grouping, and proxy cost context live outside the canvas.
+- **Surfaces usage intelligence**: an operational Overview / Live / History dashboard shows token totals, exact/estimated labels, provider/project/session grouping, quota signals, and proxy cost context outside the canvas.
 - **Records timeline history**: local event history captures agent turns, tool events, handoff actions, executor launches, report opens, and completion refreshes.
 - **Turns history into handoffs**: create reviewed handoff artifacts from timeline/replay context, then dispatch them as executor-ready work packages.
 - **Runs a handoff queue**: track draft, reviewed, stale, dispatched, active, blocked, report-ready, and completed work package states.
@@ -85,7 +85,9 @@ Usage data is presented as operational telemetry, not billing truth.
 
 - Codex and Claude token totals are shown when local metadata exposes them.
 - Exact and estimated values are labelled separately.
+- Overview mode combines live agent telemetry with persisted local history so you can scan what is active now, what changed today, and where the last seven days of usage concentrated.
 - Provider, project, session, and time-based summaries help identify heavy or stale work.
+- Compact provider/project rankings, trend bars, reliability cues, and quota/rate-limit warnings help supervise local work without treating the page as billing software.
 - Cache, reasoning, and artifact usage can be estimated where enough local data exists.
 - Cost display is a proxy estimate only. It is not OpenAI, Anthropic, or subscription billing.
 
