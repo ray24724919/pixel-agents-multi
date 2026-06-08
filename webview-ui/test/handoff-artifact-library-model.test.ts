@@ -14,6 +14,7 @@ import {
   buildHandoffReviewChecklist,
   buildHandoffReviewRecommendedAction,
   buildHandoffStatusSelectModel,
+  buildHandoffWorkflowLayout,
   buildLaunchHandoffExecutorMessage,
   buildLinkHandoffExecutionAgentMessage,
   buildOpenHandoffArtifactMessage,
@@ -48,6 +49,44 @@ test('handoff artifact library model exposes an empty loaded state', () => {
   assert.equal(state.unavailable, false);
   assert.equal(state.loadedAtMs, 100);
   assert.deepEqual(state.items, []);
+});
+
+test('handoff workflow layout labels library and work queue sections', () => {
+  const layout = buildHandoffWorkflowLayout([]);
+
+  assert.equal(layout.handoffLibrary.title, 'Handoff Library');
+  assert.equal(
+    layout.handoffLibrary.description,
+    'docs/agent-handoffs / local context artifacts for review and reuse',
+  );
+  assert.equal(layout.workQueue.title, 'Work Queue');
+  assert.match(layout.workQueue.emptyState, /package-backed handoffs/);
+  assert.match(layout.workQueue.filteredEmptyState, /Work Queue group/);
+});
+
+test('handoff workflow layout puts Work Queue first only for package-backed handoffs', () => {
+  const libraryFirst = buildHandoffWorkflowLayout([
+    { dispatchPackage: undefined },
+    { dispatchPackage: undefined },
+  ]);
+  assert.equal(libraryFirst.hasPackageBackedHandoffs, false);
+  assert.deepEqual(libraryFirst.sectionOrder, ['handoff_library', 'work_queue']);
+
+  const workQueueFirst = buildHandoffWorkflowLayout([
+    {
+      dispatchPackage: {
+        packageRelativePath: 'docs/roadmap/supervision/work-packages/handoffs/pixel.md',
+        branchName: 'product/handoff-pixel',
+        reportRelativePath: 'docs/roadmap/supervision/reports/pixel-executor-report.md',
+        status: 'ready',
+        createdAt: '2026-06-08T00:00:00.000Z',
+        updatedAt: '2026-06-08T00:00:00.000Z',
+        statusLabel: 'Ready',
+      },
+    },
+  ]);
+  assert.equal(workQueueFirst.hasPackageBackedHandoffs, true);
+  assert.deepEqual(workQueueFirst.sectionOrder, ['work_queue', 'handoff_library']);
 });
 
 test('handoff artifact library model builds display items from safe metadata', () => {
@@ -916,13 +955,13 @@ test('handoff completion review recommendations map statuses to local review act
   });
   assert.deepEqual(buildHandoffReviewRecommendedAction(withReview('ready_to_merge')), {
     kind: 'open_report',
-    label: 'Inspect branch / open report',
+    label: 'Inspect branch / open executor report',
     disabled: false,
     detail: 'Report is ready; inspect the branch manually before merge.',
   });
   assert.deepEqual(buildHandoffReviewRecommendedAction(withReview('needs_review')), {
     kind: 'open_report',
-    label: 'Open report',
+    label: 'Open executor report',
     disabled: false,
     detail: 'Review executor notes, validation, and changed-file cues.',
   });
@@ -1024,7 +1063,7 @@ test('handoff merge readiness maps review statuses to supervisor decisions', () 
   assert.match(buildHandoffMergeReadiness(withReview('ready_to_merge')).branchStatus, /ahead 2/);
   assert.equal(
     buildHandoffMergeReadiness(withReview('blocked')).recommendedStep,
-    'Open the report if available, then mark stale or re-dispatch manually.',
+    'Open the executor report if available, then mark stale or re-dispatch manually.',
   );
 });
 
