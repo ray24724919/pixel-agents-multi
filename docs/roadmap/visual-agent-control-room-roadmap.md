@@ -26,6 +26,8 @@ The drafts are kept as supporting notes. This file is the canonical execution ro
 - Prepare the architecture for richer team and supervisor/child-agent visualization.
 - Show supervisor agents as working when they are actively delegating to child agents, teammates, or
   internal background workers.
+- Make the office project-aware so each project can have its own visible work room before any
+  Team/Lab sharing layer is introduced.
 
 ## Recommended Build Order
 
@@ -41,6 +43,30 @@ The drafts are kept as supporting notes. This file is the canonical execution ro
 10. Session Replay.
 
 The first two phases should be treated as architecture foundation. Most later features depend on a shared status and event model.
+
+## Current Post-W17 Product Sequencing
+
+After W16/W17, the roadmap is best understood as five product directions rather than one long list
+of UI patches:
+
+1. Supervisor Workflow simplification.
+   W17-A/B/C should make Handoff Library and Work Queue easier to understand before adding more
+   executor controls.
+2. Personal Local Cockpit / Office Experience.
+   Project Rooms should give every project an independent visual work room with room-scoped seating,
+   refresh, and doorplates. See `docs/roadmap/product/project-rooms-roadmap.md`.
+3. Usage Intelligence productization.
+   Usage should keep moving from token counters toward project, provider, model, and outcome
+   insight.
+4. Repo-centered Collaboration.
+   Handoffs, work packages, reports, branches, commits, and PRs should remain the shared project
+   record before any team server.
+5. Team / Lab Mode.
+   Build this only after the local cockpit, project rooms, usage intelligence, and repo-centered
+   workflow are reliable.
+
+Project Rooms intentionally sits before Team/Lab Mode. It is local visual organization first, but it
+also creates the project-space model that a future small-team lab view can reuse.
 
 ## Implementation Progress
 
