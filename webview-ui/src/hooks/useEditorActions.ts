@@ -16,12 +16,20 @@ import {
   toggleFurnitureState,
 } from '../office/editor/editorActions.js';
 import type { EditorState } from '../office/editor/editorState.js';
+import type { ProjectRoomEditorPatch } from '../office/editor/roomEditorActions.js';
+import {
+  createProjectRoom,
+  deleteProjectRoom,
+  findProjectRoomAtTile,
+  updateProjectRoom,
+} from '../office/editor/roomEditorActions.js';
 import type { OfficeState } from '../office/engine/officeState.js';
 import {
   getCatalogEntry,
   getRotatedType,
   getToggledType,
 } from '../office/layout/furnitureCatalog.js';
+import { ensureProjectRoomsForAgents } from '../office/projectRoomGeneration.js';
 import { defaultZoom } from '../office/toolUtils.js';
 import type {
   EditTool as EditToolType,
@@ -52,6 +60,12 @@ interface EditorActions {
   handleSelectedFurnitureColorChange: (color: ColorValue | null) => void;
   handleFurnitureTypeChange: (type: string) => void; // FurnitureType enum or asset ID
   handleZoneChange: (zone: ZoneType) => void;
+  handleSelectRoom: (roomId: string | null) => void;
+  handleSelectRoomAtTile: (col: number, row: number) => void;
+  handleCreateRoomAtTile: (col: number, row: number) => void;
+  handleUpdateSelectedRoom: (patch: ProjectRoomEditorPatch) => void;
+  handleDeleteSelectedRoom: () => void;
+  handleAutoCreateProjectRooms: (visibleAgentIds?: Set<number>) => void;
   handleDeleteSelected: () => void;
   handleRotateSelected: () => void;
   handleToggleState: () => void;
@@ -270,7 +284,92 @@ export function useEditorActions(
     [editorState],
   );
 
+  const handleSelectRoomAtTile = useCallback(
+    (col: number, row: number) => {
+      const room = findProjectRoomAtTile(getOfficeState().getLayout(), col, row);
+      editorState.selectedFurnitureUid = null;
+      editorState.selectedProjectRoomId = room?.id ?? null;
+      setEditorTick((n) => n + 1);
+    },
+    [editorState, getOfficeState],
+  );
+
+  const handleSelectRoom = useCallback(
+    (roomId: string | null) => {
+      editorState.selectedFurnitureUid = null;
+      editorState.selectedProjectRoomId = roomId;
+      setEditorTick((n) => n + 1);
+    },
+    [editorState],
+  );
+
+  const handleCreateRoomAtTile = useCallback(
+    (col: number, row: number) => {
+      const os = getOfficeState();
+      const layout = os.getLayout();
+      const newLayout = createProjectRoom(layout, col, row);
+      if (newLayout !== layout) {
+        applyEdit(newLayout);
+        const room = findProjectRoomAtTile(newLayout, col, row);
+        editorState.selectedProjectRoomId = room?.id ?? null;
+        editorState.selectedFurnitureUid = null;
+      }
+    },
+    [applyEdit, editorState, getOfficeState],
+  );
+
+  const handleUpdateSelectedRoom = useCallback(
+    (patch: ProjectRoomEditorPatch) => {
+      const roomId = editorState.selectedProjectRoomId;
+      if (!roomId) return;
+      const os = getOfficeState();
+      const layout = os.getLayout();
+      const newLayout = updateProjectRoom(layout, roomId, patch);
+      if (newLayout !== layout) {
+        applyEdit(newLayout);
+      }
+    },
+    [applyEdit, editorState, getOfficeState],
+  );
+
+  const handleDeleteSelectedRoom = useCallback(() => {
+    const roomId = editorState.selectedProjectRoomId;
+    if (!roomId) return;
+    const os = getOfficeState();
+    const layout = os.getLayout();
+    const newLayout = deleteProjectRoom(layout, roomId);
+    if (newLayout !== layout) {
+      applyEdit(newLayout);
+      editorState.selectedProjectRoomId = null;
+    }
+  }, [applyEdit, editorState, getOfficeState]);
+
+  const handleAutoCreateProjectRooms = useCallback(
+    (visibleAgentIds?: Set<number>) => {
+      const os = getOfficeState();
+      const layout = os.getLayout();
+      const result = ensureProjectRoomsForAgents(
+        layout,
+        os.getCharacters().map((ch) => ({
+          folderName: ch.folderName,
+          isSubagent: ch.isSubagent,
+          hidden: visibleAgentIds ? !visibleAgentIds.has(ch.id) : false,
+        })),
+      );
+      if (result.layout !== layout && result.createdRooms.length > 0) {
+        applyEdit(result.layout);
+        editorState.selectedProjectRoomId = result.createdRooms[0]?.id ?? null;
+        editorState.selectedFurnitureUid = null;
+      }
+    },
+    [applyEdit, editorState, getOfficeState],
+  );
+
   const handleDeleteSelected = useCallback(() => {
+    if (editorState.selectedProjectRoomId) {
+      handleDeleteSelectedRoom();
+      return;
+    }
     const uid = editorState.selectedFurnitureUid;
     if (!uid) return;
     const os = getOfficeState();
@@ -280,7 +379,7 @@ export function useEditorActions(
       editorState.clearSelection();
       colorEditUidRef.current = null;
     }
-  }, [getOfficeState, editorState, applyEdit]);
+  }, [getOfficeState, editorState, applyEdit, handleDeleteSelectedRoom]);
 
   const handleRotateSelected = useCallback(() => {
     // If in furniture placement mode, cycle the selected type through the rotation group
@@ -459,7 +558,17 @@ export function useEditorActions(
         }
       }
 
-      if (editorState.activeTool === EditTool.TILE_PAINT) {
+      if (editorState.activeTool === EditTool.ROOM) {
+        if (col < 0 || col >= layout.cols || row < 0 || row >= layout.rows) return;
+        const hit = findProjectRoomAtTile(layout, col, row);
+        if (hit) {
+          editorState.selectedFurnitureUid = null;
+          editorState.selectedProjectRoomId = hit.id;
+          setEditorTick((n) => n + 1);
+        } else {
+          handleCreateRoomAtTile(col, row);
+        }
+      } else if (editorState.activeTool === EditTool.TILE_PAINT) {
         const newLayout = paintTile(
           layout,
           effectiveCol,
@@ -601,7 +710,7 @@ export function useEditorActions(
         setEditorTick((n) => n + 1);
       }
     },
-    [getOfficeState, editorState, applyEdit, maybeExpand],
+    [getOfficeState, editorState, applyEdit, maybeExpand, handleCreateRoomAtTile],
   );
 
   const handleEditorEraseAction = useCallback(
@@ -641,6 +750,12 @@ export function useEditorActions(
     handleSelectedFurnitureColorChange,
     handleFurnitureTypeChange,
     handleZoneChange,
+    handleSelectRoom,
+    handleSelectRoomAtTile,
+    handleCreateRoomAtTile,
+    handleUpdateSelectedRoom,
+    handleDeleteSelectedRoom,
+    handleAutoCreateProjectRooms,
     handleDeleteSelected,
     handleRotateSelected,
     handleToggleState,

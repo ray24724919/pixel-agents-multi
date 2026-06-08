@@ -350,6 +350,8 @@ function App() {
                       selectedFurnitureType={editorState.selectedFurnitureType}
                       selectedZone={editorState.selectedZone}
                       selectedFurnitureUid={selUid}
+                      selectedProjectRoomId={editorState.selectedProjectRoomId}
+                      projectRooms={officeState.getLayout().projectRooms ?? []}
                       selectedFurnitureColor={selColor}
                       floorColor={editorState.floorColor}
                       wallColor={editorState.wallColor}
@@ -362,6 +364,10 @@ function App() {
                       onSelectedFurnitureColorChange={editor.handleSelectedFurnitureColorChange}
                       onFurnitureTypeChange={editor.handleFurnitureTypeChange}
                       onZoneChange={editor.handleZoneChange}
+                      onRoomSelect={editor.handleSelectRoom}
+                      onRoomUpdate={editor.handleUpdateSelectedRoom}
+                      onRoomDelete={editor.handleDeleteSelectedRoom}
+                      onAutoCreateRooms={() => editor.handleAutoCreateProjectRooms(visibleAgentIds)}
                       loadedAssets={loadedAssets}
                     />
                   );

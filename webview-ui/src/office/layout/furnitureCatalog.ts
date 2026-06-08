@@ -321,6 +321,10 @@ export function getCatalogEntry(type: string): CatalogEntryWithCategory | undefi
   return dynamicCatalog?.find((e) => e.type === type);
 }
 
+export function getAllCatalogEntries(): CatalogEntryWithCategory[] {
+  return internalCatalog ?? dynamicCatalog ?? [];
+}
+
 export function getCatalogByCategory(category: FurnitureCategory): CatalogEntryWithCategory[] {
   const catalog = dynamicCatalog ?? [];
   return catalog.filter((e) => e.category === category);

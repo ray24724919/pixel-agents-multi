@@ -89,6 +89,7 @@ export const EditTool = {
   EYEDROPPER: 'eyedropper',
   ERASE: 'erase',
   ZONE_PAINT: 'zone_paint',
+  ROOM: 'room',
 } as const;
 export type EditTool = (typeof EditTool)[keyof typeof EditTool];
 
