@@ -59,6 +59,7 @@ import {
   buildHandoffReviewChecklist,
   buildHandoffReviewRecommendedAction,
   buildHandoffStatusSelectModel,
+  buildHandoffWorkflowLayout,
   buildLaunchHandoffExecutorMessage,
   buildLinkHandoffExecutionAgentMessage,
   buildOpenHandoffArtifactMessage,
@@ -3071,13 +3072,14 @@ function HandoffArtifactLibraryPanel({
       [item.relativePath]: agentId,
     }));
   };
+  const workflowLayout = buildHandoffWorkflowLayout(state.items);
   return (
     <section className="border border-border bg-bg">
       <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border bg-btn-bg p-4">
         <div className="min-w-0">
-          <div className="text-sm uppercase tracking-wide text-accent-bright">Recent Handoffs</div>
+          <div className="text-sm uppercase tracking-wide text-accent-bright">Handoff Workflow</div>
           <div className="mt-1 break-words text-xs text-text-muted">
-            docs/agent-handoffs / newest local Markdown artifacts
+            Local handoff artifacts and package-backed executor work
           </div>
           <div className="mt-2 text-xs text-text-muted">{handoffLibraryStatusLabel(state)}</div>
         </div>
@@ -3086,247 +3088,270 @@ function HandoffArtifactLibraryPanel({
         </Button>
       </div>
       <div className="grid gap-3 p-4">
-        {executionSummary.dispatchPackageCount > 0 && (
-          <div className="grid gap-2 border border-border bg-bg p-3 text-xs text-text-muted sm:grid-cols-4">
-            <div>
-              <div className="uppercase tracking-wide text-text">Queue</div>
-              <div>{executionSummary.dispatchPackageCount} packages</div>
-            </div>
-            <div>
-              <div className="uppercase tracking-wide text-text">Linked</div>
-              <div>{executionSummary.linkedPackageCount} linked agents</div>
-            </div>
-            <div>
-              <div className="uppercase tracking-wide text-text">Attention</div>
-              <div>
-                {executionSummary.blockedPackageCount} blocked /{' '}
-                {executionSummary.executionCounts.waiting} waiting
-              </div>
-            </div>
-            <div>
-              <div className="uppercase tracking-wide text-text">Done</div>
-              <div>
-                {executionSummary.completedPackageCount} completed
-                {executionSummary.latestActivityLabel
-                  ? ` / ${executionSummary.latestActivityLabel}`
-                  : ''}
-              </div>
-            </div>
-          </div>
-        )}
-        {state.unavailable ? (
-          <div className="border border-status-error bg-btn-bg p-3 text-xs text-status-error">
-            {state.error ?? 'Recent handoffs are unavailable.'}
-          </div>
-        ) : state.items.length === 0 ? (
-          <div className="border border-border bg-btn-bg p-3 text-xs text-text-muted">
-            No handoff Markdown files found yet. Written handoffs will appear here.
-          </div>
-        ) : (
-          <div className="grid gap-2">
-            {state.items.map((item) => {
-              const executorState = buildHandoffExecutorStateModel(item, agents);
-              return (
-                <div
-                  key={item.relativePath}
-                  className="grid gap-3 border border-border bg-btn-bg p-3 md:grid-cols-[minmax(16rem,1fr)_minmax(15rem,22rem)]"
-                >
-                  <div className="min-w-0">
-                    <div className="flex min-w-0 flex-wrap items-center gap-2">
-                      <span className="min-w-[120px] max-w-full truncate text-sm text-text">
-                        {item.displayTitle}
-                      </span>
-                      <span className="shrink-0 border border-border bg-bg px-2 py-1 text-xs uppercase tracking-wide text-text-muted">
-                        {item.statusLabel}
-                      </span>
-                      {item.review && (
-                        <span className="shrink-0 border border-accent bg-bg px-2 py-1 text-xs uppercase tracking-wide text-accent-bright">
-                          {item.review.statusLabel}
-                        </span>
-                      )}
-                    </div>
-                    <div className="mt-1 break-words text-xs text-text-muted">
-                      {item.displayDetail}
-                    </div>
-                    <HandoffExecutorStateCue state={executorState} />
-                    {(item.dispatchPackage || item.completion || item.review) && (
-                      <HandoffReviewCues item={item} />
-                    )}
-                    <div className="mt-1 truncate font-mono text-xs text-text-muted">
-                      {item.relativePath}
-                    </div>
-                  </div>
-                  <HandoffRowActions
-                    agents={agents}
-                    item={item}
-                    selectedAgentId={selectedAgentIdForItem(item)}
-                    openStatus={openStatus}
-                    statusUpdateStatus={statusUpdateStatus}
-                    dispatchPromptStatus={dispatchPromptStatus}
-                    workPackageStatus={workPackageStatus}
-                    workPackageBusy={workPackageBusy}
-                    executionBusy={executionBusy}
-                    onOpen={onOpen}
-                    onUpdateStatus={onUpdateStatus}
-                    onCopyDispatchPrompt={onCopyDispatchPrompt}
-                    onCreateWorkPackage={onCreateWorkPackage}
-                    onOpenWorkPackage={onOpenWorkPackage}
-                    onCopyWorkPackagePrompt={onCopyWorkPackagePrompt}
-                    onUpdateDispatchStatus={onUpdateDispatchStatus}
-                    onSelectExecutionAgent={selectExecutionAgentForItem}
-                    onLinkExecutionAgent={onLinkExecutionAgent}
-                    onUpdateExecutionStatus={onUpdateExecutionStatus}
-                    onLaunchExecutor={onLaunchExecutor}
-                    onRefreshCompletion={onRefreshCompletion}
-                    onOpenReport={onOpenReport}
-                  />
-                  {item.dispatchPackage && (
-                    <div className="md:col-span-2">
-                      <div className="min-w-0 truncate border-t border-border pt-2 text-xs text-text-muted">
-                        {handoffExecutionDetailLabel(item, agents)}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-        <div className="grid gap-3 border border-border bg-bg p-3">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="text-sm uppercase tracking-wide text-accent-bright">
-                Handoff Queue
-              </div>
-              <div className="mt-1 break-words text-xs text-text-muted">
-                {queueSummary.totalPackages} packages / {queueSummary.needsDispatch} needs dispatch
-                / {queueSummary.activeWaiting} active, waiting, or unknown /{' '}
-                {queueSummary.reportReady} report ready / {queueSummary.done} done
-              </div>
-              <div
-                className={`mt-2 flex max-w-2xl flex-wrap items-center justify-between gap-2 border bg-bg px-3 py-2 text-xs ${handoffQueueOperatorSummaryClass(
-                  operatorSummary.status,
-                )}`}
-              >
+        {workflowLayout.sectionOrder.map((section) =>
+          section === 'work_queue' ? (
+            <div key="work_queue" className="grid gap-3 border border-border bg-bg p-3">
+              <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <div className="break-words uppercase tracking-wide">{operatorSummary.label}</div>
-                  <div className="mt-1 break-words normal-case tracking-normal text-text-muted">
-                    {operatorSummary.detail}
+                  <div className="text-sm uppercase tracking-wide text-accent-bright">
+                    {workflowLayout.workQueue.title}
                   </div>
-                </div>
-                {operatorSummary.actionLabel && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setQueueGroup(operatorSummary.targetGroup)}
-                  >
-                    {operatorSummary.actionLabel}
-                  </Button>
-                )}
-              </div>
-            </div>
-            <label className="min-w-[180px] text-xs uppercase tracking-wide text-text-muted">
-              Group
-              <select
-                className="mt-1 h-8 w-full border border-border bg-bg px-2 text-xs normal-case tracking-normal text-text outline-none focus:border-accent"
-                value={queueGroup}
-                onChange={(event) => setQueueGroup(event.currentTarget.value as HandoffQueueGroup)}
-              >
-                {(
-                  [
-                    'all',
-                    'needs_dispatch',
-                    'active_waiting',
-                    'blocked',
-                    'report_ready',
-                    'done',
-                  ] as HandoffQueueGroup[]
-                ).map((group) => (
-                  <option key={group} value={group}>
-                    {handoffQueueGroupLabel(group)}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-          {queueItems.length === 0 ? (
-            <div className="border border-border bg-btn-bg p-3 text-xs text-text-muted">
-              {queueSummary.totalPackages === 0
-                ? 'No handoff work packages yet.'
-                : 'No work packages match this queue group.'}
-            </div>
-          ) : (
-            <div className="grid gap-2">
-              {queueItems.map((item) => {
-                const executorState = buildHandoffExecutorStateModel(item, agents);
-                return (
+                  <div className="mt-1 break-words text-xs text-text-muted">
+                    {workflowLayout.workQueue.description}
+                  </div>
+                  <div className="mt-1 break-words text-xs text-text-muted">
+                    {queueSummary.totalPackages} package-backed handoffs /{' '}
+                    {queueSummary.needsDispatch} needs dispatch / {queueSummary.activeWaiting}{' '}
+                    active, waiting, or unknown / {queueSummary.reportReady} report ready /{' '}
+                    {queueSummary.done} done
+                  </div>
                   <div
-                    key={`queue-${item.relativePath}`}
-                    className="grid gap-3 border border-border bg-btn-bg p-3 lg:grid-cols-[minmax(16rem,1fr)_minmax(15rem,22rem)]"
+                    className={`mt-2 flex max-w-2xl flex-wrap items-center justify-between gap-2 border bg-bg px-3 py-2 text-xs ${handoffQueueOperatorSummaryClass(
+                      operatorSummary.status,
+                    )}`}
                   >
                     <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="truncate text-sm text-text">{item.displayTitle}</span>
-                        <span className="border border-border bg-bg px-2 py-1 text-xs uppercase tracking-wide text-text-muted">
-                          {item.dispatchPackage?.statusLabel}
-                        </span>
-                        <span
-                          className={`border bg-bg px-2 py-1 text-xs uppercase tracking-wide ${handoffExecutorStateToneClass(
-                            executorState.tone,
-                          )}`}
-                        >
-                          {executorState.label}
-                        </span>
-                        {item.review && (
-                          <span className="border border-accent bg-bg px-2 py-1 text-xs uppercase tracking-wide text-accent-bright">
-                            {item.review.statusLabel}
-                          </span>
-                        )}
+                      <div className="break-words uppercase tracking-wide">
+                        {operatorSummary.label}
                       </div>
-                      <HandoffExecutorStateCue state={executorState} compact />
-                      <HandoffReviewCues item={item} />
-                      {item.completion && (
-                        <div className="mt-1 break-words text-xs text-text-muted">
-                          {item.completion.statusLabel}
-                        </div>
-                      )}
-                      <div className="mt-1 truncate font-mono text-xs text-text-muted">
-                        {item.review?.branchName ?? item.dispatchPackage?.branchName}
-                      </div>
-                      <div className="mt-1 truncate font-mono text-xs text-text-muted">
-                        {item.dispatchPackage?.packageRelativePath}
+                      <div className="mt-1 break-words normal-case tracking-normal text-text-muted">
+                        {operatorSummary.detail}
                       </div>
                     </div>
-                    <HandoffRowActions
-                      agents={agents}
-                      item={item}
-                      selectedAgentId={selectedAgentIdForItem(item)}
-                      openStatus={openStatus}
-                      statusUpdateStatus={statusUpdateStatus}
-                      dispatchPromptStatus={dispatchPromptStatus}
-                      workPackageStatus={workPackageStatus}
-                      workPackageBusy={workPackageBusy}
-                      executionBusy={executionBusy}
-                      onOpen={onOpen}
-                      onUpdateStatus={onUpdateStatus}
-                      onCopyDispatchPrompt={onCopyDispatchPrompt}
-                      onCreateWorkPackage={onCreateWorkPackage}
-                      onOpenWorkPackage={onOpenWorkPackage}
-                      onCopyWorkPackagePrompt={onCopyWorkPackagePrompt}
-                      onUpdateDispatchStatus={onUpdateDispatchStatus}
-                      onSelectExecutionAgent={selectExecutionAgentForItem}
-                      onLinkExecutionAgent={onLinkExecutionAgent}
-                      onUpdateExecutionStatus={onUpdateExecutionStatus}
-                      onLaunchExecutor={onLaunchExecutor}
-                      onRefreshCompletion={onRefreshCompletion}
-                      onOpenReport={onOpenReport}
-                    />
+                    {operatorSummary.actionLabel && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setQueueGroup(operatorSummary.targetGroup)}
+                      >
+                        {operatorSummary.actionLabel}
+                      </Button>
+                    )}
                   </div>
-                );
-              })}
+                </div>
+                <label className="min-w-[180px] text-xs uppercase tracking-wide text-text-muted">
+                  Work Group
+                  <select
+                    className="mt-1 h-8 w-full border border-border bg-bg px-2 text-xs normal-case tracking-normal text-text outline-none focus:border-accent"
+                    value={queueGroup}
+                    onChange={(event) =>
+                      setQueueGroup(event.currentTarget.value as HandoffQueueGroup)
+                    }
+                  >
+                    {(
+                      [
+                        'all',
+                        'needs_dispatch',
+                        'active_waiting',
+                        'blocked',
+                        'report_ready',
+                        'done',
+                      ] as HandoffQueueGroup[]
+                    ).map((group) => (
+                      <option key={group} value={group}>
+                        {handoffQueueGroupLabel(group)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              {executionSummary.dispatchPackageCount > 0 && (
+                <div className="grid gap-2 border border-border bg-bg p-3 text-xs text-text-muted sm:grid-cols-4">
+                  <div>
+                    <div className="uppercase tracking-wide text-text">Work Packages</div>
+                    <div>{executionSummary.dispatchPackageCount} packages</div>
+                  </div>
+                  <div>
+                    <div className="uppercase tracking-wide text-text">Linked</div>
+                    <div>{executionSummary.linkedPackageCount} linked agents</div>
+                  </div>
+                  <div>
+                    <div className="uppercase tracking-wide text-text">Attention</div>
+                    <div>
+                      {executionSummary.blockedPackageCount} blocked /{' '}
+                      {executionSummary.executionCounts.waiting} waiting
+                    </div>
+                  </div>
+                  <div>
+                    <div className="uppercase tracking-wide text-text">Done</div>
+                    <div>
+                      {executionSummary.completedPackageCount} completed
+                      {executionSummary.latestActivityLabel
+                        ? ` / ${executionSummary.latestActivityLabel}`
+                        : ''}
+                    </div>
+                  </div>
+                </div>
+              )}
+              {queueItems.length === 0 ? (
+                <div className="border border-border bg-btn-bg p-3 text-xs text-text-muted">
+                  {queueSummary.totalPackages === 0
+                    ? workflowLayout.workQueue.emptyState
+                    : workflowLayout.workQueue.filteredEmptyState}
+                </div>
+              ) : (
+                <div className="grid gap-2">
+                  {queueItems.map((item) => {
+                    const executorState = buildHandoffExecutorStateModel(item, agents);
+                    return (
+                      <div
+                        key={`queue-${item.relativePath}`}
+                        className="grid gap-3 border border-border bg-btn-bg p-3 lg:grid-cols-[minmax(16rem,1fr)_minmax(15rem,22rem)]"
+                      >
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="truncate text-sm text-text">{item.displayTitle}</span>
+                            <span className="border border-border bg-bg px-2 py-1 text-xs uppercase tracking-wide text-text-muted">
+                              {item.dispatchPackage?.statusLabel}
+                            </span>
+                            <span
+                              className={`border bg-bg px-2 py-1 text-xs uppercase tracking-wide ${handoffExecutorStateToneClass(
+                                executorState.tone,
+                              )}`}
+                            >
+                              {executorState.label}
+                            </span>
+                            {item.review && (
+                              <span className="border border-accent bg-bg px-2 py-1 text-xs uppercase tracking-wide text-accent-bright">
+                                {item.review.statusLabel}
+                              </span>
+                            )}
+                          </div>
+                          <HandoffExecutorStateCue state={executorState} compact />
+                          <HandoffReviewCues item={item} />
+                          {item.completion && (
+                            <div className="mt-1 break-words text-xs text-text-muted">
+                              {item.completion.statusLabel}
+                            </div>
+                          )}
+                          <div className="mt-1 truncate font-mono text-xs text-text-muted">
+                            {item.review?.branchName ?? item.dispatchPackage?.branchName}
+                          </div>
+                          <div className="mt-1 truncate font-mono text-xs text-text-muted">
+                            {item.dispatchPackage?.packageRelativePath}
+                          </div>
+                        </div>
+                        <HandoffRowActions
+                          agents={agents}
+                          item={item}
+                          selectedAgentId={selectedAgentIdForItem(item)}
+                          openStatus={openStatus}
+                          statusUpdateStatus={statusUpdateStatus}
+                          dispatchPromptStatus={dispatchPromptStatus}
+                          workPackageStatus={workPackageStatus}
+                          workPackageBusy={workPackageBusy}
+                          executionBusy={executionBusy}
+                          onOpen={onOpen}
+                          onUpdateStatus={onUpdateStatus}
+                          onCopyDispatchPrompt={onCopyDispatchPrompt}
+                          onCreateWorkPackage={onCreateWorkPackage}
+                          onOpenWorkPackage={onOpenWorkPackage}
+                          onCopyWorkPackagePrompt={onCopyWorkPackagePrompt}
+                          onUpdateDispatchStatus={onUpdateDispatchStatus}
+                          onSelectExecutionAgent={selectExecutionAgentForItem}
+                          onLinkExecutionAgent={onLinkExecutionAgent}
+                          onUpdateExecutionStatus={onUpdateExecutionStatus}
+                          onLaunchExecutor={onLaunchExecutor}
+                          onRefreshCompletion={onRefreshCompletion}
+                          onOpenReport={onOpenReport}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
-          )}
-        </div>
+          ) : (
+            <div key="handoff_library" className="grid gap-3 border border-border bg-bg p-3">
+              <div className="min-w-0">
+                <div className="text-sm uppercase tracking-wide text-accent-bright">
+                  {workflowLayout.handoffLibrary.title}
+                </div>
+                <div className="mt-1 break-words text-xs text-text-muted">
+                  {workflowLayout.handoffLibrary.description}
+                </div>
+              </div>
+              {state.unavailable ? (
+                <div className="border border-status-error bg-btn-bg p-3 text-xs text-status-error">
+                  {state.error ?? 'Handoff library is unavailable.'}
+                </div>
+              ) : state.items.length === 0 ? (
+                <div className="border border-border bg-btn-bg p-3 text-xs text-text-muted">
+                  {workflowLayout.handoffLibrary.emptyState}
+                </div>
+              ) : (
+                <div className="grid gap-2">
+                  {state.items.map((item) => {
+                    const executorState = buildHandoffExecutorStateModel(item, agents);
+                    return (
+                      <div
+                        key={item.relativePath}
+                        className="grid gap-3 border border-border bg-btn-bg p-3 md:grid-cols-[minmax(16rem,1fr)_minmax(15rem,22rem)]"
+                      >
+                        <div className="min-w-0">
+                          <div className="flex min-w-0 flex-wrap items-center gap-2">
+                            <span className="min-w-[120px] max-w-full truncate text-sm text-text">
+                              {item.displayTitle}
+                            </span>
+                            <span className="shrink-0 border border-border bg-bg px-2 py-1 text-xs uppercase tracking-wide text-text-muted">
+                              {item.statusLabel}
+                            </span>
+                            {item.review && (
+                              <span className="shrink-0 border border-accent bg-bg px-2 py-1 text-xs uppercase tracking-wide text-accent-bright">
+                                {item.review.statusLabel}
+                              </span>
+                            )}
+                          </div>
+                          <div className="mt-1 break-words text-xs text-text-muted">
+                            {item.displayDetail}
+                          </div>
+                          <HandoffExecutorStateCue state={executorState} />
+                          {(item.dispatchPackage || item.completion || item.review) && (
+                            <HandoffReviewCues item={item} />
+                          )}
+                          <div className="mt-1 truncate font-mono text-xs text-text-muted">
+                            {item.relativePath}
+                          </div>
+                        </div>
+                        <HandoffRowActions
+                          agents={agents}
+                          item={item}
+                          selectedAgentId={selectedAgentIdForItem(item)}
+                          openStatus={openStatus}
+                          statusUpdateStatus={statusUpdateStatus}
+                          dispatchPromptStatus={dispatchPromptStatus}
+                          workPackageStatus={workPackageStatus}
+                          workPackageBusy={workPackageBusy}
+                          executionBusy={executionBusy}
+                          onOpen={onOpen}
+                          onUpdateStatus={onUpdateStatus}
+                          onCopyDispatchPrompt={onCopyDispatchPrompt}
+                          onCreateWorkPackage={onCreateWorkPackage}
+                          onOpenWorkPackage={onOpenWorkPackage}
+                          onCopyWorkPackagePrompt={onCopyWorkPackagePrompt}
+                          onUpdateDispatchStatus={onUpdateDispatchStatus}
+                          onSelectExecutionAgent={selectExecutionAgentForItem}
+                          onLinkExecutionAgent={onLinkExecutionAgent}
+                          onUpdateExecutionStatus={onUpdateExecutionStatus}
+                          onLaunchExecutor={onLaunchExecutor}
+                          onRefreshCompletion={onRefreshCompletion}
+                          onOpenReport={onOpenReport}
+                        />
+                        {item.dispatchPackage && (
+                          <div className="md:col-span-2">
+                            <div className="min-w-0 truncate border-t border-border pt-2 text-xs text-text-muted">
+                              {handoffExecutionDetailLabel(item, agents)}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ),
+        )}
         <div
           className={`break-words text-xs ${
             openStatus === 'failed'
@@ -3521,7 +3546,7 @@ function HandoffRowActions({
               disabled={refreshCompletionDisabled}
               onClick={() => onRefreshCompletion(item)}
             >
-              Refresh completion
+              Refresh report status
             </Button>
             <Button
               variant={openReportDisabled ? 'disabled' : 'default'}
@@ -3529,7 +3554,7 @@ function HandoffRowActions({
               disabled={openReportDisabled}
               onClick={() => onOpenReport(item)}
             >
-              Open report
+              Open executor report
             </Button>
           </>
         ) : (
@@ -3558,7 +3583,7 @@ function HandoffRowActions({
           disabled={dispatchPromptDisabled}
           onClick={() => onCopyDispatchPrompt(item)}
         >
-          Copy dispatch prompt
+          Copy handoff prompt
         </Button>
         {item.dispatchPackage && (
           <>
@@ -3576,7 +3601,7 @@ function HandoffRowActions({
               disabled={workPackagePromptDisabled}
               onClick={() => onCopyWorkPackagePrompt(item)}
             >
-              Copy prompt
+              Copy work-package prompt
             </Button>
             <div className="flex min-w-[220px] flex-wrap items-center justify-end gap-2">
               <select

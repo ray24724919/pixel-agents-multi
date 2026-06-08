@@ -425,10 +425,51 @@ export interface HandoffChecklistCopyModel {
   canCopy: boolean;
 }
 
+export type HandoffWorkflowSectionId = 'work_queue' | 'handoff_library';
+
+export interface HandoffWorkflowSectionCopy {
+  title: string;
+  description: string;
+  emptyState: string;
+}
+
+export interface HandoffWorkflowLayoutModel {
+  sectionOrder: HandoffWorkflowSectionId[];
+  hasPackageBackedHandoffs: boolean;
+  workQueue: HandoffWorkflowSectionCopy & {
+    filteredEmptyState: string;
+  };
+  handoffLibrary: HandoffWorkflowSectionCopy;
+}
+
 export const initialHandoffArtifactLibraryState: HandoffArtifactLibraryState = {
   items: [],
   unavailable: false,
 };
+
+export function buildHandoffWorkflowLayout(
+  items: readonly Pick<HandoffArtifactLibraryItem, 'dispatchPackage'>[],
+): HandoffWorkflowLayoutModel {
+  const hasPackageBackedHandoffs = items.some((item) => item.dispatchPackage !== undefined);
+  return {
+    sectionOrder: hasPackageBackedHandoffs
+      ? ['work_queue', 'handoff_library']
+      : ['handoff_library', 'work_queue'],
+    hasPackageBackedHandoffs,
+    workQueue: {
+      title: 'Work Queue',
+      description: 'Package-backed handoffs ready for executor supervision.',
+      emptyState:
+        'No package-backed handoffs yet. Create a work package from a handoff to start executor supervision.',
+      filteredEmptyState: 'No work packages match this Work Queue group.',
+    },
+    handoffLibrary: {
+      title: 'Handoff Library',
+      description: 'docs/agent-handoffs / local context artifacts for review and reuse',
+      emptyState: 'No handoff artifacts found yet. Generated handoffs will appear here.',
+    },
+  };
+}
 
 export function handoffArtifactLibraryStateFromLoadedMessage(
   message: Record<string, unknown>,
@@ -807,7 +848,7 @@ export function buildHandoffQueueOperatorSummary(
     return {
       status: 'idle',
       label: 'No package-backed handoffs yet',
-      detail: 'Create work packages to start queue supervision.',
+      detail: 'Create work packages to start executor supervision.',
       targetGroup: 'all',
       actionLabel: '',
     };
@@ -865,15 +906,15 @@ export function buildHandoffQueueOperatorSummary(
     return {
       status: 'done',
       label: summary.done === 1 ? '1 package done' : `${summary.done} packages done`,
-      detail: 'No active handoff queue attention needed.',
+      detail: 'No active work package attention needed.',
       targetGroup: 'done',
       actionLabel: 'Show done',
     };
   }
   return {
     status: 'idle',
-    label: `${summary.totalPackages} packages queued`,
-    detail: 'Pick a queue group to inspect package state.',
+    label: `${summary.totalPackages} packages tracked`,
+    detail: 'Pick a Work Queue group to inspect package state.',
     targetGroup: 'all',
     actionLabel: 'Show all',
   };
@@ -921,7 +962,7 @@ export function buildHandoffExecutorStateModel(
         ? 'Completion review found a blocker in the executor report.'
         : 'Executor review is blocked and no report is ready yet.',
       tone: 'danger',
-      recommendedAction: canOpenReport ? 'Open report' : 'Inspect terminal',
+      recommendedAction: canOpenReport ? 'Open executor report' : 'Inspect terminal',
       nextActionKind: canOpenReport ? 'open_report' : 'inspect_terminal',
       shouldInspectTerminal: !canOpenReport,
       linkedAgentVisible: linkedExecutorAgent(execution, agents) !== undefined,
@@ -958,7 +999,7 @@ export function buildHandoffExecutorStateModel(
           ? 'Report and branch signals are ready for supervisor inspection.'
           : 'Executor report exists and is ready for supervisor review.',
       tone: 'ready',
-      recommendedAction: canOpenReport ? 'Open report' : 'Refresh completion',
+      recommendedAction: canOpenReport ? 'Open executor report' : 'Refresh report status',
       nextActionKind: canOpenReport ? 'open_report' : 'refresh_completion',
       shouldInspectTerminal: false,
       linkedAgentVisible: linkedExecutorAgent(execution, agents) !== undefined,
@@ -973,7 +1014,7 @@ export function buildHandoffExecutorStateModel(
       label: 'Blocked',
       detail: 'Package or execution metadata is marked blocked.',
       tone: 'danger',
-      recommendedAction: canOpenReport ? 'Open report' : 'Inspect terminal',
+      recommendedAction: canOpenReport ? 'Open executor report' : 'Inspect terminal',
       nextActionKind: canOpenReport ? 'open_report' : 'inspect_terminal',
       shouldInspectTerminal: !canOpenReport,
       linkedAgentVisible: linkedExecutorAgent(execution, agents) !== undefined,
@@ -988,9 +1029,9 @@ export function buildHandoffExecutorStateModel(
       label: 'Completed',
       detail: reportReady
         ? 'Execution is marked complete and report signals are available.'
-        : 'Execution is marked complete; refresh completion to load report signals.',
+        : 'Execution is marked complete; refresh report status to load report signals.',
       tone: 'success',
-      recommendedAction: reportReady ? 'Open report' : 'Refresh completion',
+      recommendedAction: reportReady ? 'Open executor report' : 'Refresh report status',
       nextActionKind: reportReady ? 'open_report' : 'refresh_completion',
       shouldInspectTerminal: false,
       linkedAgentVisible: linkedExecutorAgent(execution, agents) !== undefined,
@@ -1006,7 +1047,7 @@ export function buildHandoffExecutorStateModel(
         label: 'Stale / unknown',
         detail: 'Package is dispatched but no executor metadata is linked.',
         tone: 'warning',
-        recommendedAction: 'Link executor or refresh completion',
+        recommendedAction: 'Link executor or refresh report status',
         nextActionKind: 'inspect_terminal',
         shouldInspectTerminal: true,
         linkedAgentVisible: false,
@@ -1034,7 +1075,7 @@ export function buildHandoffExecutorStateModel(
       label: 'Stale / unknown',
       detail: 'Execution metadata points to an agent that is not visible.',
       tone: 'warning',
-      recommendedAction: 'Inspect terminal or refresh completion',
+      recommendedAction: 'Inspect terminal or refresh report status',
       nextActionKind: 'inspect_terminal',
       shouldInspectTerminal: true,
       linkedAgentVisible: false,
@@ -1082,7 +1123,7 @@ export function buildHandoffExecutorStateModel(
       label: 'Blocked',
       detail: executorLiveDetail(linkedAgent, 'Visible executor reports an error.'),
       tone: 'danger',
-      recommendedAction: canOpenReport ? 'Open report' : 'Inspect terminal',
+      recommendedAction: canOpenReport ? 'Open executor report' : 'Inspect terminal',
       nextActionKind: canOpenReport ? 'open_report' : 'inspect_terminal',
       shouldInspectTerminal: !canOpenReport,
       linkedAgentVisible: true,
@@ -1097,7 +1138,7 @@ export function buildHandoffExecutorStateModel(
       label: 'Active',
       detail: executorLiveDetail(linkedAgent, 'Visible executor is working.'),
       tone: 'active',
-      recommendedAction: 'Refresh completion later',
+      recommendedAction: 'Refresh report status later',
       nextActionKind: 'refresh_completion',
       shouldInspectTerminal: false,
       linkedAgentVisible: true,
@@ -1115,7 +1156,7 @@ export function buildHandoffExecutorStateModel(
         'Linked executor is visible but idle while metadata still says active.',
       ),
       tone: 'warning',
-      recommendedAction: 'Inspect terminal or refresh completion',
+      recommendedAction: 'Inspect terminal or refresh report status',
       nextActionKind: 'inspect_terminal',
       shouldInspectTerminal: true,
       linkedAgentVisible: true,
@@ -1129,7 +1170,7 @@ export function buildHandoffExecutorStateModel(
     label: 'Stale / unknown',
     detail: executorLiveDetail(linkedAgent, 'Executor state is unclear from local signals.'),
     tone: 'warning',
-    recommendedAction: 'Inspect terminal or refresh completion',
+    recommendedAction: 'Inspect terminal or refresh report status',
     nextActionKind: 'inspect_terminal',
     shouldInspectTerminal: true,
     linkedAgentVisible: true,
@@ -1267,7 +1308,7 @@ export function buildHandoffReviewRecommendedAction(
   if (!review) {
     return {
       kind: 'refresh_completion',
-      label: 'Refresh completion',
+      label: 'Refresh report status',
       disabled: !canUseHandoffWorkPackage(item),
       detail: 'Scan the executor report and branch status.',
     };
@@ -1286,7 +1327,7 @@ export function buildHandoffReviewRecommendedAction(
   if (review.status === 'ready_to_merge') {
     return {
       kind: 'open_report',
-      label: 'Inspect branch / open report',
+      label: 'Inspect branch / open executor report',
       disabled: item.completion?.reportExists !== true,
       detail: 'Report is ready; inspect the branch manually before merge.',
     };
@@ -1294,7 +1335,7 @@ export function buildHandoffReviewRecommendedAction(
   if (review.status === 'needs_review') {
     return {
       kind: 'open_report',
-      label: 'Open report',
+      label: 'Open executor report',
       disabled: item.completion?.reportExists !== true,
       detail: 'Review executor notes, validation, and changed-file cues.',
     };
@@ -1303,7 +1344,7 @@ export function buildHandoffReviewRecommendedAction(
     const hasReport = item.completion?.reportExists === true;
     return {
       kind: hasReport ? 'open_report' : 'wait_for_report',
-      label: hasReport ? 'Open report' : 'Report missing',
+      label: hasReport ? 'Open executor report' : 'Report missing',
       disabled: !hasReport,
       detail: hasReport
         ? 'Read the blocker before marking stale or re-dispatching.'
@@ -1321,12 +1362,12 @@ export function buildHandoffReviewRecommendedAction(
   if (review.status === 'active' || review.status === 'unknown') {
     return {
       kind: 'refresh_completion',
-      label: 'Refresh completion',
+      label: 'Refresh report status',
       disabled: !canUseHandoffWorkPackage(item),
       detail:
         review.status === 'active'
-          ? 'Executor appears active; refresh when work may be done.'
-          : 'Completion state is unclear; refresh the local scan.',
+          ? 'Executor appears active; refresh report status when work may be done.'
+          : 'Completion state is unclear; refresh the local report scan.',
     };
   }
   return {
@@ -1381,8 +1422,8 @@ export function buildHandoffMergeReadiness(
           : 'Completion review has not been loaded yet.',
       recommendedStep:
         status === 'needs_report'
-          ? 'Wait for the executor report, then refresh completion.'
-          : 'Refresh completion before deciding.',
+          ? 'Wait for the executor report, then refresh report status.'
+          : 'Refresh report status before deciding.',
     };
   }
   if (review.status === 'merged') {
@@ -1401,7 +1442,7 @@ export function buildHandoffMergeReadiness(
       label: 'Ready to inspect',
       detail: 'Report and branch signals are ready for a manual merge decision.',
       recommendedStep:
-        'Open the report, inspect the branch manually, then merge outside Pixel Agents.',
+        'Open the executor report, inspect the branch manually, then merge outside Pixel Agents.',
     };
   }
   if (review.status === 'needs_review') {
@@ -1410,7 +1451,7 @@ export function buildHandoffMergeReadiness(
       status: 'needs_review',
       label: 'Needs review',
       detail: 'Executor report is ready but still needs supervisor review.',
-      recommendedStep: 'Open the report and inspect validation plus changed-file cues.',
+      recommendedStep: 'Open the executor report and inspect validation plus changed-file cues.',
     };
   }
   if (review.status === 'needs_report') {
@@ -1419,7 +1460,7 @@ export function buildHandoffMergeReadiness(
       status: 'needs_report',
       label: 'Needs report',
       detail: 'Executor report is missing.',
-      recommendedStep: 'Wait for the executor report, then refresh completion.',
+      recommendedStep: 'Wait for the executor report, then refresh report status.',
     };
   }
   if (review.status === 'blocked') {
@@ -1428,7 +1469,8 @@ export function buildHandoffMergeReadiness(
       status: 'blocked',
       label: 'Blocked',
       detail: 'Executor completion review found a blocker.',
-      recommendedStep: 'Open the report if available, then mark stale or re-dispatch manually.',
+      recommendedStep:
+        'Open the executor report if available, then mark stale or re-dispatch manually.',
     };
   }
   if (review.status === 'active') {
@@ -1437,7 +1479,7 @@ export function buildHandoffMergeReadiness(
       status: 'active',
       label: 'Active',
       detail: 'Executor appears active or waiting.',
-      recommendedStep: 'Refresh completion later; do not merge yet.',
+      recommendedStep: 'Refresh report status later; do not merge yet.',
     };
   }
   return {
@@ -1445,7 +1487,7 @@ export function buildHandoffMergeReadiness(
     status: 'unknown',
     label: 'Unknown',
     detail: 'Merge readiness is unclear from local signals.',
-    recommendedStep: 'Refresh completion and inspect the report if it exists.',
+    recommendedStep: 'Refresh report status and inspect the report if it exists.',
   };
 }
 
@@ -1552,7 +1594,7 @@ function handoffChecklistCopyConfig(
         '- Open the executor report and inspect the summarized validation and changed-file cues.',
         '- Inspect the executor branch manually outside Pixel Agents.',
         '- Run any required validation locally before merging.',
-        '- If approved, merge outside Pixel Agents; then refresh completion and mark reviewed.',
+        '- If approved, merge outside Pixel Agents; then refresh report status and mark reviewed.',
       ],
     };
   }
@@ -1567,7 +1609,7 @@ function handoffChecklistCopyConfig(
         '- Open the executor report and review summary, validation, changed-file, and risk cues.',
         '- Inspect the executor branch manually outside Pixel Agents.',
         '- Run any required validation locally before making a merge decision.',
-        '- If review passes, refresh completion so the handoff can move to ready to inspect.',
+        '- If review passes, refresh report status so the handoff can move to ready to inspect.',
       ],
     };
   }
@@ -1582,7 +1624,7 @@ function handoffChecklistCopyConfig(
         '- Open the executor report if available and confirm the blocker.',
         '- Inspect branch and status cues manually outside Pixel Agents before deciding next ownership.',
         '- Mark stale or re-dispatch manually only after the blocker is understood.',
-        '- Do not merge until the blocker is resolved and completion is refreshed.',
+        '- Do not merge until the blocker is resolved and report status is refreshed.',
       ],
     };
   }
@@ -1595,7 +1637,7 @@ function handoffChecklistCopyConfig(
       sectionTitle: 'Manual closeout',
       steps: [
         '- Confirm the branch is merged into main using local tools outside Pixel Agents.',
-        '- Open the report if needed to verify final validation and changed-file cues.',
+        '- Open the executor report if needed to verify final validation and changed-file cues.',
         '- Mark the handoff reviewed after the local status is confirmed.',
         '- Do not run another merge from this checklist.',
       ],
@@ -1608,7 +1650,7 @@ function handoffChecklistCopyConfig(
     titlePrefix: 'Manual Status Checklist',
     sectionTitle: 'Manual status review',
     steps: [
-      '- Refresh completion when the executor status may have changed.',
+      '- Refresh report status when the executor status may have changed.',
       '- Wait for the executor report or active work to settle before reviewing.',
       '- Inspect any available report and branch/status cues manually outside Pixel Agents.',
       '- Do not merge until the handoff reaches ready to inspect.',
@@ -1638,13 +1680,13 @@ export function handoffExecutionActionStatusLabel(
       packageRelativePath || 'handoff work package'
     }`;
   }
-  if (status === 'refreshing') return 'Refreshing report and branch completion signals...';
+  if (status === 'refreshing') return 'Refreshing executor report status...';
   if (status === 'refreshed') {
-    return `Completion refreshed: ${packageRelativePath || 'handoff work package'}`;
+    return `Report status refreshed: ${packageRelativePath || 'handoff work package'}`;
   }
   if (status === 'opening_report') return 'Opening executor report in VS Code...';
   if (status === 'report_opened') {
-    return `Opened report: ${packageRelativePath || 'executor report'}`;
+    return `Opened executor report: ${packageRelativePath || 'executor report'}`;
   }
   if (status === 'failed') {
     return `Execution action failed: ${error || 'Could not update handoff execution.'}`;
