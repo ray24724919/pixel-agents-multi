@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "artifactId": "2026-06-08-1017-w15-a-executor-state-observability-handoff",
+  "artifactType": "handoff",
+  "markdownRelativePath": "docs/agent-handoffs/2026-06-08-1017-w15-a-executor-state-observability-handoff.md",
+  "title": "W15-A Handoff Executor State Observability",
+  "status": "draft",
+  "createdAt": "2026-06-08T02:17:00.000Z",
+  "updatedAt": "2026-06-08T02:17:00.000Z",
+  "providerId": "codex",
+  "projectName": "pixel-agents-multi",
+  "agentName": "W15-A executor",
+  "dispatchPackage": {
+    "packageRelativePath": "docs/roadmap/supervision/work-packages/handoffs/w15-a-executor-state-observability-work-package.md",
+    "branchName": "product/handoff-w15-a-executor-state-observability",
+    "reportRelativePath": "docs/roadmap/supervision/reports/w15-a-executor-state-observability-executor-report.md",
+    "status": "ready",
+    "createdAt": "2026-06-08T02:17:00.000Z",
+    "updatedAt": "2026-06-08T02:17:00.000Z"
+  }
+}

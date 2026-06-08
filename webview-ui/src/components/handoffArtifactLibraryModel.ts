@@ -305,6 +305,63 @@ export interface HandoffQueueOperatorSummary {
   actionLabel: string;
 }
 
+export type HandoffExecutorState =
+  | 'not_started'
+  | 'active'
+  | 'waiting'
+  | 'blocked'
+  | 'completed'
+  | 'report_ready'
+  | 'stale_unknown';
+
+export type HandoffExecutorStateTone =
+  | 'neutral'
+  | 'active'
+  | 'warning'
+  | 'danger'
+  | 'success'
+  | 'ready';
+
+export type HandoffExecutorNextActionKind =
+  | 'create_work_package'
+  | 'launch'
+  | 'inspect_terminal'
+  | 'refresh_completion'
+  | 'open_report'
+  | 'mark_reviewed'
+  | 'wait'
+  | 'none';
+
+export interface HandoffExecutorAgentSnapshot {
+  id: number;
+  name?: string;
+  providerId?: string;
+  project?: string;
+  status?: string;
+  statusGroup?: string;
+  activity?: string;
+  detail?: string;
+  sessionId?: string;
+  isPaused?: boolean;
+  hidden?: boolean;
+}
+
+export interface HandoffExecutorStateModel {
+  state: HandoffExecutorState;
+  label: string;
+  detail: string;
+  tone: HandoffExecutorStateTone;
+  recommendedAction: string;
+  nextActionKind: HandoffExecutorNextActionKind;
+  canRefreshCompletion: boolean;
+  canOpenReport: boolean;
+  shouldInspectTerminal: boolean;
+  reportReady: boolean;
+  linkedAgentVisible: boolean;
+  providerLabel?: string;
+  agentLabel?: string;
+}
+
 export type HandoffReviewChecklistState = 'ok' | 'missing' | 'warning' | 'unknown';
 export type HandoffReviewChecklistId =
   | 'summary'
@@ -718,6 +775,7 @@ export function buildHandoffExecutionQueueSummary(
 
 export function buildHandoffQueueSummary(
   items: readonly Pick<HandoffArtifactLibraryItem, 'dispatchPackage' | 'completion' | 'review'>[],
+  agents: readonly HandoffExecutorAgentSnapshot[] = [],
 ): HandoffQueueSummary {
   const summary: HandoffQueueSummary = {
     totalPackages: 0,
@@ -730,7 +788,7 @@ export function buildHandoffQueueSummary(
   for (const item of items) {
     if (!item.dispatchPackage) continue;
     summary.totalPackages += 1;
-    const group = handoffQueueGroupForItem(item);
+    const group = handoffQueueGroupForItem(item, agents);
     if (group === 'needs_dispatch') summary.needsDispatch += 1;
     if (group === 'active_waiting') summary.activeWaiting += 1;
     if (group === 'blocked') summary.blocked += 1;
@@ -742,8 +800,9 @@ export function buildHandoffQueueSummary(
 
 export function buildHandoffQueueOperatorSummary(
   items: readonly Pick<HandoffArtifactLibraryItem, 'dispatchPackage' | 'completion' | 'review'>[],
+  agents: readonly HandoffExecutorAgentSnapshot[] = [],
 ): HandoffQueueOperatorSummary {
-  const summary = buildHandoffQueueSummary(items);
+  const summary = buildHandoffQueueSummary(items, agents);
   if (summary.totalPackages === 0) {
     return {
       status: 'idle',
@@ -782,11 +841,12 @@ export function buildHandoffQueueOperatorSummary(
       status: 'active',
       label:
         summary.activeWaiting === 1
-          ? '1 package active or waiting'
-          : `${summary.activeWaiting} packages active or waiting`,
-      detail: 'Check executor state before dispatching more work.',
+          ? '1 package active, waiting, or unknown'
+          : `${summary.activeWaiting} packages active, waiting, or unknown`,
+      detail:
+        'Check executor state, stale links, or terminal prompts before dispatching more work.',
       targetGroup: 'active_waiting',
-      actionLabel: 'Show active / waiting',
+      actionLabel: 'Show active / waiting / unknown',
     };
   }
   if (summary.needsDispatch > 0) {
@@ -819,19 +879,324 @@ export function buildHandoffQueueOperatorSummary(
   };
 }
 
+export function buildHandoffExecutorStateModel(
+  item: Pick<HandoffArtifactLibraryItem, 'dispatchPackage' | 'completion' | 'review'>,
+  agents: readonly HandoffExecutorAgentSnapshot[] = [],
+): HandoffExecutorStateModel {
+  const dispatchPackage = item.dispatchPackage;
+  const execution = dispatchPackage?.execution;
+  const canRefreshCompletion = !!dispatchPackage?.packageRelativePath;
+  const canOpenReport = item.completion?.reportExists === true;
+  const reportReady =
+    canOpenReport ||
+    item.review?.report !== undefined ||
+    item.review?.status === 'needs_review' ||
+    item.review?.status === 'ready_to_merge';
+  const base = {
+    canRefreshCompletion,
+    canOpenReport,
+    reportReady,
+  };
+
+  if (!dispatchPackage) {
+    return {
+      ...base,
+      state: 'not_started',
+      label: 'No work package',
+      detail: 'Create a work package before launching an executor.',
+      tone: 'neutral',
+      recommendedAction: 'Create work package',
+      nextActionKind: 'create_work_package',
+      shouldInspectTerminal: false,
+      linkedAgentVisible: false,
+    };
+  }
+
+  if (item.review?.status === 'blocked') {
+    return {
+      ...base,
+      state: 'blocked',
+      label: 'Blocked',
+      detail: reportReady
+        ? 'Completion review found a blocker in the executor report.'
+        : 'Executor review is blocked and no report is ready yet.',
+      tone: 'danger',
+      recommendedAction: canOpenReport ? 'Open report' : 'Inspect terminal',
+      nextActionKind: canOpenReport ? 'open_report' : 'inspect_terminal',
+      shouldInspectTerminal: !canOpenReport,
+      linkedAgentVisible: linkedExecutorAgent(execution, agents) !== undefined,
+      ...executorIdentity(execution, agents),
+    };
+  }
+
+  if (item.review?.status === 'merged') {
+    return {
+      ...base,
+      state: 'completed',
+      label: 'Completed',
+      detail: 'Branch is merged into main.',
+      tone: 'success',
+      recommendedAction: 'Mark reviewed',
+      nextActionKind: 'mark_reviewed',
+      shouldInspectTerminal: false,
+      linkedAgentVisible: linkedExecutorAgent(execution, agents) !== undefined,
+      ...executorIdentity(execution, agents),
+    };
+  }
+
+  if (
+    item.review?.status === 'needs_review' ||
+    item.review?.status === 'ready_to_merge' ||
+    canOpenReport
+  ) {
+    return {
+      ...base,
+      state: 'report_ready',
+      label: 'Report ready',
+      detail:
+        item.review?.status === 'ready_to_merge'
+          ? 'Report and branch signals are ready for supervisor inspection.'
+          : 'Executor report exists and is ready for supervisor review.',
+      tone: 'ready',
+      recommendedAction: canOpenReport ? 'Open report' : 'Refresh completion',
+      nextActionKind: canOpenReport ? 'open_report' : 'refresh_completion',
+      shouldInspectTerminal: false,
+      linkedAgentVisible: linkedExecutorAgent(execution, agents) !== undefined,
+      ...executorIdentity(execution, agents),
+    };
+  }
+
+  if (dispatchPackage.status === 'blocked' || execution?.status === 'blocked') {
+    return {
+      ...base,
+      state: 'blocked',
+      label: 'Blocked',
+      detail: 'Package or execution metadata is marked blocked.',
+      tone: 'danger',
+      recommendedAction: canOpenReport ? 'Open report' : 'Inspect terminal',
+      nextActionKind: canOpenReport ? 'open_report' : 'inspect_terminal',
+      shouldInspectTerminal: !canOpenReport,
+      linkedAgentVisible: linkedExecutorAgent(execution, agents) !== undefined,
+      ...executorIdentity(execution, agents),
+    };
+  }
+
+  if (dispatchPackage.status === 'completed' || execution?.status === 'completed') {
+    return {
+      ...base,
+      state: 'completed',
+      label: 'Completed',
+      detail: reportReady
+        ? 'Execution is marked complete and report signals are available.'
+        : 'Execution is marked complete; refresh completion to load report signals.',
+      tone: 'success',
+      recommendedAction: reportReady ? 'Open report' : 'Refresh completion',
+      nextActionKind: reportReady ? 'open_report' : 'refresh_completion',
+      shouldInspectTerminal: false,
+      linkedAgentVisible: linkedExecutorAgent(execution, agents) !== undefined,
+      ...executorIdentity(execution, agents),
+    };
+  }
+
+  if (!execution) {
+    if (dispatchPackage.status === 'dispatched') {
+      return {
+        ...base,
+        state: 'stale_unknown',
+        label: 'Stale / unknown',
+        detail: 'Package is dispatched but no executor metadata is linked.',
+        tone: 'warning',
+        recommendedAction: 'Link executor or refresh completion',
+        nextActionKind: 'inspect_terminal',
+        shouldInspectTerminal: true,
+        linkedAgentVisible: false,
+      };
+    }
+    return {
+      ...base,
+      state: 'not_started',
+      label: 'Ready to launch',
+      detail: 'Work package exists but no executor is linked yet.',
+      tone: 'neutral',
+      recommendedAction: 'Launch or link executor',
+      nextActionKind: 'launch',
+      shouldInspectTerminal: false,
+      linkedAgentVisible: false,
+    };
+  }
+
+  const linkedAgent = linkedExecutorAgent(execution, agents);
+  const identity = executorIdentity(execution, agents);
+  if (!linkedAgent) {
+    return {
+      ...base,
+      state: 'stale_unknown',
+      label: 'Stale / unknown',
+      detail: 'Execution metadata points to an agent that is not visible.',
+      tone: 'warning',
+      recommendedAction: 'Inspect terminal or refresh completion',
+      nextActionKind: 'inspect_terminal',
+      shouldInspectTerminal: true,
+      linkedAgentVisible: false,
+      ...identity,
+    };
+  }
+
+  if (linkedAgent.isPaused || linkedAgent.statusGroup === 'paused') {
+    return {
+      ...base,
+      state: 'waiting',
+      label: 'Waiting for input',
+      detail: `${executorAgentDisplayName(linkedAgent)} is paused.`,
+      tone: 'warning',
+      recommendedAction: 'Inspect terminal',
+      nextActionKind: 'inspect_terminal',
+      shouldInspectTerminal: true,
+      linkedAgentVisible: true,
+      ...identity,
+    };
+  }
+
+  if (
+    linkedAgent.statusGroup === 'needs_me' ||
+    (linkedAgent.statusGroup === 'waiting' && execution.status === 'waiting')
+  ) {
+    return {
+      ...base,
+      state: 'waiting',
+      label: 'Waiting for approval',
+      detail: executorLiveDetail(linkedAgent, 'Executor is waiting for user input or approval.'),
+      tone: 'warning',
+      recommendedAction: 'Inspect terminal',
+      nextActionKind: 'inspect_terminal',
+      shouldInspectTerminal: true,
+      linkedAgentVisible: true,
+      ...identity,
+    };
+  }
+
+  if (linkedAgent.statusGroup === 'error') {
+    return {
+      ...base,
+      state: 'blocked',
+      label: 'Blocked',
+      detail: executorLiveDetail(linkedAgent, 'Visible executor reports an error.'),
+      tone: 'danger',
+      recommendedAction: canOpenReport ? 'Open report' : 'Inspect terminal',
+      nextActionKind: canOpenReport ? 'open_report' : 'inspect_terminal',
+      shouldInspectTerminal: !canOpenReport,
+      linkedAgentVisible: true,
+      ...identity,
+    };
+  }
+
+  if (linkedAgent.statusGroup === 'active' || linkedAgent.statusGroup === 'delegating') {
+    return {
+      ...base,
+      state: 'active',
+      label: 'Active',
+      detail: executorLiveDetail(linkedAgent, 'Visible executor is working.'),
+      tone: 'active',
+      recommendedAction: 'Refresh completion later',
+      nextActionKind: 'refresh_completion',
+      shouldInspectTerminal: false,
+      linkedAgentVisible: true,
+      ...identity,
+    };
+  }
+
+  if (execution.status === 'active' || execution.status === 'linked') {
+    return {
+      ...base,
+      state: 'stale_unknown',
+      label: 'Stale / unknown',
+      detail: executorLiveDetail(
+        linkedAgent,
+        'Linked executor is visible but idle while metadata still says active.',
+      ),
+      tone: 'warning',
+      recommendedAction: 'Inspect terminal or refresh completion',
+      nextActionKind: 'inspect_terminal',
+      shouldInspectTerminal: true,
+      linkedAgentVisible: true,
+      ...identity,
+    };
+  }
+
+  return {
+    ...base,
+    state: 'stale_unknown',
+    label: 'Stale / unknown',
+    detail: executorLiveDetail(linkedAgent, 'Executor state is unclear from local signals.'),
+    tone: 'warning',
+    recommendedAction: 'Inspect terminal or refresh completion',
+    nextActionKind: 'inspect_terminal',
+    shouldInspectTerminal: true,
+    linkedAgentVisible: true,
+    ...identity,
+  };
+}
+
+function linkedExecutorAgent(
+  execution: HandoffExecutionMetadata | undefined,
+  agents: readonly HandoffExecutorAgentSnapshot[],
+): HandoffExecutorAgentSnapshot | undefined {
+  return execution?.agentId !== undefined
+    ? agents.find((agent) => agent.id === execution.agentId)
+    : undefined;
+}
+
+function executorIdentity(
+  execution: HandoffExecutionMetadata | undefined,
+  agents: readonly HandoffExecutorAgentSnapshot[],
+): Pick<HandoffExecutorStateModel, 'agentLabel' | 'providerLabel'> {
+  const linkedAgent = linkedExecutorAgent(execution, agents);
+  const agentLabel =
+    (linkedAgent ? executorAgentDisplayName(linkedAgent) : undefined) ??
+    safeDisplayStringValue(execution?.agentName) ??
+    (execution?.agentId !== undefined ? `Agent #${execution.agentId}` : undefined);
+  const providerLabel = executorProviderLabel(linkedAgent?.providerId ?? execution?.providerId);
+  return {
+    ...(agentLabel ? { agentLabel } : {}),
+    ...(providerLabel ? { providerLabel } : {}),
+  };
+}
+
+function executorAgentDisplayName(agent: HandoffExecutorAgentSnapshot): string | undefined {
+  return safeDisplayStringValue(agent.name) ?? `Agent #${agent.id}`;
+}
+
+function executorProviderLabel(providerId: string | undefined): string | undefined {
+  const safeProviderId = safeDisplayStringValue(providerId);
+  if (!safeProviderId) return undefined;
+  if (safeProviderId.toLowerCase() === 'codex') return 'Codex';
+  if (safeProviderId.toLowerCase() === 'claude') return 'Claude';
+  return safeProviderId;
+}
+
+function executorLiveDetail(agent: HandoffExecutorAgentSnapshot, fallback: string): string {
+  const name = executorAgentDisplayName(agent);
+  const provider = executorProviderLabel(agent.providerId);
+  const activity = safeDisplayStringValue(agent.activity);
+  const detail = safeDisplayStringValue(agent.detail);
+  const liveParts = [name, provider, activity, detail].filter(Boolean);
+  return liveParts.length > 0 ? liveParts.join(' / ') : fallback;
+}
+
 export function filterHandoffQueueItems(
   items: readonly HandoffArtifactLibraryItem[],
   group: HandoffQueueGroup,
+  agents: readonly HandoffExecutorAgentSnapshot[] = [],
 ): HandoffArtifactLibraryItem[] {
   return items
     .filter((item) => !!item.dispatchPackage)
-    .filter((item) => group === 'all' || handoffQueueGroupForItem(item) === group)
+    .filter((item) => group === 'all' || handoffQueueGroupForItem(item, agents) === group)
     .sort(compareHandoffQueueItems);
 }
 
 export function handoffQueueGroupLabel(group: HandoffQueueGroup): string {
   if (group === 'needs_dispatch') return 'Needs dispatch';
-  if (group === 'active_waiting') return 'Active / waiting';
+  if (group === 'active_waiting') return 'Active / waiting / unknown';
   if (group === 'blocked') return 'Blocked';
   if (group === 'report_ready') return 'Report ready';
   if (group === 'done') return 'Done';
@@ -840,24 +1205,16 @@ export function handoffQueueGroupLabel(group: HandoffQueueGroup): string {
 
 export function handoffQueueGroupForItem(
   item: Pick<HandoffArtifactLibraryItem, 'dispatchPackage' | 'completion' | 'review'>,
+  agents: readonly HandoffExecutorAgentSnapshot[] = [],
 ): Exclude<HandoffQueueGroup, 'all'> {
-  const dispatchPackage = item.dispatchPackage;
-  if (!dispatchPackage) return 'needs_dispatch';
-  if (item.review?.status === 'blocked') return 'blocked';
-  if (item.review?.status === 'merged') return 'done';
-  if (item.review?.status === 'needs_review' || item.review?.status === 'ready_to_merge') {
-    return 'report_ready';
-  }
-  if (item.review?.status === 'active') return 'active_waiting';
-  const executionStatus = dispatchPackage.execution?.status;
-  if (dispatchPackage.status === 'blocked' || executionStatus === 'blocked') return 'blocked';
-  if (dispatchPackage.status === 'completed' || executionStatus === 'completed') return 'done';
-  if (item.completion?.reportExists === true) return 'report_ready';
+  const executorState = buildHandoffExecutorStateModel(item, agents);
+  if (executorState.state === 'blocked') return 'blocked';
+  if (executorState.state === 'completed') return 'done';
+  if (executorState.state === 'report_ready') return 'report_ready';
   if (
-    dispatchPackage.status === 'dispatched' ||
-    executionStatus === 'active' ||
-    executionStatus === 'waiting' ||
-    executionStatus === 'linked'
+    executorState.state === 'active' ||
+    executorState.state === 'waiting' ||
+    executorState.state === 'stale_unknown'
   ) {
     return 'active_waiting';
   }
