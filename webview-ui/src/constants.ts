@@ -184,3 +184,8 @@ export const NEUTRAL_ZONE_BORDER_COLOR = 'rgba(172, 179, 204, 0.64)';
 export const NEUTRAL_ZONE_BACKGROUND = 'rgba(172, 179, 204, 0.08)';
 export const NEUTRAL_ZONE_LABEL_COLOR = 'rgb(213, 218, 235)';
 export const ZONE_LABEL_BACKGROUND = 'rgba(20, 20, 34, 0.78)';
+
+// -- Project Rooms ----------------------------------------------------------
+export const PROJECT_ROOM_ID_MAX_LENGTH = 80;
+export const PROJECT_ROOM_LABEL_MAX_LENGTH = 80;
+export const PROJECT_ROOM_PROJECT_KEY_MAX_LENGTH = 160;

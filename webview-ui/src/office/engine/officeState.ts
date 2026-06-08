@@ -23,6 +23,12 @@ import {
   layoutToTileMap,
 } from '../layout/layoutSerializer.js';
 import { findPath, getWalkableTiles, isWalkable } from '../layout/tileMap.js';
+import {
+  deriveAgentProjectKey,
+  normalizeProjectRoomsInLayout,
+  seatPriorityForAgent,
+  seatPriorityForProjectKey,
+} from '../projectRooms.js';
 import { getLoadedCharacterCount } from '../sprites/spriteData.js';
 import type {
   Character,
@@ -67,7 +73,7 @@ export class OfficeState {
   private nextSubagentId = -1;
 
   constructor(layout?: OfficeLayout) {
-    this.layout = layout || createDefaultLayout();
+    this.layout = normalizeProjectRoomsInLayout(layout || createDefaultLayout());
     this.tileMap = layoutToTileMap(this.layout);
     this.seats = layoutToSeats(this.layout);
     this.blockedTiles = getBlockedTiles(this.layout.furniture);
@@ -79,10 +85,10 @@ export class OfficeState {
   /** Rebuild all derived state from a new layout. Reassigns existing characters.
    *  @param shift Optional pixel shift to apply when grid expands left/up */
   rebuildFromLayout(layout: OfficeLayout, shift?: { col: number; row: number }): void {
-    this.layout = layout;
-    this.tileMap = layoutToTileMap(layout);
-    this.seats = layoutToSeats(layout);
-    this.blockedTiles = getBlockedTiles(layout.furniture);
+    this.layout = normalizeProjectRoomsInLayout(layout);
+    this.tileMap = layoutToTileMap(this.layout);
+    this.seats = layoutToSeats(this.layout);
+    this.blockedTiles = getBlockedTiles(this.layout.furniture);
     this.rebuildFurnitureInstances();
     this.walkableTiles = getWalkableTiles(this.tileMap, this.blockedTiles);
     this.idleWalkableTiles = this.getIdleWalkableTiles();
@@ -199,54 +205,115 @@ export class OfficeState {
     return this.isSeatReachableForCharacter(ch, seat);
   }
 
+  private isSeatModeMatch(seat: Seat, mode: 'work' | 'rest'): boolean {
+    if (mode === 'work') {
+      return seat.seatKind === 'work' && seat.zoneSource === 'workstation';
+    }
+    return seat.seatKind === 'rest';
+  }
+
+  private getSeatPriorityForAgent(ch: Character, seat: Seat, mode: 'work' | 'rest'): number {
+    return seatPriorityForAgent(this.layout, ch, seat, mode);
+  }
+
+  private getSeatPriorityForProjectKey(
+    projectKey: string | null,
+    seat: Seat,
+    mode: 'work' | 'rest',
+  ): number {
+    return seatPriorityForProjectKey(this.layout, projectKey, seat, mode);
+  }
+
+  private getSeatCandidatesForAgent(
+    ch: Character,
+    mode: 'work' | 'rest',
+  ): Array<{ id: string; seat: Seat; priority: number; distance: number }> {
+    return [...this.seats.entries()]
+      .filter(([, seat]) => this.isSeatValidForAgent(ch, seat, mode))
+      .map(([id, seat]) => ({
+        id,
+        seat,
+        priority: this.getSeatPriorityForAgent(ch, seat, mode),
+        distance: manhattan(
+          { col: ch.tileCol, row: ch.tileRow },
+          { col: seat.seatCol, row: seat.seatRow },
+        ),
+      }))
+      .sort(
+        (a, b) => a.priority - b.priority || a.distance - b.distance || a.id.localeCompare(b.id),
+      );
+  }
+
+  private shouldKeepAssignedSeatForAgent(
+    ch: Character,
+    seat: Seat,
+    mode: 'work' | 'rest',
+  ): boolean {
+    if (!this.isSeatValidForAgent(ch, seat, mode)) return false;
+    const candidates = this.getSeatCandidatesForAgent(ch, mode);
+    const bestPriority = candidates[0]?.priority ?? Number.POSITIVE_INFINITY;
+    return this.getSeatPriorityForAgent(ch, seat, mode) <= bestPriority;
+  }
+
   private chooseSeatForAgent(ch: Character, mode: 'work' | 'rest'): string | null {
     const preferredId = mode === 'work' ? ch.workSeatId : ch.restSeatId;
+    const candidates = this.getSeatCandidatesForAgent(ch, mode);
+    const bestPriority = candidates[0]?.priority ?? Number.POSITIVE_INFINITY;
     if (preferredId) {
       const preferred = this.seats.get(preferredId);
-      if (preferred && this.isSeatValidForAgent(ch, preferred, mode)) {
+      if (
+        preferred &&
+        this.isSeatValidForAgent(ch, preferred, mode) &&
+        this.getSeatPriorityForAgent(ch, preferred, mode) <= bestPriority
+      ) {
         return preferredId;
       }
     }
 
-    const candidates = [...this.seats.entries()]
-      .filter(([, seat]) => this.isSeatValidForAgent(ch, seat, mode))
-      .sort((a, b) => {
-        const distanceA = manhattan(
-          { col: ch.tileCol, row: ch.tileRow },
-          { col: a[1].seatCol, row: a[1].seatRow },
-        );
-        const distanceB = manhattan(
-          { col: ch.tileCol, row: ch.tileRow },
-          { col: b[1].seatCol, row: b[1].seatRow },
-        );
-        return distanceA - distanceB || a[0].localeCompare(b[0]);
-      });
-    return candidates[0]?.[0] ?? null;
+    return candidates[0]?.id ?? null;
   }
 
-  private findUnassignedSeatByMode(mode: 'work' | 'rest'): string | null {
+  private findUnassignedSeatByMode(
+    mode: 'work' | 'rest',
+    projectKey: string | null = null,
+  ): string | null {
     const candidates = [...this.seats.entries()]
       .filter(([, seat]) => {
         if (seat.assigned) return false;
-        if (mode === 'work') {
-          return seat.seatKind === 'work' && seat.zoneSource === 'workstation';
-        }
-        return seat.seatKind === 'rest';
+        return this.isSeatModeMatch(seat, mode);
       })
-      .sort((a, b) => a[0].localeCompare(b[0]));
-    return candidates[0]?.[0] ?? null;
+      .map(([id, seat]) => ({
+        id,
+        priority: this.getSeatPriorityForProjectKey(projectKey, seat, mode),
+      }))
+      .sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id));
+    return candidates[0]?.id ?? null;
   }
 
-  private findRandomUnassignedSeatByMode(mode: 'work' | 'rest'): string | null {
-    const candidates = [...this.seats.entries()].filter(([, seat]) => {
-      if (seat.assigned) return false;
-      if (mode === 'work') {
-        return seat.seatKind === 'work' && seat.zoneSource === 'workstation';
-      }
-      return seat.seatKind === 'rest';
-    });
+  private findRandomUnassignedSeatByMode(
+    mode: 'work' | 'rest',
+    projectKey: string | null = null,
+  ): string | null {
+    const rankedCandidates = [...this.seats.entries()]
+      .filter(([, seat]) => !seat.assigned && this.isSeatModeMatch(seat, mode))
+      .map(([id, seat]) => ({
+        id,
+        priority: this.getSeatPriorityForProjectKey(projectKey, seat, mode),
+      }))
+      .sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id));
+    const bestPriority = rankedCandidates[0]?.priority;
+    const candidates = rankedCandidates.filter((candidate) => candidate.priority === bestPriority);
     if (candidates.length === 0) return null;
-    return candidates[Math.floor(Math.random() * candidates.length)]?.[0] ?? null;
+    return candidates[Math.floor(Math.random() * candidates.length)]?.id ?? null;
+  }
+
+  private getBestUnassignedSeatPriority(mode: 'work' | 'rest', projectKey: string | null): number {
+    let best = Number.POSITIVE_INFINITY;
+    for (const seat of this.seats.values()) {
+      if (seat.assigned || !this.isSeatModeMatch(seat, mode)) continue;
+      best = Math.min(best, this.getSeatPriorityForProjectKey(projectKey, seat, mode));
+    }
+    return best;
   }
 
   private snapCharacterToSeat(ch: Character, seat: Seat): void {
@@ -323,7 +390,7 @@ export class OfficeState {
     for (const ch of topLevelCharacters) {
       const mode = ch.isActive ? 'work' : 'rest';
       const seat = ch.seatId ? this.seats.get(ch.seatId) : undefined;
-      if (seat && !seat.assigned && this.isSeatValidForAgent(ch, seat, mode)) {
+      if (seat && !seat.assigned && this.shouldKeepAssignedSeatForAgent(ch, seat, mode)) {
         seat.assigned = true;
         if (mode === 'work') ch.workSeatId = ch.seatId;
         if (mode === 'rest') ch.restSeatId = ch.seatId;
@@ -397,7 +464,7 @@ export class OfficeState {
 
     for (const ch of topLevelCharacters) {
       const mode = ch.isActive ? 'work' : 'rest';
-      const seatId = this.findRandomUnassignedSeatByMode(mode);
+      const seatId = this.findRandomUnassignedSeatByMode(mode, deriveAgentProjectKey(ch));
       if (seatId) {
         this.assignSeatToCharacter(ch, seatId, mode, true);
       } else if (ch.isActive) {
@@ -437,6 +504,63 @@ export class OfficeState {
     );
     if (nonWorkTiles.length > 0) return nonWorkTiles;
     return nonWorkSeatTiles.length > 0 ? nonWorkSeatTiles : this.walkableTiles;
+  }
+
+  private getIdleWalkableTilesForCharacter(ch: Character): Array<{ col: number; row: number }> {
+    if (!this.layout.projectRooms || this.layout.projectRooms.length === 0 || ch.isSubagent) {
+      return this.idleWalkableTiles;
+    }
+    const projectKey = deriveAgentProjectKey(ch);
+    const rankedTiles = this.idleWalkableTiles
+      .map((tile) => ({
+        tile,
+        priority: seatPriorityForProjectKey(
+          this.layout,
+          projectKey,
+          { seatCol: tile.col, seatRow: tile.row },
+          'rest',
+        ),
+      }))
+      .sort(
+        (a, b) =>
+          a.priority - b.priority ||
+          manhattan(a.tile, { col: ch.tileCol, row: ch.tileRow }) -
+            manhattan(b.tile, { col: ch.tileCol, row: ch.tileRow }),
+      );
+    const bestPriority = rankedTiles[0]?.priority;
+    const localTiles = rankedTiles
+      .filter((candidate) => candidate.priority === bestPriority)
+      .map((candidate) => candidate.tile);
+    return localTiles.length > 0 ? localTiles : this.idleWalkableTiles;
+  }
+
+  private getUpdateSeatsForCharacter(ch: Character): Map<string, Seat> {
+    if (
+      ch.isActive ||
+      ch.isSubagent ||
+      !this.layout.projectRooms ||
+      this.layout.projectRooms.length === 0
+    ) {
+      return this.seats;
+    }
+    const projectKey = deriveAgentProjectKey(ch);
+    const restCandidates = [...this.seats.entries()]
+      .filter(([, seat]) => seat.seatKind === 'rest')
+      .map(([id, seat]) => ({
+        id,
+        seat,
+        priority: this.getSeatPriorityForProjectKey(projectKey, seat, 'rest'),
+      }))
+      .sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id));
+    const bestPriority = restCandidates[0]?.priority;
+    const localRestSeats = restCandidates.filter(
+      (candidate) =>
+        candidate.priority === bestPriority ||
+        candidate.id === ch.seatId ||
+        candidate.id === ch.restSeatId,
+    );
+    if (localRestSeats.length === 0) return this.seats;
+    return new Map(localRestSeats.map((candidate) => [candidate.id, candidate.seat]));
   }
 
   setMeetingTeam(teamName: string | null): void {
@@ -566,22 +690,22 @@ export class OfficeState {
     // Persisted seats are preferences. Only valid workstation seats can seed active agents.
     let seatId: string | null = null;
     const initialMode = initialActive ? 'work' : 'rest';
+    const projectKey = deriveAgentProjectKey({ folderName });
     if (!randomizeInitialSeat && preferredSeatId && this.seats.has(preferredSeatId)) {
       const seat = this.seats.get(preferredSeatId)!;
       if (
         !seat.assigned &&
-        ((initialMode === 'work' &&
-          seat.seatKind === 'work' &&
-          seat.zoneSource === 'workstation') ||
-          (initialMode === 'rest' && seat.seatKind === 'rest'))
+        this.isSeatModeMatch(seat, initialMode) &&
+        this.getSeatPriorityForProjectKey(projectKey, seat, initialMode) <=
+          this.getBestUnassignedSeatPriority(initialMode, projectKey)
       ) {
         seatId = preferredSeatId;
       }
     }
     if (!seatId) {
       seatId = randomizeInitialSeat
-        ? this.findRandomUnassignedSeatByMode(initialMode)
-        : this.findUnassignedSeatByMode(initialMode);
+        ? this.findRandomUnassignedSeatByMode(initialMode, projectKey)
+        : this.findUnassignedSeatByMode(initialMode, projectKey);
     }
 
     let ch: Character;
@@ -1165,9 +1289,12 @@ export class OfficeState {
       }
 
       // Temporarily unblock own seat so character can pathfind to it
-      const wanderTiles = ch.isActive ? this.walkableTiles : this.idleWalkableTiles;
+      const wanderTiles = ch.isActive
+        ? this.walkableTiles
+        : this.getIdleWalkableTilesForCharacter(ch);
+      const updateSeats = this.getUpdateSeatsForCharacter(ch);
       this.withOwnSeatUnblocked(ch, () =>
-        updateCharacter(ch, dt, wanderTiles, this.seats, this.tileMap, this.blockedTiles),
+        updateCharacter(ch, dt, wanderTiles, updateSeats, this.tileMap, this.blockedTiles),
       );
       this.nudgeInactiveStandingOffSeats(ch);
 
