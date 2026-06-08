@@ -1,0 +1,250 @@
+import {
+  PROJECT_ROOM_ID_MAX_LENGTH,
+  PROJECT_ROOM_LABEL_MAX_LENGTH,
+  PROJECT_ROOM_PROJECT_KEY_MAX_LENGTH,
+} from '../constants.js';
+import type {
+  Character,
+  OfficeLayout,
+  ProjectIdentitySource as ProjectIdentitySourceType,
+  ProjectRoom,
+  Seat,
+} from './types.js';
+import { ProjectIdentitySource, ProjectRoomKind } from './types.js';
+
+type RoomMode = 'work' | 'rest';
+
+const PROJECT_ROOM_KIND_VALUES = new Set<string>(Object.values(ProjectRoomKind));
+const PROJECT_IDENTITY_SOURCE_VALUES = new Set<string>(Object.values(ProjectIdentitySource));
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function cleanString(value: unknown, maxLength: number): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const cleaned = value.trim().replace(/\0/g, '');
+  if (!cleaned) return undefined;
+  return cleaned.length > maxLength ? cleaned.slice(0, maxLength) : cleaned;
+}
+
+function cleanStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const cleaned = value
+    .map((item) => cleanString(item, PROJECT_ROOM_LABEL_MAX_LENGTH))
+    .filter((item): item is string => Boolean(item));
+  return cleaned.length > 0 ? cleaned : undefined;
+}
+
+function cleanTimestamp(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return undefined;
+  return value;
+}
+
+function clampInt(value: unknown, min: number, max: number): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  return Math.max(min, Math.min(max, Math.floor(value)));
+}
+
+export function normalizeProjectKey(value: string | undefined): string | null {
+  if (!value) return null;
+  const trimmed = value.trim().replace(/\0/g, '');
+  if (!trimmed) return null;
+  const withoutWindowsNamespace = trimmed
+    .replace(/^\\\\\?\\UNC\\/i, '//')
+    .replace(/^\\\\\?\\/i, '');
+  const normalized = withoutWindowsNamespace
+    .replace(/\\/g, '/')
+    .replace(/\/+/g, '/')
+    .replace(/\/$/g, '')
+    .toLocaleLowerCase();
+  return normalized ? normalized.slice(0, PROJECT_ROOM_PROJECT_KEY_MAX_LENGTH) : null;
+}
+
+export function deriveAgentProjectKey(ch: Pick<Character, 'folderName'>): string | null {
+  return normalizeProjectKey(ch.folderName);
+}
+
+function normalizeProjectRoomProject(value: unknown): ProjectRoom['project'] | undefined {
+  if (!isRecord(value)) return undefined;
+  const key = normalizeProjectKey(cleanString(value.key, PROJECT_ROOM_PROJECT_KEY_MAX_LENGTH));
+  const displayName = cleanString(value.displayName, PROJECT_ROOM_LABEL_MAX_LENGTH);
+  if (!key || !displayName) return undefined;
+
+  const rawSource = cleanString(value.source, PROJECT_ROOM_LABEL_MAX_LENGTH);
+  const source =
+    rawSource && PROJECT_IDENTITY_SOURCE_VALUES.has(rawSource)
+      ? (rawSource as ProjectIdentitySourceType)
+      : ProjectIdentitySource.UNKNOWN;
+  const providerIds = cleanStringArray(value.providerIds);
+  const projectDirHash = cleanString(value.projectDirHash, PROJECT_ROOM_PROJECT_KEY_MAX_LENGTH);
+  return {
+    key,
+    displayName,
+    source,
+    ...(providerIds ? { providerIds } : {}),
+    ...(projectDirHash ? { projectDirHash } : {}),
+  };
+}
+
+export function normalizeProjectRoom(layout: OfficeLayout, value: unknown): ProjectRoom | null {
+  if (!isRecord(value) || !isRecord(value.bounds)) return null;
+  if (layout.cols <= 0 || layout.rows <= 0) return null;
+
+  const id = cleanString(value.id, PROJECT_ROOM_ID_MAX_LENGTH);
+  const rawKind = cleanString(value.kind, PROJECT_ROOM_LABEL_MAX_LENGTH);
+  if (!id || !rawKind || !PROJECT_ROOM_KIND_VALUES.has(rawKind)) return null;
+
+  const col = clampInt(value.bounds.col, 0, layout.cols - 1);
+  const row = clampInt(value.bounds.row, 0, layout.rows - 1);
+  const rawWidth = clampInt(value.bounds.width, 1, layout.cols);
+  const rawHeight = clampInt(value.bounds.height, 1, layout.rows);
+  if (col === null || row === null || rawWidth === null || rawHeight === null) return null;
+
+  const width = Math.min(rawWidth, layout.cols - col);
+  const height = Math.min(rawHeight, layout.rows - row);
+  if (width <= 0 || height <= 0) return null;
+
+  const project = normalizeProjectRoomProject(value.project);
+  const label = cleanString(value.label, PROJECT_ROOM_LABEL_MAX_LENGTH);
+  const createdAtMs = cleanTimestamp(value.createdAtMs);
+  const updatedAtMs = cleanTimestamp(value.updatedAtMs);
+
+  return {
+    id,
+    kind: rawKind as ProjectRoom['kind'],
+    bounds: { col, row, width, height },
+    ...(project ? { project } : {}),
+    ...(label ? { label } : {}),
+    ...(value.color ? { color: value.color as ProjectRoom['color'] } : {}),
+    ...(createdAtMs !== undefined ? { createdAtMs } : {}),
+    ...(updatedAtMs !== undefined ? { updatedAtMs } : {}),
+  };
+}
+
+export function normalizeProjectRooms(layout: OfficeLayout): ProjectRoom[] {
+  if (!Array.isArray(layout.projectRooms)) return [];
+  const rooms: ProjectRoom[] = [];
+  const seen = new Set<string>();
+  for (const value of layout.projectRooms) {
+    const room = normalizeProjectRoom(layout, value);
+    if (!room || seen.has(room.id)) continue;
+    seen.add(room.id);
+    rooms.push(room);
+  }
+  return rooms;
+}
+
+export function normalizeProjectRoomsInLayout(layout: OfficeLayout): OfficeLayout {
+  if (!Array.isArray(layout.projectRooms)) return layout;
+  return { ...layout, projectRooms: normalizeProjectRooms(layout) };
+}
+
+export function roomContainsTile(room: ProjectRoom, col: number, row: number): boolean {
+  return (
+    col >= room.bounds.col &&
+    col < room.bounds.col + room.bounds.width &&
+    row >= room.bounds.row &&
+    row < room.bounds.row + room.bounds.height
+  );
+}
+
+export function roomsForTile(layout: OfficeLayout, col: number, row: number): ProjectRoom[] {
+  return normalizeProjectRooms(layout).filter((room) => roomContainsTile(room, col, row));
+}
+
+export function roomsForSeat(
+  layout: OfficeLayout,
+  seat: Pick<Seat, 'seatCol' | 'seatRow'>,
+): ProjectRoom[] {
+  return roomsForTile(layout, seat.seatCol, seat.seatRow);
+}
+
+function hasMatchingProjectRoom(rooms: ProjectRoom[], projectKey: string | null): boolean {
+  if (!projectKey) return false;
+  return rooms.some(
+    (room) =>
+      room.kind === ProjectRoomKind.PROJECT &&
+      normalizeProjectKey(room.project?.key) === projectKey,
+  );
+}
+
+function seatIsInOwnProjectRoom(
+  containingRooms: ProjectRoom[],
+  projectKey: string | null,
+): boolean {
+  if (!projectKey) return false;
+  return containingRooms.some(
+    (room) =>
+      room.kind === ProjectRoomKind.PROJECT &&
+      normalizeProjectKey(room.project?.key) === projectKey,
+  );
+}
+
+function seatIsInKind(containingRooms: ProjectRoom[], kind: ProjectRoom['kind']): boolean {
+  return containingRooms.some((room) => room.kind === kind);
+}
+
+function seatIsInOtherProjectRoom(
+  containingRooms: ProjectRoom[],
+  projectKey: string | null,
+): boolean {
+  return containingRooms.some(
+    (room) =>
+      room.kind === ProjectRoomKind.PROJECT &&
+      (!projectKey || normalizeProjectKey(room.project?.key) !== projectKey),
+  );
+}
+
+export function seatPriorityForProjectKey(
+  layout: OfficeLayout,
+  projectKey: string | null,
+  seat: Pick<Seat, 'seatCol' | 'seatRow'>,
+  mode: RoomMode,
+): number {
+  const rooms = normalizeProjectRooms(layout);
+  if (rooms.length === 0) return 0;
+
+  const containingRooms = roomsForSeat({ ...layout, projectRooms: rooms }, seat);
+  const hasOwnProjectRoom = hasMatchingProjectRoom(rooms, projectKey);
+  const inOwnProject = seatIsInOwnProjectRoom(containingRooms, projectKey);
+  const inUnassigned = seatIsInKind(containingRooms, ProjectRoomKind.UNASSIGNED);
+  const inPublicRest =
+    seatIsInKind(containingRooms, ProjectRoomKind.PUBLIC) ||
+    seatIsInKind(containingRooms, ProjectRoomKind.REST);
+  const inMeeting = seatIsInKind(containingRooms, ProjectRoomKind.MEETING);
+  const inOtherProject = seatIsInOtherProjectRoom(containingRooms, projectKey);
+
+  if (mode === 'work') {
+    if (hasOwnProjectRoom) {
+      if (inOwnProject) return 0;
+      if (inUnassigned) return 1;
+      if (!inOtherProject) return 2;
+      return 3;
+    }
+    if (inUnassigned) return 0;
+    if (!inOtherProject) return 1;
+    return 2;
+  }
+
+  if (hasOwnProjectRoom) {
+    if (inOwnProject) return 0;
+    if (inPublicRest) return 1;
+    if (inUnassigned) return 2;
+    if (inMeeting || !inOtherProject) return 3;
+    return 4;
+  }
+  if (inUnassigned) return 0;
+  if (inPublicRest) return 1;
+  if (inMeeting || !inOtherProject) return 2;
+  return 3;
+}
+
+export function seatPriorityForAgent(
+  layout: OfficeLayout,
+  ch: Pick<Character, 'folderName'>,
+  seat: Pick<Seat, 'seatCol' | 'seatRow'>,
+  mode: RoomMode,
+): number {
+  return seatPriorityForProjectKey(layout, deriveAgentProjectKey(ch), seat, mode);
+}

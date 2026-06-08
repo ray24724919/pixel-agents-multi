@@ -121,6 +121,51 @@ export interface PlacedFurniture {
   color?: ColorValue;
 }
 
+export const ProjectRoomKind = {
+  PROJECT: 'project',
+  PUBLIC: 'public',
+  REST: 'rest',
+  MEETING: 'meeting',
+  UNASSIGNED: 'unassigned',
+} as const;
+export type ProjectRoomKind = (typeof ProjectRoomKind)[keyof typeof ProjectRoomKind];
+
+export const ProjectIdentitySource = {
+  PROJECT_DIR: 'projectDir',
+  PROJECT_NAME: 'projectName',
+  FOLDER_NAME: 'folderName',
+  CWD_HASH: 'cwdHash',
+  UNKNOWN: 'unknown',
+} as const;
+export type ProjectIdentitySource =
+  (typeof ProjectIdentitySource)[keyof typeof ProjectIdentitySource];
+
+export interface ProjectRoomBounds {
+  col: number;
+  row: number;
+  width: number;
+  height: number;
+}
+
+export interface ProjectRoomProjectKey {
+  key: string;
+  displayName: string;
+  source: ProjectIdentitySource;
+  providerIds?: string[];
+  projectDirHash?: string;
+}
+
+export interface ProjectRoom {
+  id: string;
+  kind: ProjectRoomKind;
+  bounds: ProjectRoomBounds;
+  project?: ProjectRoomProjectKey;
+  label?: string;
+  color?: ColorValue;
+  createdAtMs?: number;
+  updatedAtMs?: number;
+}
+
 export interface OfficeLayout {
   version: 1;
   cols: number;
@@ -131,6 +176,8 @@ export interface OfficeLayout {
   tileColors?: Array<ColorValue | null>;
   /** Per-tile zone override. null/undefined falls back to default split. */
   zones?: Array<ZoneType | null>;
+  /** Optional room metadata used to scope project-aware seating and future doorplates. */
+  projectRooms?: ProjectRoom[];
   /** Bumped when the bundled default layout changes; forces a reset on existing installs */
   layoutRevision?: number;
 }

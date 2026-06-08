@@ -1,6 +1,7 @@
 import type { ColorValue } from '../../components/ui/types.js';
 import { AUTO_ON_FACING_DEPTH, AUTO_ON_SIDE_DEPTH } from '../../constants.js';
 import { getColorizedSprite } from '../colorize.js';
+import { normalizeProjectRoomsInLayout } from '../projectRooms.js';
 import type {
   FurnitureInstance,
   OfficeLayout,
@@ -496,7 +497,10 @@ function migrateLayout(layout: OfficeLayout): OfficeLayout {
 
 function normalizeLayoutZones(layout: OfficeLayout): OfficeLayout {
   if (layout.zones && layout.zones.length === layout.tiles.length) {
-    return layout;
+    return normalizeProjectRoomsInLayout(layout);
   }
-  return { ...layout, zones: new Array(layout.tiles.length).fill(null) };
+  return normalizeProjectRoomsInLayout({
+    ...layout,
+    zones: new Array(layout.tiles.length).fill(null),
+  });
 }
