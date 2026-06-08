@@ -45,7 +45,7 @@ Pixel Agents Multi 會把本地 AI coding session 變成一個可以看、可以
 - **讓工作狀態看得見**：工作的 agent 會使用電腦桌，閒置 agent 會離開工作位，refresh 後也會重新分配位置以減少重疊。
 - **顯示即時狀態**：角色會依照 writing、reading、shell command、task delegation、permission prompt、waiting for input 等狀態改變動畫。
 - **追蹤 provider 與 project**：overlay 與 Agent Center 會顯示 project、provider、thread/session name 與狀態。
-- **Usage intelligence**：在 canvas 外顯示 token total、exact/estimated 標籤、provider/project/session 群組與 proxy cost 脈絡。
+- **Usage intelligence**：在 canvas 外用 Overview / Live / History dashboard 顯示 token total、exact/estimated 標籤、provider/project/session 群組、quota signal 與 proxy cost 脈絡。
 - **Timeline history**：本地 timeline 會記錄 agent turn、tool event、handoff action、executor launch、report open 與 completion refresh。
 - **把歷史轉成 handoff**：從 timeline/replay 建立 reviewed handoff artifact，再派生成 executor 可執行的 work package。
 - **Handoff queue**：追蹤 draft、reviewed、stale、dispatched、active、blocked、report-ready、completed 等工作包狀態。
@@ -85,7 +85,9 @@ Usage 是作為營運與監督用 telemetry，不是帳單真相。
 
 - 當本地 metadata 有提供時，會顯示 Codex 與 Claude token total。
 - exact 與 estimated 數值會分開標示。
+- Overview 會合併 live agent telemetry 與 persisted local history，方便快速看出現在誰在用、今天有什麼變化，以及最近 7 天用量集中在哪裡。
 - provider、project、session 與時間維度摘要可幫助辨識高用量或 stale work。
+- 精簡的 provider/project ranking、trend bar、reliability cue 與 quota/rate-limit warning 用來輔助監督本地工作，不把 Usage page 假裝成帳務系統。
 - 在資料足夠時，可估計 cache、reasoning 與 artifact usage。
 - cost 顯示只是 proxy estimate，不是 OpenAI、Anthropic 或訂閱帳單。
 
