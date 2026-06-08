@@ -1,6 +1,7 @@
 import {
   SEAT_REST_MAX_SEC,
   SEAT_REST_MIN_SEC,
+  SUPERVISION_TOOL_NAME,
   TYPE_FRAME_DURATION_SEC,
   WALK_FRAME_DURATION_SEC,
   WALK_SPEED_PX_PER_SEC,
@@ -15,7 +16,14 @@ import type { Character, Seat, SpriteData, TileType as TileTypeVal } from '../ty
 import { CharacterState, Direction, TILE_SIZE } from '../types.js';
 
 /** Tools that show reading animation instead of typing */
-const READING_TOOLS = new Set(['Read', 'Grep', 'Glob', 'WebFetch', 'WebSearch']);
+const READING_TOOLS = new Set([
+  'Read',
+  'Grep',
+  'Glob',
+  'WebFetch',
+  'WebSearch',
+  SUPERVISION_TOOL_NAME,
+]);
 
 /** @internal */
 export function isReadingTool(tool: string | null): boolean {

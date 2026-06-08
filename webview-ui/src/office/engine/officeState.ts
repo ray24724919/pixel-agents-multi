@@ -10,6 +10,7 @@ import {
   HUE_SHIFT_RANGE_DEG,
   SEAT_REST_MAX_SEC,
   SEAT_REST_MIN_SEC,
+  SUPERVISION_TOOL_NAME,
   WAITING_BUBBLE_DURATION_SEC,
 } from '../../constants.js';
 import { getAnimationFrames, getCatalogEntry, getOnStateType } from '../layout/furnitureCatalog.js';
@@ -859,7 +860,7 @@ export class OfficeState {
     if (!active && !ch.isSubagent && ch.delegation?.isActive) {
       ch.isActive = true;
       ch.delegationDrivesActive = true;
-      ch.currentTool = ch.currentTool ?? 'Delegation';
+      ch.currentTool = ch.currentTool ?? SUPERVISION_TOOL_NAME;
       ch.seatTimer = 0;
       this.repairSeatingAssignments('active');
       return;
@@ -908,13 +909,13 @@ export class OfficeState {
         ch.delegationDrivesActive = true;
       }
       ch.isActive = true;
-      ch.currentTool = ch.currentTool ?? 'Delegation';
+      ch.currentTool = ch.currentTool ?? SUPERVISION_TOOL_NAME;
       ch.seatTimer = 0;
       this.repairSeatingAssignments('active');
       return;
     }
 
-    if (ch.currentTool === 'Delegation') {
+    if (ch.currentTool === SUPERVISION_TOOL_NAME) {
       ch.currentTool = null;
     }
     ch.delegationDrivesActive = false;
