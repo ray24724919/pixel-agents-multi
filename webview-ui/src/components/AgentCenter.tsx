@@ -69,6 +69,7 @@ import {
   buildUpdateHandoffArtifactStatusMessage,
   buildUpdateHandoffDispatchStatusMessage,
   buildUpdateHandoffExecutionStatusMessage,
+  buildWorkQueueRowDecisionModel,
   canCreateHandoffDispatchPrompt,
   canCreateHandoffWorkPackage,
   canLinkHandoffExecutionAgent,
@@ -98,6 +99,7 @@ import {
   handoffWorkPackageStatusLabel,
   initialHandoffArtifactLibraryState,
   shouldRefreshHandoffArtifactsForMessage,
+  type WorkQueueRowDecisionModel,
 } from './handoffArtifactLibraryModel.js';
 import {
   buildHandoffDraftPageModel,
@@ -3192,7 +3194,7 @@ function HandoffArtifactLibraryPanel({
               ) : (
                 <div className="grid gap-2">
                   {queueItems.map((item) => {
-                    const executorState = buildHandoffExecutorStateModel(item, agents);
+                    const decision = buildWorkQueueRowDecisionModel(item, agents);
                     return (
                       <div
                         key={`queue-${item.relativePath}`}
@@ -3206,24 +3208,18 @@ function HandoffArtifactLibraryPanel({
                             </span>
                             <span
                               className={`border bg-bg px-2 py-1 text-xs uppercase tracking-wide ${handoffExecutorStateToneClass(
-                                executorState.tone,
+                                decision.stageTone,
                               )}`}
                             >
-                              {executorState.label}
+                              {decision.stageLabel}
                             </span>
-                            {item.review && (
+                            {decision.warningCount > 0 && (
                               <span className="border border-accent bg-bg px-2 py-1 text-xs uppercase tracking-wide text-accent-bright">
-                                {item.review.statusLabel}
+                                {decision.warningLabel}
                               </span>
                             )}
                           </div>
-                          <HandoffExecutorStateCue state={executorState} compact />
-                          <HandoffReviewCues item={item} />
-                          {item.completion && (
-                            <div className="mt-1 break-words text-xs text-text-muted">
-                              {item.completion.statusLabel}
-                            </div>
-                          )}
+                          <WorkQueueDecisionStrip decision={decision} />
                           <div className="mt-1 truncate font-mono text-xs text-text-muted">
                             {item.review?.branchName ?? item.dispatchPackage?.branchName}
                           </div>
@@ -3241,6 +3237,8 @@ function HandoffArtifactLibraryPanel({
                           workPackageStatus={workPackageStatus}
                           workPackageBusy={workPackageBusy}
                           executionBusy={executionBusy}
+                          decision={decision}
+                          mode="workQueue"
                           onOpen={onOpen}
                           onUpdateStatus={onUpdateStatus}
                           onCopyDispatchPrompt={onCopyDispatchPrompt}
@@ -3435,6 +3433,8 @@ type HandoffRowActionsProps = {
   agents: AgentSummary[];
   item: HandoffArtifactLibraryItem;
   selectedAgentId: number | undefined;
+  mode?: 'library' | 'workQueue';
+  decision?: WorkQueueRowDecisionModel;
   openStatus: HandoffOpenStatus;
   statusUpdateStatus: HandoffStatusUpdateStatus;
   dispatchPromptStatus: HandoffDispatchPromptStatus;
@@ -3469,6 +3469,8 @@ function HandoffRowActions({
   agents,
   item,
   selectedAgentId,
+  mode = 'library',
+  decision,
   openStatus,
   statusUpdateStatus,
   dispatchPromptStatus,
@@ -3508,6 +3510,262 @@ function HandoffRowActions({
   const executionStatusActions = item.dispatchPackage ? handoffExecutionStatusActions(item) : [];
   const currentDispatchStatus = item.dispatchPackage?.status;
   const currentExecutionStatus = item.dispatchPackage?.execution?.status ?? 'unknown';
+
+  if (mode === 'workQueue' && decision) {
+    const renderPrimaryAction = (): ReactNode => {
+      if (decision.primaryActionKind === 'create_work_package') {
+        return (
+          <Button
+            variant={createWorkPackageDisabled ? 'disabled' : 'default'}
+            size="sm"
+            disabled={createWorkPackageDisabled}
+            onClick={() => onCreateWorkPackage(item)}
+          >
+            Create work package
+          </Button>
+        );
+      }
+      if (decision.primaryActionKind === 'launch_executor') {
+        return (
+          <>
+            <Button
+              variant={launchDisabled ? 'disabled' : 'default'}
+              size="sm"
+              disabled={launchDisabled}
+              onClick={() => onLaunchExecutor(item, 'codex')}
+            >
+              Launch Codex
+            </Button>
+            <Button
+              variant={launchDisabled ? 'disabled' : 'default'}
+              size="sm"
+              disabled={launchDisabled}
+              onClick={() => onLaunchExecutor(item, 'claude')}
+            >
+              Launch Claude
+            </Button>
+          </>
+        );
+      }
+      if (decision.primaryActionKind === 'inspect_terminal') {
+        return (
+          <Button
+            variant={decision.primaryActionDisabled ? 'disabled' : 'default'}
+            size="sm"
+            disabled={decision.primaryActionDisabled}
+            onClick={() => {
+              if (decision.linkedAgentId !== undefined) {
+                vscode.postMessage({ type: 'focusAgent', id: decision.linkedAgentId });
+              }
+            }}
+          >
+            Inspect terminal
+          </Button>
+        );
+      }
+      if (decision.primaryActionKind === 'refresh_completion') {
+        return (
+          <Button
+            variant={refreshCompletionDisabled ? 'disabled' : 'default'}
+            size="sm"
+            disabled={refreshCompletionDisabled}
+            onClick={() => onRefreshCompletion(item)}
+          >
+            Refresh report status
+          </Button>
+        );
+      }
+      if (decision.primaryActionKind === 'open_report') {
+        return (
+          <Button
+            variant={openReportDisabled ? 'disabled' : 'default'}
+            size="sm"
+            disabled={openReportDisabled}
+            onClick={() => onOpenReport(item)}
+          >
+            Open executor report
+          </Button>
+        );
+      }
+      if (decision.primaryActionKind === 'mark_reviewed') {
+        const disabled =
+          statusUpdateStatus === 'updating' ||
+          markReviewedAction === undefined ||
+          markReviewedAction.disabled;
+        return (
+          <Button
+            variant={disabled ? 'disabled' : 'default'}
+            size="sm"
+            disabled={disabled}
+            onClick={() => {
+              if (markReviewedAction) onUpdateStatus(item, markReviewedAction.nextStatus);
+            }}
+          >
+            Mark reviewed
+          </Button>
+        );
+      }
+      return (
+        <Button variant="disabled" size="sm" disabled>
+          {decision.primaryActionLabel}
+        </Button>
+      );
+    };
+
+    return (
+      <div className="grid min-w-0 gap-2 md:justify-items-end">
+        <HandoffActionGroup label="Next step" tone="primary">
+          {renderPrimaryAction()}
+          <span className="min-w-0 break-words text-xs text-text-muted">
+            {decision.primaryActionDetail}
+          </span>
+        </HandoffActionGroup>
+        <HandoffActionGroup label="Reference" tone="secondary">
+          <Button
+            variant={openStatus === 'opening' ? 'disabled' : 'ghost'}
+            size="sm"
+            disabled={openStatus === 'opening'}
+            onClick={() => onOpen(item)}
+          >
+            Open handoff
+          </Button>
+          <Button
+            variant={openWorkPackageDisabled ? 'disabled' : 'ghost'}
+            size="sm"
+            disabled={openWorkPackageDisabled}
+            onClick={() => onOpenWorkPackage(item)}
+          >
+            Open work package
+          </Button>
+          <Button
+            variant={dispatchPromptDisabled ? 'disabled' : 'ghost'}
+            size="sm"
+            disabled={dispatchPromptDisabled}
+            onClick={() => onCopyDispatchPrompt(item)}
+          >
+            Copy handoff prompt
+          </Button>
+          <Button
+            variant={workPackagePromptDisabled ? 'disabled' : 'ghost'}
+            size="sm"
+            disabled={workPackagePromptDisabled}
+            onClick={() => onCopyWorkPackagePrompt(item)}
+          >
+            Copy work-package prompt
+          </Button>
+        </HandoffActionGroup>
+        <HandoffActionGroup label="Executor" tone="secondary">
+          {decision.primaryActionKind !== 'launch_executor' && (
+            <>
+              <Button
+                variant={launchDisabled ? 'disabled' : 'ghost'}
+                size="sm"
+                disabled={launchDisabled}
+                onClick={() => onLaunchExecutor(item, 'codex')}
+              >
+                Launch Codex
+              </Button>
+              <Button
+                variant={launchDisabled ? 'disabled' : 'ghost'}
+                size="sm"
+                disabled={launchDisabled}
+                onClick={() => onLaunchExecutor(item, 'claude')}
+              >
+                Launch Claude
+              </Button>
+            </>
+          )}
+          {decision.primaryActionKind !== 'refresh_completion' && (
+            <Button
+              variant={refreshCompletionDisabled ? 'disabled' : 'ghost'}
+              size="sm"
+              disabled={refreshCompletionDisabled}
+              onClick={() => onRefreshCompletion(item)}
+            >
+              Refresh report status
+            </Button>
+          )}
+          {decision.primaryActionKind !== 'open_report' && (
+            <Button
+              variant={openReportDisabled ? 'disabled' : 'ghost'}
+              size="sm"
+              disabled={openReportDisabled}
+              onClick={() => onOpenReport(item)}
+            >
+              Open executor report
+            </Button>
+          )}
+          <div className="flex min-w-[220px] flex-wrap items-center justify-end gap-2">
+            <select
+              className="h-8 max-w-[220px] border border-border bg-bg px-2 text-xs text-text outline-none focus:border-accent"
+              value={String(selectedAgentId ?? '')}
+              disabled={agents.length === 0 || executionBusy}
+              onChange={(event) => {
+                const agentId = Number.parseInt(event.currentTarget.value, 10);
+                if (Number.isFinite(agentId)) onSelectExecutionAgent(item, agentId);
+              }}
+            >
+              {agents.length === 0 ? (
+                <option value="">No visible agents</option>
+              ) : (
+                agents.map((agent) => (
+                  <option key={agent.id} value={agent.id}>
+                    {handoffAgentOptionLabel(agent)}
+                  </option>
+                ))
+              )}
+            </select>
+            <Button
+              variant={linkAgentDisabled ? 'disabled' : 'ghost'}
+              size="sm"
+              disabled={linkAgentDisabled}
+              onClick={() => {
+                if (selectedAgentId !== undefined) onLinkExecutionAgent(item, selectedAgentId);
+              }}
+            >
+              Link agent
+            </Button>
+          </div>
+        </HandoffActionGroup>
+        <HandoffActionGroup label="Maintenance" tone="quiet">
+          {maintenanceArtifactActions.map((action) => {
+            const disabled = action.disabled || statusUpdateStatus === 'updating';
+            return (
+              <Button
+                key={`artifact-${action.nextStatus}`}
+                variant={disabled ? 'disabled' : 'ghost'}
+                size="sm"
+                disabled={disabled}
+                onClick={() => onUpdateStatus(item, action.nextStatus)}
+              >
+                {action.label}
+              </Button>
+            );
+          })}
+          {currentDispatchStatus && (
+            <HandoffStatusSelect
+              label="Dispatch"
+              value={currentDispatchStatus}
+              actions={dispatchStatusActions}
+              disabled={workPackageBusy}
+              selectedLabel={item.dispatchPackage?.statusLabel ?? 'No dispatch status'}
+              ariaLabel={`Set dispatch status for ${item.displayTitle}`}
+              onChange={(nextStatus) => onUpdateDispatchStatus(item, nextStatus)}
+            />
+          )}
+          <HandoffStatusSelect
+            label="Execution"
+            value={currentExecutionStatus}
+            actions={executionStatusActions}
+            disabled={executionBusy}
+            selectedLabel={item.dispatchPackage?.execution?.statusLabel ?? 'No linked execution'}
+            ariaLabel={`Set execution status for ${item.displayTitle}`}
+            onChange={(nextStatus) => onUpdateExecutionStatus(item, nextStatus)}
+          />
+        </HandoffActionGroup>
+      </div>
+    );
+  }
 
   return (
     <div className="grid min-w-0 gap-2 md:justify-items-end">
@@ -4089,6 +4347,57 @@ function handoffExecutionDetailLabel(
   ]
     .filter(Boolean)
     .join(' / ');
+}
+
+function WorkQueueDecisionStrip({ decision }: { decision: WorkQueueRowDecisionModel }) {
+  return (
+    <div className="mt-2 grid gap-2 border border-border bg-bg p-2">
+      <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <span
+              className={`shrink-0 border px-2 py-1 text-xs uppercase tracking-wide ${handoffExecutorStateToneClass(
+                decision.stageTone,
+              )}`}
+            >
+              {decision.stageLabel}
+            </span>
+            <span className="break-words text-xs text-text-muted">{decision.evidenceLine}</span>
+          </div>
+          <div className="mt-1 break-words text-xs text-text-muted">
+            Next:{' '}
+            <span
+              className={decision.primaryActionDisabled ? 'text-text-muted' : 'text-accent-bright'}
+            >
+              {decision.primaryActionLabel}
+            </span>
+            <span> / {decision.primaryActionDetail}</span>
+          </div>
+        </div>
+        <span
+          className={`shrink-0 border bg-btn-bg px-2 py-1 text-xs uppercase tracking-wide ${
+            decision.warningCount > 0
+              ? 'border-status-permission text-status-permission'
+              : 'border-border text-text-muted'
+          }`}
+        >
+          {decision.warningLabel}
+        </span>
+      </div>
+      <div className="flex min-w-0 flex-wrap gap-1">
+        {decision.detailRows.map((row) => (
+          <span
+            key={`${row.label}:${row.value}`}
+            className="shrink-0 border border-border bg-btn-bg px-2 py-1 text-xs uppercase tracking-wide text-text-muted"
+            title={`${row.label}: ${row.value}`}
+          >
+            {row.label}: {row.value}
+          </span>
+        ))}
+      </div>
+      <div className="break-words text-xs text-text-muted">{decision.secondarySummary}</div>
+    </div>
+  );
 }
 
 function HandoffExecutorStateCue({

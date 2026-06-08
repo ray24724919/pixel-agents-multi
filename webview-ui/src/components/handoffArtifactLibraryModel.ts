@@ -413,6 +413,39 @@ export interface HandoffMergeReadiness {
   canCopyChecklist: boolean;
 }
 
+export type WorkQueueRowPrimaryActionKind =
+  | 'create_work_package'
+  | 'launch_executor'
+  | 'inspect_terminal'
+  | 'refresh_completion'
+  | 'open_report'
+  | 'mark_reviewed'
+  | 'wait_for_report'
+  | 'none';
+
+export interface WorkQueueRowDecisionDetail {
+  label: string;
+  value: string;
+}
+
+export interface WorkQueueRowDecisionModel {
+  stageLabel: string;
+  stageTone: HandoffExecutorStateTone;
+  queueGroup: Exclude<HandoffQueueGroup, 'all'>;
+  evidenceLine: string;
+  warningCount: number;
+  warningLabel: string;
+  primaryActionLabel: string;
+  primaryActionKind: WorkQueueRowPrimaryActionKind;
+  primaryActionDisabled: boolean;
+  primaryActionDetail: string;
+  secondarySummary: string;
+  detailRows: WorkQueueRowDecisionDetail[];
+  providerLabel?: string;
+  executorLabel?: string;
+  linkedAgentId?: number;
+}
+
 export type HandoffChecklistCopyKind = 'merge' | 'review' | 'blocker' | 'status' | 'closeout';
 
 export interface HandoffChecklistCopyModel {
@@ -1489,6 +1522,194 @@ export function buildHandoffMergeReadiness(
     detail: 'Merge readiness is unclear from local signals.',
     recommendedStep: 'Refresh report status and inspect the report if it exists.',
   };
+}
+
+export function buildWorkQueueRowDecisionModel(
+  item: Pick<
+    HandoffArtifactLibraryItem,
+    | 'artifactId'
+    | 'completion'
+    | 'dispatchPackage'
+    | 'displayTitle'
+    | 'metadataRelativePath'
+    | 'relativePath'
+    | 'review'
+    | 'status'
+  >,
+  agents: readonly HandoffExecutorAgentSnapshot[] = [],
+): WorkQueueRowDecisionModel {
+  const executorState = buildHandoffExecutorStateModel(item, agents);
+  const reviewAction = buildHandoffReviewRecommendedAction(item);
+  const readiness = item.dispatchPackage ? buildHandoffMergeReadiness(item) : undefined;
+  const queueGroup = handoffQueueGroupForItem(item, agents);
+  const warningCount = readiness?.warningCount ?? item.review?.warnings.length ?? 0;
+  const linkedAgentId =
+    executorState.linkedAgentVisible && item.dispatchPackage?.execution?.agentId !== undefined
+      ? item.dispatchPackage.execution.agentId
+      : undefined;
+  const stageLabel = workQueueStageLabel(executorState, readiness);
+  const evidenceLine = workQueueEvidenceLine(executorState, readiness);
+  const primary = workQueuePrimaryAction(executorState, reviewAction, linkedAgentId);
+  const detailRows = workQueueDetailRows(item, executorState, readiness, queueGroup);
+  return {
+    stageLabel,
+    stageTone: executorState.tone,
+    queueGroup,
+    evidenceLine,
+    warningCount,
+    warningLabel:
+      warningCount === 0
+        ? 'No warnings'
+        : warningCount === 1
+          ? '1 warning'
+          : `${warningCount} warnings`,
+    primaryActionLabel: primary.primaryActionLabel,
+    primaryActionKind: primary.primaryActionKind,
+    primaryActionDisabled: primary.primaryActionDisabled,
+    primaryActionDetail: primary.primaryActionDetail,
+    secondarySummary:
+      'Reference, executor, and maintenance controls stay available below the primary next step.',
+    detailRows,
+    ...(executorState.providerLabel ? { providerLabel: executorState.providerLabel } : {}),
+    ...(executorState.agentLabel ? { executorLabel: executorState.agentLabel } : {}),
+    ...(linkedAgentId !== undefined ? { linkedAgentId } : {}),
+  };
+}
+
+function workQueueStageLabel(
+  executorState: HandoffExecutorStateModel,
+  readiness: HandoffMergeReadiness | undefined,
+): string {
+  if (readiness?.status === 'already_merged') return 'Done / merged';
+  if (readiness?.status === 'ready_to_inspect') return 'Ready to inspect';
+  if (readiness?.status === 'needs_review') return 'Needs review';
+  if (readiness?.status === 'needs_report') return 'Needs report';
+  if (readiness?.status === 'blocked') return 'Blocked';
+  return executorState.label;
+}
+
+function workQueueEvidenceLine(
+  executorState: HandoffExecutorStateModel,
+  readiness: HandoffMergeReadiness | undefined,
+): string {
+  const readinessHasDecision =
+    readiness !== undefined && readiness.status !== 'unknown' && readiness.status !== 'active';
+  const parts = [
+    safeDisplayStringValue(readinessHasDecision ? readiness?.detail : executorState.detail),
+    readiness?.validationStatus,
+    readiness?.branchStatus,
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join(' / ') : 'Local queue evidence is unavailable.';
+}
+
+function workQueuePrimaryAction(
+  executorState: HandoffExecutorStateModel,
+  reviewAction: HandoffReviewRecommendedAction,
+  linkedAgentId: number | undefined,
+): Pick<
+  WorkQueueRowDecisionModel,
+  'primaryActionDetail' | 'primaryActionDisabled' | 'primaryActionKind' | 'primaryActionLabel'
+> {
+  if (reviewAction.kind === 'mark_reviewed') {
+    return {
+      primaryActionKind: 'mark_reviewed',
+      primaryActionLabel: reviewAction.label,
+      primaryActionDisabled: reviewAction.disabled,
+      primaryActionDetail: reviewAction.detail,
+    };
+  }
+  if (reviewAction.kind === 'open_report' && !reviewAction.disabled) {
+    return {
+      primaryActionKind: 'open_report',
+      primaryActionLabel: reviewAction.label,
+      primaryActionDisabled: false,
+      primaryActionDetail: reviewAction.detail,
+    };
+  }
+  if (executorState.nextActionKind === 'launch') {
+    return {
+      primaryActionKind: 'launch_executor',
+      primaryActionLabel: 'Launch executor',
+      primaryActionDisabled: false,
+      primaryActionDetail: 'Choose Codex or Claude to start the work package.',
+    };
+  }
+  if (executorState.nextActionKind === 'create_work_package') {
+    return {
+      primaryActionKind: 'create_work_package',
+      primaryActionLabel: 'Create work package',
+      primaryActionDisabled: reviewAction.disabled,
+      primaryActionDetail: reviewAction.detail,
+    };
+  }
+  if (executorState.nextActionKind === 'open_report') {
+    return {
+      primaryActionKind: 'open_report',
+      primaryActionLabel: 'Open executor report',
+      primaryActionDisabled: !executorState.canOpenReport,
+      primaryActionDetail: executorState.detail,
+    };
+  }
+  if (executorState.nextActionKind === 'inspect_terminal') {
+    return {
+      primaryActionKind: 'inspect_terminal',
+      primaryActionLabel: 'Inspect terminal',
+      primaryActionDisabled: linkedAgentId === undefined,
+      primaryActionDetail:
+        linkedAgentId === undefined
+          ? 'No visible linked executor is available to focus.'
+          : executorState.detail,
+    };
+  }
+  if (executorState.nextActionKind === 'refresh_completion') {
+    return {
+      primaryActionKind: 'refresh_completion',
+      primaryActionLabel: 'Refresh report status',
+      primaryActionDisabled: !executorState.canRefreshCompletion,
+      primaryActionDetail: executorState.detail,
+    };
+  }
+  if (reviewAction.kind === 'wait_for_report') {
+    return {
+      primaryActionKind: 'wait_for_report',
+      primaryActionLabel: reviewAction.label,
+      primaryActionDisabled: true,
+      primaryActionDetail: reviewAction.detail,
+    };
+  }
+  return {
+    primaryActionKind: 'none',
+    primaryActionLabel: executorState.recommendedAction,
+    primaryActionDisabled: true,
+    primaryActionDetail: executorState.detail,
+  };
+}
+
+function workQueueDetailRows(
+  item: Pick<HandoffArtifactLibraryItem, 'completion' | 'dispatchPackage' | 'review'>,
+  executorState: HandoffExecutorStateModel,
+  readiness: HandoffMergeReadiness | undefined,
+  queueGroup: Exclude<HandoffQueueGroup, 'all'>,
+): WorkQueueRowDecisionDetail[] {
+  const rows: WorkQueueRowDecisionDetail[] = [
+    { label: 'Group', value: handoffQueueGroupLabel(queueGroup) },
+    { label: 'Executor', value: executorState.providerLabel ?? 'Not linked' },
+  ];
+  if (executorState.agentLabel) rows.push({ label: 'Agent', value: executorState.agentLabel });
+  const branch = safeDisplayStringValue(
+    item.review?.branchName ?? item.dispatchPackage?.branchName,
+  );
+  if (branch) rows.push({ label: 'Branch', value: branch });
+  const report =
+    readiness?.reportStatus ??
+    safeDisplayStringValue(item.completion?.statusLabel) ??
+    (item.dispatchPackage ? 'Report status not loaded' : 'No work package');
+  rows.push({ label: 'Report', value: report });
+  if (readiness) {
+    rows.push({ label: 'Validation', value: readiness.validationStatus });
+    rows.push({ label: 'Warnings', value: `${readiness.warningCount}` });
+  }
+  return rows;
 }
 
 export function buildHandoffManualMergeChecklist(
