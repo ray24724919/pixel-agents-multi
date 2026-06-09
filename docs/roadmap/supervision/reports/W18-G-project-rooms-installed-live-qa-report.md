@@ -2,29 +2,40 @@
 
 ## Summary
 
-W18-G performed installed VS Code UI QA for Project Rooms using the packaged `raychen.pixel-agents-multi` extension. This was real VS Code webview/canvas inspection through desktop automation against the installed extension, not source review only.
+W18-G performed installed VS Code UI QA for Project Rooms using the packaged
+`raychen.pixel-agents-multi` extension. This was real VS Code webview/canvas inspection through
+desktop automation against the installed extension, not source review only.
 
-No product code changes were required. The committed change is this QA report.
+Supervisor follow-up after user review identified a generated-room workstation template bug: Auto
+rooms could choose a coffee table as the work desk and pair it with a back-facing PC asset. The
+follow-up fix now prefers a real front-oriented workstation desk and matching front/off electronics
+for generated front-facing workstations.
 
 ## Branch And Commit
 
 - Branch: `product/w18-g-project-rooms-installed-live-qa`
 - Base commit: `2adb78a Merge W18-F: project rooms live QA report`
-- W18-G commit: assigned by the final report commit
+- Initial W18-G report commit: `c89a49d test: run project rooms installed live qa`
+- Supervisor follow-up fix commit: recorded by the final W18-G supervisor commit on this branch.
 
 ## Files Changed
 
 - `docs/roadmap/supervision/reports/W18-G-project-rooms-installed-live-qa-report.md`
+- `webview-ui/src/office/projectRoomGeneration.ts`
+- `webview-ui/test/project-room-generation.test.ts`
 
 ## Package / Install / Identity
 
 - `npm run build`: passed.
 - `npx vsce package`: passed.
   - VSIX: `pixel-agents-multi-1.3.0.vsix`
-  - Package summary: 188 files, 728.65 KB.
+  - Initial package summary: 188 files, 728.65 KB.
+  - Supervisor follow-up package summary after workstation orientation fix: 188 files, 728.82 KB.
 - `code --install-extension pixel-agents-multi-1.3.0.vsix --force`: passed.
+  - Re-run after supervisor follow-up fix: passed.
 - `npm run verify:installed`: passed.
   - Installed extension verified: `raychen.pixel-agents-multi@1.3.0`.
+  - Re-run after supervisor follow-up fix: passed.
 - `code --list-extensions --show-versions | rg "raychen\.pixel-agents-multi|pixel-agents"`:
   - Found `raychen.pixel-agents-multi@1.3.0`.
   - No public/old Pixel Agents extension was listed by this filter.
@@ -87,6 +98,11 @@ Evidence screenshots:
 - Running Auto rooms a second time did not duplicate the generated project rooms.
 - Save + VS Code reload preserved the generated `projectRooms` metadata and generated room content.
 
+Supervisor follow-up note: after user review, the generated workstation template was found to be too
+loose in source. With the real asset catalog, it could generate `COFFEE_TABLE + PC_BACK` as the work
+setup. The source fix now makes generated rooms prefer `DESK_FRONT + PC_FRONT_OFF` when those assets
+are available.
+
 ## Seating Truthfulness Observations
 
 - Existing active top-level agents in the default office were visually seated at valid workstation areas.
@@ -120,17 +136,23 @@ Process note: the initial backup of the user layout was taken after Project Room
 
 ## Fixes Made
 
-None. No source code or product behavior changes were needed.
+- Hardened generated-room workstation asset selection so Auto rooms prefers a real front-oriented
+  desk over coffee/rest tables.
+- Matched generated desk electronics to the selected desk orientation and preferred off/static
+  electronics over animated/on variants.
+- Added a focused regression test proving the generator does not pick `COFFEE_TABLE` or `PC_BACK`
+  when `DESK_FRONT` and `PC_FRONT_OFF` are available.
 
 ## Validation
 
 - `git diff --check`: passed.
-- `npm run test:webview`: 208 passed.
+- Focused `project-room-generation` test: 9 passed.
+- `npm run test:webview`: 209 passed.
 - `npm run test:server`: 284 passed.
 - `npm run build`: passed.
 - `npm run verify:installed`: passed.
 
-Combined automated test count: 492.
+Combined automated test count after supervisor follow-up fix: 493.
 
 ## Remaining Risks
 
