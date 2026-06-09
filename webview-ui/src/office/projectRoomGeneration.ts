@@ -95,6 +95,9 @@ interface RoomTemplateAssets {
   restSeat: FurnitureCatalogEntry;
   loungeTable?: FurnitureCatalogEntry;
   loungeDecor?: FurnitureCatalogEntry;
+  /** Distinct floor greenery for the public lobby lounge, so it reads as a varied lounge rather
+   *  than a row of identical plants. Index 0 stays the primary plant for placement stability. */
+  lobbyDecorVariety?: FurnitureCatalogEntry[];
   collaboration?: CollaborationTemplateAssets;
 }
 
@@ -327,6 +330,7 @@ function pickRoomTemplateAssets(): RoomTemplateAssets | null {
   const restSeat = pickRestSeat(entries, workChair) ?? workChair;
   const loungeTable = pickLoungeTable(entries);
   const loungeDecor = pickLoungeDecor(entries);
+  const lobbyDecorVariety = pickLobbyDecorVariety(entries);
   return {
     desk,
     electronics,
@@ -334,8 +338,43 @@ function pickRoomTemplateAssets(): RoomTemplateAssets | null {
     restSeat,
     ...(loungeTable ? { loungeTable } : {}),
     ...(loungeDecor ? { loungeDecor } : {}),
+    ...(lobbyDecorVariety.length > 0 ? { lobbyDecorVariety } : {}),
     ...(pickCollaborationTemplateAssets(entries) ?? {}),
   };
+}
+
+/**
+ * Curated palette of distinct floor greenery for the public lobby lounge. The primary plant (the
+ * same one pickLoungeDecor would choose) stays first so existing placements/uids are stable; the
+ * rest add variety (a second plant, a large plant, a cactus, a pot) for a lusher lounge.
+ */
+function pickLobbyDecorVariety(entries: FurnitureCatalogEntry[]): FurnitureCatalogEntry[] {
+  const floorDecor = entries.filter(
+    (entry) => entry.category === 'decor' && !entry.canPlaceOnWalls,
+  );
+  if (floorDecor.length === 0) return [];
+  const ordered: FurnitureCatalogEntry[] = [];
+  const seenTypes = new Set<string>();
+  const push = (entry: FurnitureCatalogEntry | undefined): void => {
+    if (!entry || seenTypes.has(entry.type)) return;
+    seenTypes.add(entry.type);
+    ordered.push(entry);
+  };
+  push(pickLoungeDecor(entries));
+  const scored = floorDecor
+    .map((entry) => ({ entry, score: lobbyDecorVarietyScore(entry) }))
+    .sort((a, b) => b.score - a.score);
+  for (const { entry } of scored) push(entry);
+  return ordered;
+}
+
+function lobbyDecorVarietyScore(entry: FurnitureCatalogEntry): number {
+  const text = `${entry.type} ${entry.label}`;
+  if (/large\s*plant/i.test(text)) return 90;
+  if (/plant/i.test(text)) return 80;
+  if (/cactus/i.test(text)) return 60;
+  if (/pot/i.test(text)) return 40;
+  return 20;
 }
 
 function pickRestSeat(
@@ -1595,19 +1634,26 @@ function buildWorkCorridorLobbyLoungeFurniture(
     }
   }
 
-  if (template.loungeDecor) {
+  const decorPalette =
+    template.lobbyDecorVariety && template.lobbyDecorVariety.length > 0
+      ? template.lobbyDecorVariety
+      : template.loungeDecor
+        ? [template.loungeDecor]
+        : [];
+  if (decorPalette.length > 0) {
     const targetDecor = targetLobbyLoungeDecorCount(room);
     for (let decorIndex = 0; decorIndex < targetDecor; decorIndex++) {
+      const decorEntry = decorPalette[decorIndex % decorPalette.length]!;
       const uid =
         decorIndex === 0 ? `${room.id}-lounge-decor` : `${room.id}-lounge-decor-${decorIndex + 1}`;
       const decor = tryPlanLobbyFurniture(
         layout,
         room,
-        template.loungeDecor,
+        decorEntry,
         uid,
         baseFurniture,
         planned,
-        buildCorridorLobbyDecorPreferredPositions(room, template.loungeDecor, decorIndex),
+        buildCorridorLobbyDecorPreferredPositions(room, decorEntry, decorIndex),
       );
       if (decor) planned.push(decor);
     }
