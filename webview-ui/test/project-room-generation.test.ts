@@ -310,7 +310,8 @@ test('public lobby is provisioned as a lounge without duplicating project workst
 
   assert.ok(result.loungeFurnitureAddedCount >= 3);
   assert.equal(furnitureByUid.get(`${lobby.id}-lounge-seat-a`), 'SOFA');
-  assert.equal(furnitureByUid.get(`${lobby.id}-lounge-table`), 'COFFEE_TABLE');
+  assert.equal(furnitureByUid.get(`${lobby.id}-lounge-table-a`), 'COFFEE_TABLE');
+  assert.equal(furnitureByUid.get(`${lobby.id}-lounge-table-b`), 'COFFEE_TABLE');
   assert.equal(furnitureByUid.get(`${lobby.id}-lounge-decor`), 'PLANT');
   assert.ok(seats.some((seat) => seat.seatKind === 'rest'));
   assert.equal(
@@ -352,7 +353,7 @@ test('existing public lobby is rebuilt as a horizontal work corridor lounge', ()
   assert.equal(furnitureByUid.has('old-lobby-sofa'), false);
   assert.equal(furnitureByUid.has('old-lobby-table'), false);
   assert.equal(furnitureByUid.has('old-lobby-plant'), false);
-  assert.deepEqual(publicRooms(result.layout)[0]?.bounds, { col: 0, row: 9, width: 21, height: 4 });
+  assert.deepEqual(publicRooms(result.layout)[0]?.bounds, { col: 0, row: 9, width: 21, height: 6 });
   assert.deepEqual(projectRooms(result.layout)[0]?.bounds, {
     col: 0,
     row: 0,
@@ -360,7 +361,8 @@ test('existing public lobby is rebuilt as a horizontal work corridor lounge', ()
     height: 8,
   });
   assert.equal(furnitureByUid.get('project-room-lobby-lounge-seat-a'), 'SOFA');
-  assert.equal(furnitureByUid.get('project-room-lobby-lounge-table'), 'COFFEE_TABLE');
+  assert.equal(furnitureByUid.get('project-room-lobby-lounge-table-a'), 'COFFEE_TABLE');
+  assert.equal(furnitureByUid.get('project-room-lobby-lounge-table-b'), 'COFFEE_TABLE');
   assert.equal(
     result.layout.furniture.some((item) => item.uid.includes('-lounge-pod-')),
     false,
@@ -598,13 +600,13 @@ test('campus allocation fills four corner rooms around the work corridor first',
   assert.equal(rooms.length, 5);
   assert.deepEqual(
     rooms.slice(0, 4).map((room) => room.bounds.row),
-    [0, 0, 14, 14],
+    [0, 0, 16, 16],
   );
   assert.deepEqual(
     rooms.slice(0, 4).map((room) => room.bounds.col),
     [0, 11, 0, 11],
   );
-  assert.deepEqual(rooms[4]!.bounds, { col: 22, row: 14, width: 10, height: 8 });
+  assert.deepEqual(rooms[4]!.bounds, { col: 22, row: 16, width: 10, height: 8 });
   assert.equal(result.layout.cols >= 32, true);
 });
 
