@@ -43,6 +43,7 @@ import {
   PROJECT_ROOM_STANDARD_TECH_OFFSET_ROW,
   PROJECT_ROOM_STANDARD_WORK_CHAIR_OFFSET_COL,
   PROJECT_ROOM_STANDARD_WORK_CHAIR_OFFSET_ROW,
+  PROJECT_ROOM_STUDIO_TEMPLATE_ACCENTS,
   PROJECT_ROOM_WORK_CORRIDOR_HEIGHT,
   PROJECT_ROOM_WORK_CORRIDOR_LOUNGE_LEFT_TABLE_COL_OFFSET,
   PROJECT_ROOM_WORK_CORRIDOR_LOUNGE_RIGHT_TABLE_MARGIN,
@@ -207,9 +208,15 @@ export function ensureProjectRoomsForAgents(
     current = {
       ...current,
       projectRooms: [...currentRooms, room],
-      furniture: [...current.furniture, ...buildRoomFurniture(room, template)],
     };
     current = paintRoomFloor(current, room, lobbyCore);
+    current = {
+      ...current,
+      furniture: [
+        ...current.furniture,
+        ...buildGeneratedProjectRoomFurniture(current, room, template, current.furniture),
+      ],
+    };
     createdRooms.push(room);
     existingKeys.add(project.key);
   }
@@ -688,7 +695,12 @@ function ensureWorkCorridorCampusLayout(
   const rebuiltFurniture: PlacedFurniture[] = [];
   for (const room of movedProjectRooms) {
     current = paintRoomFloor(current, room, corridorBounds);
-    rebuiltFurniture.push(...buildRoomFurniture(room, template));
+    rebuiltFurniture.push(
+      ...buildGeneratedProjectRoomFurniture(current, room, template, [
+        ...current.furniture,
+        ...rebuiltFurniture,
+      ]),
+    );
   }
   current = {
     ...current,
@@ -1196,10 +1208,6 @@ function paintWallTile(
 
 function clampInt(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, Math.floor(value)));
-}
-
-function buildRoomFurniture(room: ProjectRoom, template: RoomTemplateAssets): PlacedFurniture[] {
-  return buildRoomFurnitureCandidates(room, template).map((candidate) => candidate.item);
 }
 
 function buildRoomFurnitureCandidates(
@@ -2160,11 +2168,32 @@ function buildGeneratedProjectRoomFurniture(
     if (restTable) planned.push(restTable);
   }
 
+  for (const candidate of buildStudioAccentFurniture(room)) {
+    if (canPlaceSuiteFurniture(layout, room, candidate, [...baseFurniture, ...planned])) {
+      planned.push(candidate);
+    }
+  }
+
   return planned;
 }
 
 function isGeneratedProjectRoomFurniture(room: ProjectRoom, item: PlacedFurniture): boolean {
   return item.uid.startsWith(`${room.id}-`);
+}
+
+function buildStudioAccentFurniture(room: ProjectRoom): PlacedFurniture[] {
+  if (
+    room.bounds.width < PROJECT_ROOM_COLLAB_TEMPLATE_MIN_WIDTH ||
+    room.bounds.height < PROJECT_ROOM_COLLAB_TEMPLATE_MIN_HEIGHT
+  ) {
+    return [];
+  }
+  return PROJECT_ROOM_STUDIO_TEMPLATE_ACCENTS.map((placement) => ({
+    uid: `${room.id}-${placement.uidSuffix}`,
+    type: placement.type,
+    col: room.bounds.col + placement.colOffset,
+    row: room.bounds.row + placement.rowOffset,
+  }));
 }
 
 function roomSeats(layout: OfficeLayout, room: ProjectRoom) {

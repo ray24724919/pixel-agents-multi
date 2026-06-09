@@ -70,7 +70,7 @@ independent maps. The first version keeps one `OfficeLayout` and adds optional r
 
 ## Generated Campus Policy
 
-W18-S sets the generated-room baseline for the local product experience:
+W18-S and W18-U set the generated-room baseline for the local product experience:
 
 - Default project rooms are `12x10` studios, not compact `10x8` rooms. The extra margin is
   intentional: collaborative tables, computers, chairs, rest sofas, and coffee tables must read as
@@ -78,6 +78,10 @@ W18-S sets the generated-room baseline for the local product experience:
 - The default collaborative room keeps one central shared work table with four workstation seats
   when the asset pack supports it. The table, PCs, chairs, and rest furniture are inset from the
   walls; generated furniture should not touch the room shell.
+- W18-U locks the default `12x10` studio against the user-adjusted `pixel-agents-multi` room:
+  a left-side lounge cluster, a right-side collaborative table, optional studio decor, and a
+  validated focus workstation. These accent placements are generated only when their exact assets
+  exist and pass collision checks, so missing asset packs degrade gracefully.
 - The public lobby is a horizontal work corridor. Its minimum width is two project-room bays
   (`25` tiles with the current `12x10` room and one-tile bay margin).
 - Project-room placement is bay-based and stable:
