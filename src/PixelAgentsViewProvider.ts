@@ -53,6 +53,7 @@ import {
   DISPLAY_NAME,
   EXTENSION_ID,
   GLOBAL_KEY_ALWAYS_SHOW_LABELS,
+  GLOBAL_KEY_AUTO_CREATE_PROJECT_ROOMS,
   GLOBAL_KEY_HOOKS_ENABLED,
   GLOBAL_KEY_HOOKS_INFO_SHOWN,
   GLOBAL_KEY_LAST_SEEN_VERSION,
@@ -1466,6 +1467,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       teamName: agent.teamName,
       providerId: 'codex',
       projectDir: agent.projectDir,
+      projectName: agent.projectName,
       transcriptPath: agent.jsonlFile,
     });
 
@@ -1577,6 +1579,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       id,
       isExternal: true,
       folderName: projectName,
+      projectName,
       agentName,
       providerId: 'codex',
       projectDir: agent.projectDir,
@@ -2336,6 +2339,8 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         this.context.globalState.update(GLOBAL_KEY_LAST_SEEN_VERSION, message.version as string);
       } else if (message.type === 'setAlwaysShowLabels') {
         this.context.globalState.update(GLOBAL_KEY_ALWAYS_SHOW_LABELS, message.enabled);
+      } else if (message.type === 'setAutoCreateProjectRooms') {
+        this.context.globalState.update(GLOBAL_KEY_AUTO_CREATE_PROJECT_ROOMS, message.enabled);
       } else if (message.type === 'setHooksEnabled') {
         const enabled = message.enabled as boolean;
         this.context.globalState.update(GLOBAL_KEY_HOOKS_ENABLED, enabled);
@@ -2431,6 +2436,10 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
           GLOBAL_KEY_ALWAYS_SHOW_LABELS,
           false,
         );
+        const autoCreateProjectRooms = this.context.globalState.get<boolean>(
+          GLOBAL_KEY_AUTO_CREATE_PROJECT_ROOMS,
+          true,
+        );
         this.watchAllSessions.current = watchAllSessions;
         const hooksEnabled = this.context.globalState.get<boolean>(GLOBAL_KEY_HOOKS_ENABLED, false);
         const hooksInfoShown = this.context.globalState.get<boolean>(
@@ -2445,6 +2454,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
           extensionVersion,
           watchAllSessions,
           alwaysShowLabels,
+          autoCreateProjectRooms,
           hooksEnabled,
           hooksInfoShown,
           externalAssetDirectories: config.externalAssetDirectories,

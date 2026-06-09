@@ -343,6 +343,7 @@ export async function launchNewTerminal(
       type: 'agentCreated',
       id,
       folderName: folderName ?? projectName,
+      projectName,
       agentName: 'Claude',
       providerId: 'claude',
       projectDir,
@@ -504,6 +505,7 @@ export async function launchNewTerminal(
     type: 'agentCreated',
     id,
     folderName: folderName ?? projectName,
+    projectName,
     agentName: 'Codex',
     providerId: 'codex',
     projectDir,
@@ -1054,6 +1056,7 @@ export function sendExistingAgents(
   const agentNames: Record<number, string> = {};
   const providerIds: Record<number, string> = {};
   const projectDirs: Record<number, string> = {};
+  const projectNames: Record<number, string> = {};
   const transcriptPaths: Record<number, string> = {};
   const externalAgents: Record<number, boolean> = {};
   const hiddenAgents: Record<number, boolean> = {};
@@ -1062,6 +1065,9 @@ export function sendExistingAgents(
     const projectLabel = agent.projectName ?? agent.folderName;
     if (projectLabel) {
       folderNames[id] = projectLabel;
+    }
+    if (agent.projectName) {
+      projectNames[id] = agent.projectName;
     }
     if (agent.agentName) {
       agentNames[id] = agent.agentName;
@@ -1092,6 +1098,7 @@ export function sendExistingAgents(
     agentNames,
     providerIds,
     projectDirs,
+    projectNames,
     transcriptPaths,
     externalAgents,
     hiddenAgents,
@@ -1128,6 +1135,7 @@ function postAgentMetadata(webview: vscode.Webview, agentId: number, agent: Agen
     agentName: agent.agentName,
     providerId: agent.providerId,
     projectDir: agent.projectDir,
+    projectName: agent.projectName,
     transcriptPath: agent.jsonlFile,
   });
 }

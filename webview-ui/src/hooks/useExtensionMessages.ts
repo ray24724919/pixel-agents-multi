@@ -142,6 +142,7 @@ export interface AgentTimelineEvent {
 
 export interface AgentRuntimeMetadata {
   projectDir?: string;
+  projectName?: string;
   transcriptPath?: string;
 }
 
@@ -220,6 +221,8 @@ interface ExtensionMessageState {
   watchAllSessions: boolean;
   setWatchAllSessions: (v: boolean) => void;
   alwaysShowLabels: boolean;
+  autoCreateProjectRooms: boolean;
+  setAutoCreateProjectRooms: (v: boolean) => void;
   hooksEnabled: boolean;
   setHooksEnabled: (v: boolean) => void;
   hooksInfoShown: boolean;
@@ -374,6 +377,7 @@ export function useExtensionMessages(
   const [buildIdentity, setBuildIdentity] = useState<BuildIdentity>(DEFAULT_BUILD_IDENTITY);
   const [watchAllSessions, setWatchAllSessions] = useState(false);
   const [alwaysShowLabels, setAlwaysShowLabels] = useState(false);
+  const [autoCreateProjectRooms, setAutoCreateProjectRooms] = useState(true);
   const [hooksEnabled, setHooksEnabled] = useState(true);
   const [hooksInfoShown, setHooksInfoShown] = useState(true);
   const [usageHistory, setUsageHistory] = useState<UsageHistoryState>(initialUsageHistoryState);
@@ -478,6 +482,7 @@ export function useExtensionMessages(
       agentName?: string;
       providerId?: string;
       projectDir?: string;
+      projectName?: string;
       transcriptPath?: string;
       initialActive?: boolean;
     };
@@ -605,6 +610,7 @@ export function useExtensionMessages(
         const agentName = msg.agentName as string | undefined;
         const providerId = msg.providerId as string | undefined;
         const projectDir = msg.projectDir as string | undefined;
+        const projectName = msg.projectName as string | undefined;
         const transcriptPath = msg.transcriptPath as string | undefined;
         const isTeammate = msg.isTeammate as boolean | undefined;
         const teammateName = msg.teammateName as string | undefined;
@@ -615,6 +621,7 @@ export function useExtensionMessages(
           ...prev,
           [id]: {
             projectDir: projectDir ?? prev[id]?.projectDir,
+            projectName: projectName ?? folderName ?? prev[id]?.projectName,
             transcriptPath: transcriptPath ?? prev[id]?.transcriptPath,
           },
         }));
@@ -721,6 +728,10 @@ export function useExtensionMessages(
           ...prev,
           [id]: {
             projectDir: (msg.projectDir as string | undefined) ?? prev[id]?.projectDir,
+            projectName:
+              (msg.projectName as string | undefined) ??
+              (msg.folderName as string | undefined) ??
+              prev[id]?.projectName,
             transcriptPath: (msg.transcriptPath as string | undefined) ?? prev[id]?.transcriptPath,
           },
         }));
@@ -734,6 +745,7 @@ export function useExtensionMessages(
         const agentNames = (msg.agentNames || {}) as Record<number, string>;
         const providerIds = (msg.providerIds || {}) as Record<number, string>;
         const projectDirs = (msg.projectDirs || {}) as Record<number, string>;
+        const projectNames = (msg.projectNames || {}) as Record<number, string>;
         const transcriptPaths = (msg.transcriptPaths || {}) as Record<number, string>;
         const incomingHiddenAgents = (msg.hiddenAgents || {}) as Record<number, boolean>;
         setHiddenAgents((prev) => {
@@ -752,6 +764,7 @@ export function useExtensionMessages(
           for (const id of incoming) {
             next[id] = {
               projectDir: projectDirs[id] ?? next[id]?.projectDir,
+              projectName: projectNames[id] ?? folderNames[id] ?? next[id]?.projectName,
               transcriptPath: transcriptPaths[id] ?? next[id]?.transcriptPath,
             };
           }
@@ -776,6 +789,7 @@ export function useExtensionMessages(
             agentName: agentNames[id],
             providerId: providerIds[id],
             projectDir: projectDirs[id],
+            projectName: projectNames[id],
             transcriptPath: transcriptPaths[id],
             initialActive: false,
           };
@@ -1165,6 +1179,9 @@ export function useExtensionMessages(
         if (typeof msg.alwaysShowLabels === 'boolean') {
           setAlwaysShowLabels(msg.alwaysShowLabels as boolean);
         }
+        if (typeof msg.autoCreateProjectRooms === 'boolean') {
+          setAutoCreateProjectRooms(msg.autoCreateProjectRooms as boolean);
+        }
         if (typeof msg.hooksEnabled === 'boolean') {
           setHooksEnabled(msg.hooksEnabled as boolean);
         }
@@ -1262,6 +1279,8 @@ export function useExtensionMessages(
     watchAllSessions,
     setWatchAllSessions,
     alwaysShowLabels,
+    autoCreateProjectRooms,
+    setAutoCreateProjectRooms,
     hooksEnabled,
     setHooksEnabled,
     hooksInfoShown,

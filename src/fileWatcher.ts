@@ -646,6 +646,7 @@ function adoptTerminalForFile(
     type: 'agentCreated',
     id,
     folderName: metadata.projectName,
+    projectName: metadata.projectName,
     agentName,
     providerId: 'claude',
     projectDir: effectiveProjectDir,
@@ -847,6 +848,7 @@ export function scanForTeammateFiles(
       teamName: parentAgent?.teamName,
       providerId: 'claude',
       projectDir: agent.projectDir,
+      projectName: agent.projectName,
       transcriptPath: agent.jsonlFile,
     });
 
@@ -1057,6 +1059,7 @@ export function adoptExternalSessionFromHook(
       type: 'agentCreated',
       id,
       folderName,
+      projectName: agent.projectName,
       agentName: agent.agentName,
       providerId: 'claude',
       projectDir: cwd,
@@ -1158,6 +1161,7 @@ function adoptExternalSession(
     id,
     isExternal: true,
     folderName: metadataOverride?.projectName ?? metadata.projectName,
+    projectName: metadataOverride?.projectName ?? metadata.projectName,
     agentName,
     providerId: 'claude',
     projectDir: effectiveProjectDir,

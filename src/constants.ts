@@ -59,6 +59,7 @@ export const GLOBAL_KEY_ALWAYS_SHOW_LABELS = `${EXTENSION_NAME}.alwaysShowLabels
 export const GLOBAL_KEY_WATCH_ALL_SESSIONS = `${EXTENSION_NAME}.watchAllSessions`;
 export const GLOBAL_KEY_HOOKS_ENABLED = `${EXTENSION_NAME}.hooksEnabled`;
 export const GLOBAL_KEY_HOOKS_INFO_SHOWN = `${EXTENSION_NAME}.hooksInfoShown`;
+export const GLOBAL_KEY_AUTO_CREATE_PROJECT_ROOMS = `${EXTENSION_NAME}.autoCreateProjectRooms`;
 
 // ── VS Code Identifiers ─────────────────────────────────────
 export const VIEW_CONTAINER_ID = `${EXTENSION_NAME}-panel`;

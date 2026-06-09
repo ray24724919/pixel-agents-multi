@@ -48,7 +48,7 @@ interface ProjectRoomProvisioningRuntimeMetadata {
 }
 
 interface ProjectRoomProvisioningOptions {
-  agentIds: readonly number[];
+  agentIds: readonly number[] | ReadonlySet<number>;
   hiddenAgents?: Record<number, boolean>;
   agentRuntimeMetadata?: Record<number, ProjectRoomProvisioningRuntimeMetadata>;
 }
@@ -76,7 +76,7 @@ interface EditorActions {
   handleCreateRoomAtTile: (col: number, row: number) => void;
   handleUpdateSelectedRoom: (patch: ProjectRoomEditorPatch) => void;
   handleDeleteSelectedRoom: () => void;
-  handleAutoCreateProjectRooms: (visibleAgentIds?: Set<number>) => void;
+  handleAutoCreateProjectRooms: (options?: ProjectRoomProvisioningOptions) => void;
   handleAutoProvisionProjectRooms: (options: ProjectRoomProvisioningOptions) => boolean;
   handleDeleteSelected: () => void;
   handleRotateSelected: () => void;
@@ -357,16 +357,27 @@ export function useEditorActions(
   }, [applyEdit, editorState, getOfficeState]);
 
   const handleAutoCreateProjectRooms = useCallback(
-    (visibleAgentIds?: Set<number>) => {
+    (options?: ProjectRoomProvisioningOptions) => {
       const os = getOfficeState();
       const layout = os.getLayout();
+      const allowedIds =
+        options?.agentIds instanceof Set ? options.agentIds : new Set(options?.agentIds);
       const result = ensureProjectRoomsForAgents(
         layout,
-        os.getCharacters().map((ch) => ({
-          folderName: ch.folderName,
-          isSubagent: ch.isSubagent,
-          hidden: visibleAgentIds ? !visibleAgentIds.has(ch.id) : false,
-        })),
+        os
+          .getCharacters()
+          .filter((ch) => !options?.agentIds || allowedIds.has(ch.id))
+          .map((ch) => {
+            const runtime = options?.agentRuntimeMetadata?.[ch.id];
+            return {
+              folderName: ch.folderName,
+              projectDir: runtime?.projectDir,
+              projectName: runtime?.projectName,
+              providerId: ch.providerId,
+              isSubagent: ch.isSubagent,
+              hidden: options?.hiddenAgents?.[ch.id] === true,
+            };
+          }),
       );
       if (result.layout !== layout && result.createdRooms.length > 0) {
         applyEdit(result.layout);
