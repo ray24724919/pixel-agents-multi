@@ -3,6 +3,8 @@ import { beforeEach, test } from 'node:test';
 
 import {
   FALLBACK_FLOOR_COLOR,
+  PROJECT_ROOM_DEFAULT_HEIGHT,
+  PROJECT_ROOM_DEFAULT_WIDTH,
   PROJECT_ROOM_GENERATED_FLOOR_COLOR,
   PROJECT_ROOM_GENERATED_FLOOR_TILE,
   PROJECT_ROOM_GENERATED_WALL_COLOR,
@@ -311,12 +313,19 @@ test('generated room contains a valid workstation seat and a rest seat when spac
   const room = result.createdRooms[0]!;
   const seats = seatsInRoom(result.layout, room);
 
+  assert.deepEqual(room.bounds, {
+    col: 0,
+    row: 0,
+    width: PROJECT_ROOM_DEFAULT_WIDTH,
+    height: PROJECT_ROOM_DEFAULT_HEIGHT,
+  });
   assert.ok(seats.some((seat) => seat.seatKind === 'work' && seat.zoneSource === 'workstation'));
   assert.ok(seats.some((seat) => seat.seatKind === 'rest'));
   assert.equal(
     result.layout.furniture.some((item) => item.uid === `${room.id}-rest-seat`),
     true,
   );
+  assertGeneratedFurnitureInsetFromRoomWalls(result.layout, room);
 });
 
 test('public lobby is provisioned as a lounge without duplicating project workstations', () => {
@@ -372,12 +381,17 @@ test('existing public lobby is rebuilt as a horizontal work corridor lounge', ()
   assert.equal(furnitureByUid.has('old-lobby-sofa'), false);
   assert.equal(furnitureByUid.has('old-lobby-table'), false);
   assert.equal(furnitureByUid.has('old-lobby-plant'), false);
-  assert.deepEqual(publicRooms(result.layout)[0]?.bounds, { col: 0, row: 9, width: 21, height: 6 });
+  assert.deepEqual(publicRooms(result.layout)[0]?.bounds, {
+    col: 0,
+    row: 11,
+    width: 25,
+    height: 6,
+  });
   assert.deepEqual(projectRooms(result.layout)[0]?.bounds, {
     col: 0,
     row: 0,
-    width: 10,
-    height: 8,
+    width: PROJECT_ROOM_DEFAULT_WIDTH,
+    height: PROJECT_ROOM_DEFAULT_HEIGHT,
   });
   assert.equal(furnitureByUid.get('project-room-lobby-lounge-seat-a'), 'SOFA');
   assert.equal(furnitureByUid.get('project-room-lobby-lounge-table-a'), 'COFFEE_TABLE');
@@ -422,9 +436,9 @@ test('existing two-sofa work corridor lounge upgrades to old-lobby-style sofa cl
   const furnitureByUid = new Map(result.layout.furniture.map((item) => [item.uid, item]));
 
   assert.equal(furnitureByUid.get('project-room-lobby-lounge-table-a')?.col, 3);
-  assert.equal(furnitureByUid.get('project-room-lobby-lounge-table-a')?.row, 11);
-  assert.equal(furnitureByUid.get('project-room-lobby-lounge-table-b')?.col, 15);
-  assert.equal(furnitureByUid.get('project-room-lobby-lounge-table-b')?.row, 11);
+  assert.equal(furnitureByUid.get('project-room-lobby-lounge-table-a')?.row, 13);
+  assert.equal(furnitureByUid.get('project-room-lobby-lounge-table-b')?.col, 19);
+  assert.equal(furnitureByUid.get('project-room-lobby-lounge-table-b')?.row, 13);
   assert.equal(furnitureByUid.get('project-room-lobby-lounge-seat-a-back')?.type, 'SOFA');
   assert.equal(furnitureByUid.get('project-room-lobby-lounge-seat-a-left')?.type, 'SOFA');
   assert.equal(furnitureByUid.get('project-room-lobby-lounge-seat-a-right')?.type, 'SOFA');
@@ -487,8 +501,14 @@ test('existing generated project room furniture is reflowed away from room walls
   assert.equal(furnitureByUid.get('project-alpha-desk')?.row, 2);
   assert.equal(furnitureByUid.get('project-alpha-tech')?.row, 2);
   assert.equal(furnitureByUid.get('project-alpha-work-chair')?.row, 4);
-  assert.equal(furnitureByUid.get('project-alpha-rest-seat')?.row, 5);
-  assert.equal(furnitureByUid.get('project-alpha-rest-table')?.row, 3);
+  assert.deepEqual(room.bounds, {
+    col: 0,
+    row: 0,
+    width: PROJECT_ROOM_DEFAULT_WIDTH,
+    height: PROJECT_ROOM_DEFAULT_HEIGHT,
+  });
+  assert.equal(furnitureByUid.get('project-alpha-rest-seat')?.row, 7);
+  assert.equal(furnitureByUid.get('project-alpha-rest-table')?.row, 5);
   assertGeneratedFurnitureInsetFromRoomWalls(result.layout, room);
 });
 
@@ -704,14 +724,49 @@ test('campus allocation fills four corner rooms around the work corridor first',
   assert.equal(rooms.length, 5);
   assert.deepEqual(
     rooms.slice(0, 4).map((room) => room.bounds.row),
-    [0, 0, 16, 16],
+    [0, 0, 18, 18],
   );
   assert.deepEqual(
     rooms.slice(0, 4).map((room) => room.bounds.col),
-    [0, 11, 0, 11],
+    [0, 13, 0, 13],
   );
-  assert.deepEqual(rooms[4]!.bounds, { col: 22, row: 16, width: 10, height: 8 });
-  assert.equal(result.layout.cols >= 32, true);
+  assert.deepEqual(rooms[4]!.bounds, {
+    col: 26,
+    row: 0,
+    width: PROJECT_ROOM_DEFAULT_WIDTH,
+    height: PROJECT_ROOM_DEFAULT_HEIGHT,
+  });
+  assert.equal(result.layout.cols >= 38, true);
+});
+
+test('work corridor growth appends a new bay without overlapping rooms after refresh', () => {
+  const agents = [
+    { folderName: 'Alpha', isSubagent: false },
+    { folderName: 'Beta', isSubagent: false },
+    { folderName: 'Delta', isSubagent: false },
+    { folderName: 'Epsilon', isSubagent: false },
+    { folderName: 'Gamma', isSubagent: false },
+  ];
+  const first = ensureProjectRoomsForAgents(makeLayout(), agents);
+  const second = ensureProjectRoomsForAgents(first.layout, agents);
+  const firstBounds = new Map(first.createdRooms.map((room) => [room.id, room.bounds]));
+  const refreshedRooms = projectRooms(second.layout);
+
+  assert.equal(second.createdRooms.length, 0);
+  assert.deepEqual(publicRooms(second.layout)[0]?.bounds, {
+    col: 0,
+    row: 11,
+    width: 38,
+    height: 6,
+  });
+  for (const room of refreshedRooms) {
+    assert.deepEqual(room.bounds, firstBounds.get(room.id));
+  }
+  for (let i = 0; i < refreshedRooms.length; i++) {
+    for (let j = i + 1; j < refreshedRooms.length; j++) {
+      assert.equal(rectsOverlap(refreshedRooms[i]!.bounds, refreshedRooms[j]!.bounds), false);
+    }
+  }
 });
 
 test('generated workstation prefers a front desk with matching front electronics', () => {
@@ -935,17 +990,18 @@ test('generated room prefers the collaborative four-computer work table when ava
   );
 
   assert.equal(furnitureByUid.get('project-alpha-team-table'), 'TABLE_FRONT');
-  assert.equal(furnitureByUid.get('project-alpha-pc-right-2'), 'PC_SIDE');
-  assert.equal(furnitureByUid.get('project-alpha-pc-left-2'), 'PC_SIDE:left');
-  assert.equal(furnitureByUid.get('project-alpha-chair-right-2'), 'WOODEN_CHAIR_SIDE');
-  assert.equal(furnitureByUid.get('project-alpha-chair-left-2'), 'WOODEN_CHAIR_SIDE:left');
-  assert.equal(furnitureByOffset.get('4,2'), 'PC_SIDE');
-  assert.equal(furnitureByOffset.get('6,2'), 'PC_SIDE:left');
-  assert.equal(furnitureByOffset.get('3,2'), 'WOODEN_CHAIR_SIDE');
-  assert.equal(furnitureByOffset.get('7,2'), 'WOODEN_CHAIR_SIDE:left');
+  assert.equal(furnitureByUid.get('project-alpha-pc-right-3'), 'PC_SIDE');
+  assert.equal(furnitureByUid.get('project-alpha-pc-left-3'), 'PC_SIDE:left');
+  assert.equal(furnitureByUid.get('project-alpha-chair-right-3'), 'WOODEN_CHAIR_SIDE');
+  assert.equal(furnitureByUid.get('project-alpha-chair-left-3'), 'WOODEN_CHAIR_SIDE:left');
+  assert.equal(furnitureByOffset.get('5,3'), 'PC_SIDE');
+  assert.equal(furnitureByOffset.get('7,3'), 'PC_SIDE:left');
+  assert.equal(furnitureByOffset.get('4,3'), 'WOODEN_CHAIR_SIDE');
+  assert.equal(furnitureByOffset.get('8,3'), 'WOODEN_CHAIR_SIDE:left');
   assert.equal(roomSeats.filter((seat) => seat.seatKind === 'work').length, 4);
   assert.ok(roomSeats.some((seat) => seat.seatKind === 'rest'));
   assertFurnitureOnWalkableRoomTiles(result.layout, room);
+  assertGeneratedFurnitureInsetFromRoomWalls(result.layout, room);
 });
 
 test('repeated generation does not duplicate rooms and keeps stable ids', () => {

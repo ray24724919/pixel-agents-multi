@@ -68,6 +68,31 @@ independent maps. The first version keeps one `OfficeLayout` and adds optional r
 9. Room assignment must not allow agents to type in rest zones, type in empty air, or stand on
    chairs/furniture.
 
+## Generated Campus Policy
+
+W18-S sets the generated-room baseline for the local product experience:
+
+- Default project rooms are `12x10` studios, not compact `10x8` rooms. The extra margin is
+  intentional: collaborative tables, computers, chairs, rest sofas, and coffee tables must read as
+  placed inside the room rather than visually clipped by the shell.
+- The default collaborative room keeps one central shared work table with four workstation seats
+  when the asset pack supports it. The table, PCs, chairs, and rest furniture are inset from the
+  walls; generated furniture should not touch the room shell.
+- The public lobby is a horizontal work corridor. Its minimum width is two project-room bays
+  (`25` tiles with the current `12x10` room and one-tile bay margin).
+- Project-room placement is bay-based and stable:
+  1. first bay: top-left, then bottom-left;
+  2. second bay: top-right, then bottom-right;
+  3. fifth and sixth projects append a third bay to the right;
+  4. additional projects keep appending right-side bays until `MAX_COLS` / `MAX_ROWS` are exhausted.
+- Existing generated project rooms are allowed to reflow to the current default studio template.
+  This is a product migration, not a user-layout edit: only generated furniture whose uid starts
+  with the room id is replaced.
+- The corridor can lengthen horizontally as new bays are needed. It should not reshuffle earlier
+  bays or create overlapping rooms on refresh. If future density exceeds the one-corridor model,
+  the next product step should be a second corridor/wing or paging/zoom affordance, not shrinking
+  rooms back into cramped templates.
+
 ## Proposed Data Model
 
 The canonical W18-A spec defines the full model. The short form is:

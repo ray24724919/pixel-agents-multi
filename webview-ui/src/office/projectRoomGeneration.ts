@@ -162,13 +162,19 @@ export function ensureProjectRoomsForAgents(
     };
   }
 
-  let lobbyCore = deriveWorkCorridorBounds(current);
+  const expectedProjectRoomCount = initialProjectRooms.length + projectInputs.length;
+  let lobbyCore = deriveWorkCorridorBounds(current, expectedProjectRoomCount);
   if (projectInputs.length > 0 || initialProjectRooms.length > 0) {
     const lobbyResult = ensurePublicLobbyRoom(current, lobbyCore);
     current = lobbyResult.layout;
     createdLobbyRoom = lobbyResult.createdRoom;
 
-    const corridorResult = ensureWorkCorridorCampusLayout(current, lobbyCore, template);
+    const corridorResult = ensureWorkCorridorCampusLayout(
+      current,
+      lobbyCore,
+      template,
+      expectedProjectRoomCount,
+    );
     current = corridorResult.layout;
     lobbyCore = corridorResult.lobbyCore;
     suiteFurnitureAddedCount += corridorResult.changedCount;
@@ -607,13 +613,14 @@ function ensureWorkCorridorCampusLayout(
   layout: OfficeLayout,
   lobbyCore: ProjectRoom['bounds'],
   template: RoomTemplateAssets,
+  expectedProjectRoomCount: number,
 ): { layout: OfficeLayout; lobbyCore: ProjectRoom['bounds']; changedCount: number } {
   const rooms = normalizeProjectRooms(layout);
   const publicRoom = rooms.find((room) => room.kind === ProjectRoomKind.PUBLIC);
   const projectRooms = rooms.filter((room) => room.kind === ProjectRoomKind.PROJECT);
   if (!publicRoom || projectRooms.length === 0) return { layout, lobbyCore, changedCount: 0 };
 
-  const corridorBounds = deriveWorkCorridorBounds(layout);
+  const corridorBounds = deriveWorkCorridorBounds(layout, expectedProjectRoomCount);
   const roomSlots = buildWorkCorridorRoomSlots(
     corridorBounds,
     PROJECT_ROOM_DEFAULT_WIDTH,
@@ -819,16 +826,33 @@ function buildWorkCorridorRoomSlots(
   height: number,
 ): ProjectRoom['bounds'][] {
   const margin = PROJECT_ROOM_GENERATED_MARGIN;
-  const leftCol = core.col;
-  const rightCol = Math.max(leftCol + width + margin, core.col + core.width - width);
+  const bayCols = buildWorkCorridorBayCols(core, width);
+  const firstBays = bayCols.slice(0, 2);
+  const extraBays = bayCols.slice(2);
   const topRow = core.row - height - margin;
   const bottomRow = core.row + core.height + margin;
   return [
-    { col: leftCol, row: topRow, width, height },
-    { col: rightCol, row: topRow, width, height },
-    { col: leftCol, row: bottomRow, width, height },
-    { col: rightCol, row: bottomRow, width, height },
+    ...firstBays.map((col) => ({ col, row: topRow, width, height })),
+    ...firstBays.map((col) => ({ col, row: bottomRow, width, height })),
+    ...extraBays.flatMap((col) => [
+      { col, row: topRow, width, height },
+      { col, row: bottomRow, width, height },
+    ]),
   ].filter((bounds) => bounds.col >= 0 && bounds.row >= 0 && boundsFitMax(bounds));
+}
+
+function buildWorkCorridorBayCols(core: ProjectRoom['bounds'], roomWidth: number): number[] {
+  const margin = PROJECT_ROOM_GENERATED_MARGIN;
+  const step = roomWidth + margin;
+  const cols: number[] = [];
+  for (let col = core.col; col + roomWidth <= core.col + core.width; col += step) {
+    cols.push(col);
+  }
+  const rightCol = core.col + core.width - roomWidth;
+  if (rightCol >= core.col && !cols.includes(rightCol)) {
+    cols.push(rightCol);
+  }
+  return cols.sort((a, b) => a - b);
 }
 
 function boundsEqual(a: ProjectRoom['bounds'], b: ProjectRoom['bounds']): boolean {
@@ -2327,11 +2351,19 @@ function stableUniqueRoomId(base: string, rooms: ProjectRoom[]): string {
   return `${base}-${rooms.length + 1}`;
 }
 
-function deriveWorkCorridorBounds(layout: OfficeLayout): ProjectRoom['bounds'] {
+function deriveWorkCorridorBounds(
+  layout: OfficeLayout,
+  projectRoomCount = normalizeProjectRooms(layout).filter(
+    (room) => room.kind === ProjectRoomKind.PROJECT,
+  ).length,
+): ProjectRoom['bounds'] {
   const base = deriveLobbyCoreBounds(layout);
+  const bayCount = targetWorkCorridorBayCount(projectRoomCount);
+  const bayWidth =
+    bayCount * PROJECT_ROOM_DEFAULT_WIDTH + (bayCount - 1) * PROJECT_ROOM_GENERATED_MARGIN;
   const width = Math.min(
     MAX_COLS,
-    Math.max(PROJECT_ROOM_WORK_CORRIDOR_MIN_WIDTH, layout.cols, base.width),
+    Math.max(PROJECT_ROOM_WORK_CORRIDOR_MIN_WIDTH, bayWidth, base.width),
   );
   const col = clampInt(base.col, 0, MAX_COLS - width);
   const preferredRow =
@@ -2348,6 +2380,10 @@ function deriveWorkCorridorBounds(layout: OfficeLayout): ProjectRoom['bounds'] {
     width,
     height: PROJECT_ROOM_WORK_CORRIDOR_HEIGHT,
   };
+}
+
+function targetWorkCorridorBayCount(projectRoomCount: number): number {
+  return Math.max(2, Math.ceil(Math.max(0, projectRoomCount) / 2));
 }
 
 function deriveLobbyCoreBounds(layout: OfficeLayout): ProjectRoom['bounds'] {
