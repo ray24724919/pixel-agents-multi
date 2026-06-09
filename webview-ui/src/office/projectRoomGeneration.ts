@@ -1,7 +1,5 @@
 import type { ColorValue } from '../components/ui/types.js';
 import {
-  DEFAULT_FLOOR_COLOR,
-  DEFAULT_WALL_COLOR,
   PROJECT_ROOM_COLLAB_BOTTOM_ROW_OFFSET,
   PROJECT_ROOM_COLLAB_LEFT_CHAIR_OFFSET_COL,
   PROJECT_ROOM_COLLAB_LEFT_PC_OFFSET_COL,
@@ -17,9 +15,12 @@ import {
   PROJECT_ROOM_DEFAULT_HEIGHT,
   PROJECT_ROOM_DEFAULT_WIDTH,
   PROJECT_ROOM_GENERATED_DOORWAY_WIDTH,
+  PROJECT_ROOM_GENERATED_FLOOR_COLOR,
+  PROJECT_ROOM_GENERATED_FLOOR_TILE,
   PROJECT_ROOM_GENERATED_MARGIN,
   PROJECT_ROOM_GENERATED_REST_MIN_WIDTH,
   PROJECT_ROOM_GENERATED_SHELL_THICKNESS,
+  PROJECT_ROOM_GENERATED_WALL_COLOR,
 } from '../constants.js';
 import { getAllCatalogEntries } from './layout/furnitureCatalog.js';
 import {
@@ -785,8 +786,8 @@ function paintWalkableFloor(
 ): void {
   if (col < 0 || col >= layout.cols || row < 0 || row >= layout.rows) return;
   const idx = row * layout.cols + col;
-  tiles[idx] = TileType.FLOOR_1;
-  tileColors[idx] = { ...DEFAULT_FLOOR_COLOR };
+  tiles[idx] = PROJECT_ROOM_GENERATED_FLOOR_TILE;
+  tileColors[idx] = { ...PROJECT_ROOM_GENERATED_FLOOR_COLOR };
   zones[idx] = null;
 }
 
@@ -801,7 +802,7 @@ function paintWallTile(
   if (col < 0 || col >= layout.cols || row < 0 || row >= layout.rows) return;
   const idx = row * layout.cols + col;
   tiles[idx] = TileType.WALL;
-  tileColors[idx] = { ...DEFAULT_WALL_COLOR };
+  tileColors[idx] = { ...PROJECT_ROOM_GENERATED_WALL_COLOR };
   zones[idx] = null;
 }
 
