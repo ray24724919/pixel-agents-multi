@@ -281,7 +281,8 @@ test('an existing room for the project prevents automatic generation', () => {
   const result = ensureProjectRoomsForAgents(layout, [{ folderName: 'Alpha', isSubagent: false }]);
 
   assert.equal(result.createdRooms.length, 0);
-  assert.equal(result.layout.projectRooms?.length, 1);
+  assert.equal(projectRooms(result.layout).length, 1);
+  assert.equal(publicRooms(result.layout).length, 1);
 });
 
 test('generated room contains a valid workstation seat and a rest seat when space permits', () => {
@@ -318,7 +319,7 @@ test('public lobby is provisioned as a lounge without duplicating project workst
   );
 });
 
-test('existing public lobby is reshaped from old office workstations into a lounge', () => {
+test('existing public lobby is rebuilt as a horizontal work corridor lounge', () => {
   const layout = makeLayout();
   layout.projectRooms = [
     {
@@ -348,22 +349,21 @@ test('existing public lobby is reshaped from old office workstations into a loun
   assert.equal(furnitureByUid.has('old-lobby-desk'), false);
   assert.equal(furnitureByUid.has('old-lobby-pc'), false);
   assert.equal(furnitureByUid.has('old-lobby-chair'), false);
-  assert.equal(furnitureByUid.get('old-lobby-sofa'), 'SOFA');
-  assert.equal(furnitureByUid.get('old-lobby-table'), 'COFFEE_TABLE');
-  assert.equal(furnitureByUid.get('old-lobby-plant'), 'PLANT');
-  assert.ok(
-    result.layout.furniture.filter(
-      (item) => item.uid.startsWith('project-room-lobby-lounge-pod-') && item.type === 'SOFA',
-    ).length >= 2,
-  );
-  assert.ok(
-    result.layout.furniture.filter(
-      (item) =>
-        item.uid.startsWith('project-room-lobby-lounge-pod-') && item.type === 'COFFEE_TABLE',
-    ).length >= 2,
-  );
-  assert.ok(
-    result.layout.furniture.some((item) => item.uid === 'project-room-lobby-lounge-decor-1'),
+  assert.equal(furnitureByUid.has('old-lobby-sofa'), false);
+  assert.equal(furnitureByUid.has('old-lobby-table'), false);
+  assert.equal(furnitureByUid.has('old-lobby-plant'), false);
+  assert.deepEqual(publicRooms(result.layout)[0]?.bounds, { col: 0, row: 9, width: 21, height: 4 });
+  assert.deepEqual(projectRooms(result.layout)[0]?.bounds, {
+    col: 0,
+    row: 0,
+    width: 10,
+    height: 8,
+  });
+  assert.equal(furnitureByUid.get('project-room-lobby-lounge-seat-a'), 'SOFA');
+  assert.equal(furnitureByUid.get('project-room-lobby-lounge-table'), 'COFFEE_TABLE');
+  assert.equal(
+    result.layout.furniture.some((item) => item.uid.includes('-lounge-pod-')),
+    false,
   );
 });
 
@@ -495,8 +495,17 @@ test('generated room is connected back to the lobby core by walkable floor', () 
     { folderName: 'Alpha', isSubagent: false },
   ]);
   const room = result.createdRooms[0]!;
-  const start = { col: Math.floor(room.bounds.col + room.bounds.width / 2), row: 1 };
-  const end = { col: Math.floor(room.bounds.col + room.bounds.width / 2), row: room.bounds.row };
+  const lobby = publicRooms(result.layout)[0]!;
+  const col = Math.floor(room.bounds.col + room.bounds.width / 2);
+  const roomAboveLobby = room.bounds.row + room.bounds.height <= lobby.bounds.row;
+  const start = {
+    col,
+    row: roomAboveLobby ? room.bounds.row + 1 : room.bounds.row + room.bounds.height - 2,
+  };
+  const end = {
+    col,
+    row: roomAboveLobby ? lobby.bounds.row : lobby.bounds.row + lobby.bounds.height - 1,
+  };
 
   assert.ok(hasWalkablePath(result.layout, start, end));
 });
@@ -506,11 +515,17 @@ test('generated room shell leaves a walkable doorway and corridor to the lobby',
     { folderName: 'Alpha', isSubagent: false },
   ]);
   const room = result.createdRooms[0]!;
+  const lobby = publicRooms(result.layout)[0]!;
+  const roomAboveLobby = room.bounds.row + room.bounds.height <= lobby.bounds.row;
   const doorway = {
     col: Math.floor(room.bounds.col + room.bounds.width / 2),
-    row: room.bounds.row,
+    row: roomAboveLobby ? room.bounds.row + room.bounds.height - 1 : room.bounds.row,
   };
-  const outsideDoor = { col: doorway.col, row: doorway.row - 1 };
+  const outsideDoor = { col: doorway.col, row: doorway.row + (roomAboveLobby ? 1 : -1) };
+  const interiorStart = {
+    col: doorway.col,
+    row: roomAboveLobby ? room.bounds.row + 1 : room.bounds.row + room.bounds.height - 2,
+  };
 
   assert.equal(tileAt(result.layout, room.bounds.col, room.bounds.row), TileType.WALL);
   assert.deepEqual(
@@ -530,7 +545,7 @@ test('generated room shell leaves a walkable doorway and corridor to the lobby',
     tileAt(result.layout, outsideDoor.col, outsideDoor.row),
     PROJECT_ROOM_GENERATED_FLOOR_TILE,
   );
-  assert.ok(hasWalkablePath(result.layout, { col: doorway.col, row: 1 }, doorway));
+  assert.ok(hasWalkablePath(result.layout, interiorStart, doorway));
 });
 
 test('generated room does not overlap existing rooms or existing furniture', () => {
@@ -570,7 +585,7 @@ test('multiple new projects produce stable non-overlapping lobby-adjacent rooms'
   }
 });
 
-test('campus allocation fills a compact lower wing before side wings', () => {
+test('campus allocation fills four corner rooms around the work corridor first', () => {
   const result = ensureProjectRoomsForAgents(makeLayout(), [
     { folderName: 'Alpha', isSubagent: false },
     { folderName: 'Beta', isSubagent: false },
@@ -579,19 +594,18 @@ test('campus allocation fills a compact lower wing before side wings', () => {
     { folderName: 'Gamma', isSubagent: false },
   ]);
   const rooms = result.createdRooms;
-  const lowerWingRow = rooms[0]!.bounds.row;
 
   assert.equal(rooms.length, 5);
   assert.deepEqual(
     rooms.slice(0, 4).map((room) => room.bounds.row),
-    [lowerWingRow, lowerWingRow, lowerWingRow, lowerWingRow],
+    [0, 0, 14, 14],
   );
   assert.deepEqual(
     rooms.slice(0, 4).map((room) => room.bounds.col),
-    [0, 11, 22, 33],
+    [0, 11, 0, 11],
   );
-  assert.equal(rooms[4]!.bounds.row < lowerWingRow, true);
-  assert.equal(result.layout.cols >= 43, true);
+  assert.deepEqual(rooms[4]!.bounds, { col: 22, row: 14, width: 10, height: 8 });
+  assert.equal(result.layout.cols >= 32, true);
 });
 
 test('generated workstation prefers a front desk with matching front electronics', () => {
