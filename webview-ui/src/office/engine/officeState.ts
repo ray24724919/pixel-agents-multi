@@ -50,6 +50,13 @@ function manhattan(a: { col: number; row: number }, b: { col: number; row: numbe
   return Math.abs(a.col - b.col) + Math.abs(a.row - b.row);
 }
 
+// In rest mode, seatPriorityForProjectKey ranks the agent's own project room (or its unassigned home
+// area when it has none) as tier 0 and the public/lobby lounge as tier 1. An idle agent should rest
+// and roam across BOTH — its own room's rest corner AND the lobby lounge — so we keep every rest
+// tile/seat up to this tier instead of only the single best tier (which trapped agents in their own
+// room). Tiers >= 2 (other rooms, far corridors) stay excluded.
+const REST_WANDER_MAX_PRIORITY = 1;
+
 export class OfficeState {
   layout: OfficeLayout;
   tileMap: TileTypeVal[][];
@@ -527,9 +534,10 @@ export class OfficeState {
           manhattan(a.tile, { col: ch.tileCol, row: ch.tileRow }) -
             manhattan(b.tile, { col: ch.tileCol, row: ch.tileRow }),
       );
-    const bestPriority = rankedTiles[0]?.priority;
+    const bestPriority = rankedTiles[0]?.priority ?? 0;
+    const cutoff = Math.max(bestPriority, REST_WANDER_MAX_PRIORITY);
     const localTiles = rankedTiles
-      .filter((candidate) => candidate.priority === bestPriority)
+      .filter((candidate) => candidate.priority <= cutoff)
       .map((candidate) => candidate.tile);
     return localTiles.length > 0 ? localTiles : this.idleWalkableTiles;
   }
@@ -552,10 +560,11 @@ export class OfficeState {
         priority: this.getSeatPriorityForProjectKey(projectKey, seat, 'rest'),
       }))
       .sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id));
-    const bestPriority = restCandidates[0]?.priority;
+    const bestPriority = restCandidates[0]?.priority ?? 0;
+    const cutoff = Math.max(bestPriority, REST_WANDER_MAX_PRIORITY);
     const localRestSeats = restCandidates.filter(
       (candidate) =>
-        candidate.priority === bestPriority ||
+        candidate.priority <= cutoff ||
         candidate.id === ch.seatId ||
         candidate.id === ch.restSeatId,
     );
