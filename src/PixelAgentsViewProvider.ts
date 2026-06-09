@@ -98,6 +98,7 @@ import {
   resolveHandoffArtifactOpenPath,
   resolveHandoffReportOpenPath,
   resolveHandoffWorkPackageOpenPath,
+  sanitizeHandoffMarkdownBody,
   scanHandoffArtifacts,
   updateHandoffArtifactStatus,
   updateHandoffDispatchStatus,
@@ -336,7 +337,11 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         nowMs,
       );
       await fs.promises.mkdir(path.dirname(target.absolutePath), { recursive: true });
-      await fs.promises.writeFile(target.absolutePath, markdown, 'utf8');
+      await fs.promises.writeFile(
+        target.absolutePath,
+        sanitizeHandoffMarkdownBody(markdown),
+        'utf8',
+      );
       await fs.promises.writeFile(
         target.metadataAbsolutePath,
         `${JSON.stringify(metadata, null, 2)}\n`,

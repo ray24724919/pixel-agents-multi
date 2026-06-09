@@ -53,6 +53,9 @@ export const HANDOFF_COMPLETION_REVIEW_MAX_WARNINGS = 6;
 // (Claude transcript/hook, Codex bound rollout) before reporting the launch unconfirmed.
 export const HANDOFF_LAUNCH_EVIDENCE_TIMEOUT_MS = 12_000;
 export const HANDOFF_LAUNCH_EVIDENCE_POLL_MS = 500;
+// Safety cap for the persisted handoff Markdown body (the file most likely to hold a pasted
+// transcript or secret). Bodies above this are truncated with a visible marker on write.
+export const HANDOFF_DRAFT_BODY_MAX_CHARS = 100_000;
 
 // ── Settings Persistence (VS Code globalState keys) ─────────
 export const GLOBAL_KEY_SOUND_ENABLED = `${EXTENSION_NAME}.soundEnabled`;

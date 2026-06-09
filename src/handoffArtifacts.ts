@@ -19,6 +19,7 @@ import {
   HANDOFF_DISPATCH_PROMPT_MAX_LENGTH,
   HANDOFF_DISPATCH_REPORT_SUFFIX,
   HANDOFF_DISPATCH_REPORTS_RELATIVE_DIR,
+  HANDOFF_DRAFT_BODY_MAX_CHARS,
   HANDOFF_WORK_PACKAGE_PROMPT_MAX_LENGTH,
   HANDOFF_WORK_PACKAGE_RELATIVE_DIR,
   HANDOFF_WORK_PACKAGE_SUFFIX,
@@ -1888,9 +1889,13 @@ function safeHandoffTitle(value: string): string | undefined {
   return safeHandoffMetadataText(value);
 }
 
-function safeHandoffMetadataText(value: unknown): string | undefined {
-  if (typeof value !== 'string' && typeof value !== 'number') return undefined;
-  const title = String(value)
+/**
+ * Redact sensitive substrings (absolute paths, credential/secret lines, API keys) from a single
+ * span of text WITHOUT collapsing whitespace or truncating. Shared by the single-line metadata
+ * sanitizer and the multi-line body sanitizer so both apply the same patterns (no drift).
+ */
+function applyHandoffSensitiveRedactions(text: string): string {
+  return text
     .replace(/\\\\\?\\[^\s)]+/g, '[redacted path]')
     .replace(/[A-Za-z]:\\[^\s)]+/g, '[redacted path]')
     .replace(/\\\\[^\s)]+/g, '[redacted path]')
@@ -1902,7 +1907,31 @@ function safeHandoffMetadataText(value: unknown): string | undefined {
       /\b(?:raw prompt|tool output|transcript text|credential|secret|api[_-]?key)\s*[:=].*$/gi,
       '[redacted content]',
     )
-    .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, '[redacted secret]')
+    .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, '[redacted secret]');
+}
+
+/**
+ * Sanitize a handoff Markdown body before persisting it to the repo. Applies the same sensitive
+ * redactions as metadata but preserves line structure (so the Markdown stays readable) and caps the
+ * total size as a backstop against an accidentally pasted full transcript. Control characters other
+ * than tab are stripped; CR/LF are normalized to LF.
+ */
+export function sanitizeHandoffMarkdownBody(
+  markdown: unknown,
+  maxChars = HANDOFF_DRAFT_BODY_MAX_CHARS,
+): string {
+  const raw = typeof markdown === 'string' ? markdown : '';
+  const redacted = raw
+    .split(/\r\n|\r|\n/)
+    .map((line) => applyHandoffSensitiveRedactions(line).replace(/[^\P{Cc}\t]/gu, ' '))
+    .join('\n');
+  if (redacted.length <= maxChars) return redacted;
+  return `${redacted.slice(0, maxChars)}\n\n[Pixel Agents: handoff body truncated at ${maxChars} characters for safety.]\n`;
+}
+
+function safeHandoffMetadataText(value: unknown): string | undefined {
+  if (typeof value !== 'string' && typeof value !== 'number') return undefined;
+  const title = applyHandoffSensitiveRedactions(String(value))
     .replace(/[\u0000-\u001f\u007f]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()

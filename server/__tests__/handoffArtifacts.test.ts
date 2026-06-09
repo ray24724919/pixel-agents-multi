@@ -25,6 +25,7 @@ import {
   resolveHandoffReportOpenPath,
   resolveHandoffWorkPackageOpenPath,
   safeHandoffFilenamePart,
+  sanitizeHandoffMarkdownBody,
   scanHandoffArtifacts,
   updateHandoffArtifactStatus,
   updateHandoffDispatchStatus,
@@ -987,6 +988,43 @@ describe('handoff artifact path safety', () => {
         fs.rmSync(dir, { recursive: true, force: true });
       }
     }
+  });
+
+  it('sanitizes the handoff markdown body: redacts paths/secrets, preserves structure, caps size', () => {
+    const body = [
+      '# Handoff',
+      '',
+      'Edited src/handoffArtifacts.ts (relative paths stay).',
+      'Ran in C:\\Users\\ray\\secret\\workspace and /home/ray/private/notes.txt',
+      'secret: hunter2-not-a-real-password',
+      'token sk-ABCD1234efgh5678ZZ leaked into the log',
+      '',
+      '## Validation',
+      '- npm test passed',
+    ].join('\n');
+
+    const safe = sanitizeHandoffMarkdownBody(body);
+
+    // Sensitive content is gone.
+    expect(safe).not.toContain('C:\\Users\\ray');
+    expect(safe).not.toContain('/home/ray/private');
+    expect(safe).not.toContain('sk-ABCD1234efgh5678ZZ');
+    expect(safe).not.toContain('hunter2-not-a-real-password');
+    expect(safe).toContain('[redacted path]');
+    expect(safe).toContain('[redacted secret]');
+    expect(safe).toContain('[redacted content]');
+
+    // Markdown structure and relative paths survive (line count and headings preserved).
+    expect(safe).toContain('# Handoff');
+    expect(safe).toContain('## Validation');
+    expect(safe).toContain('src/handoffArtifacts.ts');
+    expect(safe.split('\n')).toHaveLength(body.split('\n').length);
+
+    // A pasted-transcript-sized body is truncated with a visible marker.
+    const huge = 'A'.repeat(250_000);
+    const capped = sanitizeHandoffMarkdownBody(huge);
+    expect(capped.length).toBeLessThan(huge.length);
+    expect(capped).toMatch(/truncated at 100000 characters/);
   });
 
   it('detects report and branch completion with a mocked read-only git runner', () => {
