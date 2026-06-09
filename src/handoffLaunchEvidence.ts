@@ -1,13 +1,14 @@
 import * as fs from 'fs';
 
 import {
-  HANDOFF_CLAUDE_LAUNCH_EVIDENCE_POLL_MS,
-  HANDOFF_CLAUDE_LAUNCH_EVIDENCE_TIMEOUT_MS,
+  HANDOFF_LAUNCH_EVIDENCE_POLL_MS,
+  HANDOFF_LAUNCH_EVIDENCE_TIMEOUT_MS,
 } from './constants.js';
 import type { AgentState } from './types.js';
 
 export type HandoffExecutorLaunchEvidence =
-  | 'codex-terminal'
+  | 'codex-rollout-lines'
+  | 'codex-rollout-file'
   | 'claude-hook'
   | 'claude-transcript-file'
   | 'claude-transcript-lines';
@@ -33,23 +34,32 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function hasNonEmptyTranscript(jsonlFile: string, fsImpl: HandoffLaunchEvidenceFs): boolean {
+  if (!jsonlFile) return false;
+  try {
+    return fsImpl.existsSync(jsonlFile) && fsImpl.statSync(jsonlFile).size > 0;
+  } catch {
+    return false;
+  }
+}
+
 export function getHandoffExecutorLaunchEvidence(
   providerId: 'claude' | 'codex',
   agent: Pick<AgentState, 'hookDelivered' | 'jsonlFile' | 'linesProcessed'>,
   fsImpl: HandoffLaunchEvidenceFs = fs,
 ): HandoffExecutorLaunchEvidence | undefined {
-  if (providerId === 'codex') return 'codex-terminal';
+  if (providerId === 'codex') {
+    // Codex has no hook channel. The only truthful "the session actually started" signal is a
+    // bound rollout transcript: startCodexCwdPoll sets agent.jsonlFile (and replaces the
+    // placeholder sessionId) once a real ~/.codex thread appears in the launch cwd. Until then
+    // the terminal may be sitting on an auth/permission prompt or have errored out, so we report
+    // no evidence and let the caller time out rather than mark the handoff active on a guess.
+    if (agent.linesProcessed > 0) return 'codex-rollout-lines';
+    return hasNonEmptyTranscript(agent.jsonlFile, fsImpl) ? 'codex-rollout-file' : undefined;
+  }
   if (agent.linesProcessed > 0) return 'claude-transcript-lines';
   if (agent.hookDelivered) return 'claude-hook';
-  if (!agent.jsonlFile) return undefined;
-  try {
-    if (fsImpl.existsSync(agent.jsonlFile) && fsImpl.statSync(agent.jsonlFile).size > 0) {
-      return 'claude-transcript-file';
-    }
-  } catch {
-    return undefined;
-  }
-  return undefined;
+  return hasNonEmptyTranscript(agent.jsonlFile, fsImpl) ? 'claude-transcript-file' : undefined;
 }
 
 export async function waitForHandoffExecutorLaunchConfirmation(
@@ -57,8 +67,8 @@ export async function waitForHandoffExecutorLaunchConfirmation(
   agent: Pick<AgentState, 'hookDelivered' | 'jsonlFile' | 'linesProcessed'>,
   options: HandoffLaunchEvidenceOptions = {},
 ): Promise<HandoffExecutorLaunchConfirmation> {
-  const timeoutMs = options.timeoutMs ?? HANDOFF_CLAUDE_LAUNCH_EVIDENCE_TIMEOUT_MS;
-  const pollMs = options.pollMs ?? HANDOFF_CLAUDE_LAUNCH_EVIDENCE_POLL_MS;
+  const timeoutMs = options.timeoutMs ?? HANDOFF_LAUNCH_EVIDENCE_TIMEOUT_MS;
+  const pollMs = options.pollMs ?? HANDOFF_LAUNCH_EVIDENCE_POLL_MS;
   const fsImpl = options.fsImpl ?? fs;
   const sleep = options.sleep ?? delay;
   const deadline = Date.now() + Math.max(0, timeoutMs);

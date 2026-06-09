@@ -19,10 +19,16 @@ import {
   HANDOFF_DISPATCH_PROMPT_MAX_LENGTH,
   HANDOFF_DISPATCH_REPORT_SUFFIX,
   HANDOFF_DISPATCH_REPORTS_RELATIVE_DIR,
+  HANDOFF_DRAFT_BODY_MAX_CHARS,
   HANDOFF_WORK_PACKAGE_PROMPT_MAX_LENGTH,
   HANDOFF_WORK_PACKAGE_RELATIVE_DIR,
   HANDOFF_WORK_PACKAGE_SUFFIX,
 } from './constants.js';
+import type {
+  HandoffExecutorLaunchEvidence,
+  HandoffLaunchEvidenceOptions,
+} from './handoffLaunchEvidence.js';
+import { waitForHandoffExecutorLaunchConfirmation } from './handoffLaunchEvidence.js';
 
 export interface HandoffArtifactNamingInput {
   project?: unknown;
@@ -852,6 +858,73 @@ export function markHandoffExecutorLaunched(
     dispatchPackage,
     execution,
   };
+}
+
+/** Minimal agent shape needed to confirm a launch and attribute the execution. */
+export interface HandoffExecutorLaunchAgent {
+  id: number;
+  agentName?: string;
+  providerId?: string;
+  projectName?: string;
+  folderName?: string;
+  projectDir: string;
+  sessionId: string;
+  hookDelivered: boolean;
+  jsonlFile: string;
+  linesProcessed: number;
+}
+
+export type ConfirmAndMarkHandoffExecutorLaunchOutcome =
+  | {
+      confirmed: true;
+      evidence?: HandoffExecutorLaunchEvidence;
+      result: HandoffExecutorLaunchResult;
+    }
+  | { confirmed: false; errorMessage: string };
+
+/** Operator-facing message shown when a launched terminal never produced a real session signal. */
+export function handoffExecutorLaunchUnconfirmedMessage(providerId: 'claude' | 'codex'): string {
+  return providerId === 'claude'
+    ? 'Claude executor terminal opened, but Pixel Agents did not detect a Claude session transcript yet. Check the terminal for Claude auth, permission, or input prompts; handoff metadata was not marked active.'
+    : 'Codex executor terminal opened, but Pixel Agents did not detect a Codex session yet (no ~/.codex rollout bound). Check the terminal for Codex auth, permission, or input prompts; handoff metadata was not marked active.';
+}
+
+/**
+ * Wait for real launch evidence (Claude transcript/hook, Codex bound rollout) and only then mark the
+ * handoff executor active. The whole point: an opened terminal alone is NOT proof a session started,
+ * so a launch with no evidence must leave the sidecar untouched and report a failure rather than lie
+ * by marking it active. `markLaunched` is injectable for testing; it defaults to the real writer.
+ */
+export async function confirmAndMarkHandoffExecutorLaunch(params: {
+  repoRoot: string;
+  markdownRelativePath: string;
+  providerId: 'claude' | 'codex';
+  agent: HandoffExecutorLaunchAgent;
+  options?: HandoffLaunchEvidenceOptions;
+  nowMs?: number;
+  markLaunched?: typeof markHandoffExecutorLaunched;
+}): Promise<ConfirmAndMarkHandoffExecutorLaunchOutcome> {
+  const { repoRoot, markdownRelativePath, providerId, agent, options, nowMs } = params;
+  const markLaunched = params.markLaunched ?? markHandoffExecutorLaunched;
+
+  const confirmation = await waitForHandoffExecutorLaunchConfirmation(providerId, agent, options);
+  if (!confirmation.confirmed) {
+    return { confirmed: false, errorMessage: handoffExecutorLaunchUnconfirmedMessage(providerId) };
+  }
+
+  const result = markLaunched(
+    repoRoot,
+    markdownRelativePath,
+    {
+      agentId: agent.id,
+      agentName: agent.agentName ?? `Agent #${agent.id}`,
+      providerId: agent.providerId ?? providerId,
+      projectName: agent.projectName ?? agent.folderName ?? path.basename(agent.projectDir),
+      sessionId: agent.sessionId,
+    },
+    nowMs,
+  );
+  return { confirmed: true, evidence: confirmation.evidence, result };
 }
 
 export function detectHandoffCompletionStatus(
@@ -1816,9 +1889,13 @@ function safeHandoffTitle(value: string): string | undefined {
   return safeHandoffMetadataText(value);
 }
 
-function safeHandoffMetadataText(value: unknown): string | undefined {
-  if (typeof value !== 'string' && typeof value !== 'number') return undefined;
-  const title = String(value)
+/**
+ * Redact sensitive substrings (absolute paths, credential/secret lines, API keys) from a single
+ * span of text WITHOUT collapsing whitespace or truncating. Shared by the single-line metadata
+ * sanitizer and the multi-line body sanitizer so both apply the same patterns (no drift).
+ */
+function applyHandoffSensitiveRedactions(text: string): string {
+  return text
     .replace(/\\\\\?\\[^\s)]+/g, '[redacted path]')
     .replace(/[A-Za-z]:\\[^\s)]+/g, '[redacted path]')
     .replace(/\\\\[^\s)]+/g, '[redacted path]')
@@ -1830,7 +1907,31 @@ function safeHandoffMetadataText(value: unknown): string | undefined {
       /\b(?:raw prompt|tool output|transcript text|credential|secret|api[_-]?key)\s*[:=].*$/gi,
       '[redacted content]',
     )
-    .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, '[redacted secret]')
+    .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, '[redacted secret]');
+}
+
+/**
+ * Sanitize a handoff Markdown body before persisting it to the repo. Applies the same sensitive
+ * redactions as metadata but preserves line structure (so the Markdown stays readable) and caps the
+ * total size as a backstop against an accidentally pasted full transcript. Control characters other
+ * than tab are stripped; CR/LF are normalized to LF.
+ */
+export function sanitizeHandoffMarkdownBody(
+  markdown: unknown,
+  maxChars = HANDOFF_DRAFT_BODY_MAX_CHARS,
+): string {
+  const raw = typeof markdown === 'string' ? markdown : '';
+  const redacted = raw
+    .split(/\r\n|\r|\n/)
+    .map((line) => applyHandoffSensitiveRedactions(line).replace(/[^\P{Cc}\t]/gu, ' '))
+    .join('\n');
+  if (redacted.length <= maxChars) return redacted;
+  return `${redacted.slice(0, maxChars)}\n\n[Pixel Agents: handoff body truncated at ${maxChars} characters for safety.]\n`;
+}
+
+function safeHandoffMetadataText(value: unknown): string | undefined {
+  if (typeof value !== 'string' && typeof value !== 'number') return undefined;
+  const title = applyHandoffSensitiveRedactions(String(value))
     .replace(/[\u0000-\u001f\u007f]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()

@@ -59,8 +59,8 @@ import {
   GLOBAL_KEY_LAST_SEEN_VERSION,
   GLOBAL_KEY_SOUND_ENABLED,
   GLOBAL_KEY_WATCH_ALL_SESSIONS,
-  HANDOFF_CLAUDE_LAUNCH_EVIDENCE_POLL_MS,
-  HANDOFF_CLAUDE_LAUNCH_EVIDENCE_TIMEOUT_MS,
+  HANDOFF_LAUNCH_EVIDENCE_POLL_MS,
+  HANDOFF_LAUNCH_EVIDENCE_TIMEOUT_MS,
   LAYOUT_FILE_DIR,
   LAYOUT_REVISION_KEY,
   WORKSPACE_KEY_AGENT_SEATS,
@@ -90,20 +90,20 @@ import {
   buildHandoffArtifactTarget,
   buildHandoffDispatchPrompt,
   buildHandoffWorkPackagePrompt,
+  confirmAndMarkHandoffExecutorLaunch,
   createHandoffWorkPackage,
   linkHandoffExecutionAgent,
-  markHandoffExecutorLaunched,
   readHandoffArtifactMetadataForMarkdown,
   refreshHandoffCompletionStatus,
   resolveHandoffArtifactOpenPath,
   resolveHandoffReportOpenPath,
   resolveHandoffWorkPackageOpenPath,
+  sanitizeHandoffMarkdownBody,
   scanHandoffArtifacts,
   updateHandoffArtifactStatus,
   updateHandoffDispatchStatus,
   updateHandoffExecutionStatus,
 } from './handoffArtifacts.js';
-import { waitForHandoffExecutorLaunchConfirmation } from './handoffLaunchEvidence.js';
 import type { LayoutWatcher } from './layoutPersistence.js';
 import { readLayoutFromFile, watchLayoutFile, writeLayoutToFile } from './layoutPersistence.js';
 import { getExtensionConfigValue, isExtensionConfigExplicitlyConfigured } from './settings.js';
@@ -337,7 +337,11 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         nowMs,
       );
       await fs.promises.mkdir(path.dirname(target.absolutePath), { recursive: true });
-      await fs.promises.writeFile(target.absolutePath, markdown, 'utf8');
+      await fs.promises.writeFile(
+        target.absolutePath,
+        sanitizeHandoffMarkdownBody(markdown),
+        'utf8',
+      );
       await fs.promises.writeFile(
         target.metadataAbsolutePath,
         `${JSON.stringify(metadata, null, 2)}\n`,
@@ -934,25 +938,21 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       if (!agent) {
         throw new Error(`Could not launch ${providerId} executor terminal.`);
       }
-      const launchConfirmation = await waitForHandoffExecutorLaunchConfirmation(providerId, agent, {
-        timeoutMs: HANDOFF_CLAUDE_LAUNCH_EVIDENCE_TIMEOUT_MS,
-        pollMs: HANDOFF_CLAUDE_LAUNCH_EVIDENCE_POLL_MS,
+      const outcome = await confirmAndMarkHandoffExecutorLaunch({
+        repoRoot,
+        markdownRelativePath: prompt.markdown.relativePath,
+        providerId,
+        agent,
+        options: {
+          timeoutMs: HANDOFF_LAUNCH_EVIDENCE_TIMEOUT_MS,
+          pollMs: HANDOFF_LAUNCH_EVIDENCE_POLL_MS,
+        },
       });
-      if (!launchConfirmation.confirmed) {
-        const errorMessage =
-          providerId === 'claude'
-            ? 'Claude executor terminal opened, but Pixel Agents did not detect a Claude session transcript yet. Check the terminal for Claude auth, permission, or input prompts; handoff metadata was not marked active.'
-            : `Could not confirm ${providerId} executor launch. Handoff metadata was not marked active.`;
-        console.warn(`[Pixel Agents] Handoff: ${errorMessage}`);
-        throw new Error(errorMessage);
+      if (!outcome.confirmed) {
+        console.warn(`[Pixel Agents] Handoff: ${outcome.errorMessage}`);
+        throw new Error(outcome.errorMessage);
       }
-      const result = markHandoffExecutorLaunched(repoRoot, prompt.markdown.relativePath, {
-        agentId: agent.id,
-        agentName: agent.agentName ?? `Agent #${agent.id}`,
-        providerId: agent.providerId ?? providerId,
-        projectName: agent.projectName ?? agent.folderName ?? path.basename(agent.projectDir),
-        sessionId: agent.sessionId,
-      });
+      const result = outcome.result;
       this.webview?.postMessage({
         type: 'handoffExecutorLaunched',
         requestId,
