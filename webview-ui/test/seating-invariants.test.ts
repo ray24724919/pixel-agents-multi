@@ -5,6 +5,7 @@ import { FALLBACK_FLOOR_COLOR } from '../src/constants.ts';
 import { OfficeState } from '../src/office/engine/officeState.ts';
 import { buildDynamicCatalog } from '../src/office/layout/furnitureCatalog.ts';
 import { layoutToSeats } from '../src/office/layout/layoutSerializer.ts';
+import { ensureProjectRoomsForAgents } from '../src/office/projectRoomGeneration.ts';
 import {
   CharacterState,
   Direction,
@@ -179,6 +180,13 @@ function seatRoom(
       seat.seatRow >= candidate.bounds.row &&
       seat.seatRow < candidate.bounds.row + candidate.bounds.height,
   );
+}
+
+function generatedRoomLayoutForProjects(...folderNames: string[]): OfficeLayout {
+  return ensureProjectRoomsForAgents(
+    makeLayout([], 12, 8),
+    folderNames.map((folderName) => ({ folderName, isSubagent: false })),
+  ).layout;
 }
 
 test('active agent uses a valid work seat at a desk and PC', () => {
@@ -565,6 +573,60 @@ test('layouts without projectRooms preserve global seating behavior', () => {
   const ch = state.characters.get(1)!;
   assert.equal(ch.seatId, 'a-global-chair');
   assert.equal(state.seats.get(ch.seatId!)?.seatKind, 'work');
+});
+
+test('active project agent uses generated project-local workstation after room provisioning', () => {
+  const layout = generatedRoomLayoutForProjects('Alpha');
+  const state = new OfficeState(layout);
+
+  addAgent(state, 1, true, undefined, 'Alpha');
+
+  const ch = state.characters.get(1)!;
+  const seat = ch.seatId ? state.seats.get(ch.seatId) : undefined;
+  assert.equal(ch.state, CharacterState.TYPE);
+  assert.equal(seat?.seatKind, 'work');
+  assert.equal(seat?.zoneSource, 'workstation');
+  assert.equal(seatRoom(layout, ch.seatId)?.id, 'project-alpha');
+});
+
+test('active project agent does not type in generated rest seat', () => {
+  const layout = generatedRoomLayoutForProjects('Alpha');
+  const state = new OfficeState(layout);
+
+  addAgent(state, 1, true, 'project-alpha-rest-seat', 'Alpha');
+
+  const ch = state.characters.get(1)!;
+  const seat = ch.seatId ? state.seats.get(ch.seatId) : undefined;
+  assert.notEqual(ch.seatId, 'project-alpha-rest-seat');
+  assert.equal(ch.state, CharacterState.TYPE);
+  assert.equal(seat?.seatKind, 'work');
+});
+
+test('idle project agent can use generated project-local rest seat', () => {
+  const layout = generatedRoomLayoutForProjects('Alpha');
+  const state = new OfficeState(layout);
+
+  addAgent(state, 1, false, undefined, 'Alpha');
+
+  const ch = state.characters.get(1)!;
+  const seat = ch.seatId ? state.seats.get(ch.seatId) : undefined;
+  assert.equal(seat?.seatKind, 'rest');
+  assert.equal(seatRoom(layout, ch.seatId)?.id, 'project-alpha');
+});
+
+test('refresh randomize remains duplicate-safe across generated project rooms', () => {
+  const layout = generatedRoomLayoutForProjects('Alpha', 'Beta');
+  const state = new OfficeState(layout);
+  addAgent(state, 1, true, undefined, 'Alpha');
+  addAgent(state, 2, true, undefined, 'Beta');
+
+  state.randomizeTopLevelSeats();
+
+  const alphaSeat = state.characters.get(1)?.seatId;
+  const betaSeat = state.characters.get(2)?.seatId;
+  assert.equal(new Set([alphaSeat, betaSeat]).size, 2);
+  assert.equal(seatRoom(layout, alphaSeat)?.id, 'project-alpha');
+  assert.equal(seatRoom(layout, betaSeat)?.id, 'project-beta');
 });
 
 test('sofa and coffee table seats remain rest even in the default work split', () => {

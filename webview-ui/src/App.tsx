@@ -21,6 +21,7 @@ import { Tooltip } from './components/Tooltip.js';
 import { Modal } from './components/ui/Modal.js';
 import { VersionIndicator } from './components/VersionIndicator.js';
 import { ZoomControls } from './components/ZoomControls.js';
+import { PROJECT_ROOM_AUTO_PROVISION_DEBOUNCE_MS } from './constants.js';
 import { useEditorActions } from './hooks/useEditorActions.js';
 import { useEditorKeyboard } from './hooks/useEditorKeyboard.js';
 import { useExtensionMessages } from './hooks/useExtensionMessages.js';
@@ -111,6 +112,11 @@ function App() {
   const [pendingCloseAgentId, setPendingCloseAgentId] = useState<number | null>(null);
   const [pendingKillConfirm, setPendingKillConfirm] = useState(false);
   const [showHiddenAgents, setShowHiddenAgents] = useState(false);
+  const {
+    handleAutoProvisionProjectRooms,
+    isDirty: editorIsDirty,
+    isEditMode: editorIsEditMode,
+  } = editor;
   const activeAgentCenterPage: AgentCenterPage = isAgentCenterPage(activePage)
     ? activePage
     : 'agents';
@@ -198,6 +204,47 @@ function App() {
     () => subagentCharacters.filter((subagent) => visibleAgentIds.has(subagent.id)),
     [subagentCharacters, visibleAgentIds],
   );
+  const autoProvisionIdentityKey = useMemo(
+    () =>
+      agents
+        .map((id) => {
+          const ch = officeState.characters.get(id);
+          const runtime = agentRuntimeMetadata[id];
+          return [
+            id,
+            hiddenAgents[id] === true ? 'hidden' : 'visible',
+            ch?.isSubagent ? 'sub' : 'top',
+            ch?.folderName ?? '',
+            ch?.providerId ?? '',
+            runtime?.projectDir ?? '',
+          ].join(':');
+        })
+        .join('|'),
+    [agentRuntimeMetadata, agents, hiddenAgents, officeState],
+  );
+
+  useEffect(() => {
+    if (!layoutReady || !loadedAssets || agents.length === 0) return;
+    if (editorIsEditMode && editorIsDirty) return;
+    const timer = window.setTimeout(() => {
+      handleAutoProvisionProjectRooms({
+        agentIds: agents,
+        hiddenAgents,
+        agentRuntimeMetadata,
+      });
+    }, PROJECT_ROOM_AUTO_PROVISION_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [
+    agentRuntimeMetadata,
+    agents,
+    autoProvisionIdentityKey,
+    editorIsDirty,
+    editorIsEditMode,
+    handleAutoProvisionProjectRooms,
+    hiddenAgents,
+    layoutReady,
+    loadedAssets,
+  ]);
 
   useEffect(() => {
     if (officeState.selectedAgentId !== null && !visibleAgentIds.has(officeState.selectedAgentId)) {

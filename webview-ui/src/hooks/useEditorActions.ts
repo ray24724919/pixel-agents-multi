@@ -42,6 +42,17 @@ import { EditTool } from '../office/types.js';
 import { TileType } from '../office/types.js';
 import { vscode } from '../vscodeApi.js';
 
+interface ProjectRoomProvisioningRuntimeMetadata {
+  projectDir?: string;
+  projectName?: string;
+}
+
+interface ProjectRoomProvisioningOptions {
+  agentIds: readonly number[];
+  hiddenAgents?: Record<number, boolean>;
+  agentRuntimeMetadata?: Record<number, ProjectRoomProvisioningRuntimeMetadata>;
+}
+
 interface EditorActions {
   isEditMode: boolean;
   editorTick: number;
@@ -66,6 +77,7 @@ interface EditorActions {
   handleUpdateSelectedRoom: (patch: ProjectRoomEditorPatch) => void;
   handleDeleteSelectedRoom: () => void;
   handleAutoCreateProjectRooms: (visibleAgentIds?: Set<number>) => void;
+  handleAutoProvisionProjectRooms: (options: ProjectRoomProvisioningOptions) => boolean;
   handleDeleteSelected: () => void;
   handleRotateSelected: () => void;
   handleToggleState: () => void;
@@ -363,6 +375,41 @@ export function useEditorActions(
       }
     },
     [applyEdit, editorState, getOfficeState],
+  );
+
+  const handleAutoProvisionProjectRooms = useCallback(
+    (options: ProjectRoomProvisioningOptions) => {
+      if (editorState.isDirty) return false;
+      const os = getOfficeState();
+      const layout = os.getLayout();
+      const allowedIds = new Set(options.agentIds);
+      const result = ensureProjectRoomsForAgents(
+        layout,
+        os
+          .getCharacters()
+          .filter((ch) => allowedIds.has(ch.id))
+          .map((ch) => {
+            const runtime = options.agentRuntimeMetadata?.[ch.id];
+            return {
+              folderName: ch.folderName,
+              projectDir: runtime?.projectDir,
+              projectName: runtime?.projectName,
+              providerId: ch.providerId,
+              isSubagent: ch.isSubagent,
+              hidden: options.hiddenAgents?.[ch.id] === true,
+            };
+          }),
+      );
+      if (result.layout === layout || result.createdRooms.length === 0) return false;
+      os.rebuildFromLayout(result.layout);
+      saveLayout(result.layout);
+      lastSavedLayoutRef.current = structuredClone(result.layout);
+      editorState.isDirty = false;
+      setIsDirty(false);
+      setEditorTick((n) => n + 1);
+      return true;
+    },
+    [editorState, getOfficeState, saveLayout],
   );
 
   const handleDeleteSelected = useCallback(() => {
@@ -756,6 +803,7 @@ export function useEditorActions(
     handleUpdateSelectedRoom,
     handleDeleteSelectedRoom,
     handleAutoCreateProjectRooms,
+    handleAutoProvisionProjectRooms,
     handleDeleteSelected,
     handleRotateSelected,
     handleToggleState,
