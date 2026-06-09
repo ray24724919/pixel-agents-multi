@@ -750,6 +750,29 @@
               </ul>
             </div>
           </article>
+
+          <article class="timeline-card">
+            <div>
+              <div class="date">2026-06-08 至 2026-06-09</div>
+              <div class="tag-row">
+                <span class="tag">W18</span>
+                <span class="tag important">Project Rooms</span>
+              </div>
+            </div>
+            <div>
+              <h3>Project Rooms 從 MVP 走向產品化工作室</h3>
+              <p class="note">
+                Project Rooms 建立 project-aware seating、doorplates、auto room creation、work
+                corridor layout，並在 W18-S 修正預設新建房間過度擁擠的問題。
+              </p>
+              <ul>
+                <li>預設生成房間升級為 <code>12x10</code> studio，家具不再貼著 room shell。</li>
+                <li>大廳改成水平 work corridor，左右與後續 bay 都有穩定的 project room slot。</li>
+                <li>第 5 個以上 project 會向右新增 corridor bay，不回頭重排前兩個 bay。</li>
+                <li>既有 generated rooms 可 reflow 到新版預設樣式，避免舊房間保持切邊感。</li>
+              </ul>
+            </div>
+          </article>
         </section>
 
         <h2 id="versions">版本與本機安裝</h2>
@@ -792,6 +815,7 @@
               <li>Usage Intelligence Overview / Live / History dashboard，包含 persisted history、provider/project ranking、trend 與 quota cues。</li>
               <li>Timeline persisted history + Session Replay MVP。</li>
               <li>Supervisor delegation visibility 與 office visual markers。</li>
+              <li>Project Rooms：project-aware work/rest seating、doorplates、auto-created rooms、horizontal work corridor 與 bay-based growth。</li>
               <li>Repo-centered Handoff artifacts：Markdown + <code>.handoff.json</code> sidecar + Recent Handoffs library。</li>
               <li>Handoff Queue：work package、dispatch status、execution metadata、completion refresh、report open。</li>
               <li>Executor launch：package-backed Codex / Claude launch，launch 後回寫 safe sidecar metadata，Queue 顯示 active / waiting / blocked / completed / report-ready / stale unknown cues。</li>
@@ -987,6 +1011,16 @@
                 <td>W16-B</td>
                 <td><a href="roadmap/supervision/reports/W16-B-usage-dashboard-productization-report.md">W16-B report</a></td>
                 <td>Usage dashboard productization：Overview / Live / History、trend bars、provider/project ranking、quota/reliability cues。</td>
+              </tr>
+              <tr>
+                <td>W18</td>
+                <td><a href="roadmap/product/project-rooms-roadmap.md">project-rooms-roadmap.md</a></td>
+                <td>Project Rooms product direction：room-scoped seating、doorplates、auto creation、corridor/bay growth policy。</td>
+              </tr>
+              <tr>
+                <td>W18-S</td>
+                <td><a href="roadmap/supervision/reports/W18-S-project-room-default-and-growth-plan-report.md">W18-S report</a></td>
+                <td>Default project room studio sizing、generated furniture inset、stable bay-based work corridor growth。</td>
               </tr>
             </tbody>
           </table>
