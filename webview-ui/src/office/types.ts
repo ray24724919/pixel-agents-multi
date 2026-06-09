@@ -240,6 +240,10 @@ export interface Character {
   matrixEffectSeeds: number[];
   /** Workspace folder name (only set for multi-root workspaces) */
   folderName?: string;
+  /** Provider/project cwd when available. Used for project-room seating. */
+  projectDir?: string;
+  /** Safe provider/project display name when available. */
+  projectName?: string;
   /** Source provider, e.g. codex or claude */
   providerId?: string;
 

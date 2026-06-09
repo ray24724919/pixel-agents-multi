@@ -539,10 +539,14 @@ export function useExtensionMessages(
         p.folderName,
         resolveRestoredAgentInitialActive(p.initialActive, latestActivity),
         true,
+        p.projectDir,
+        p.projectName,
       );
       const ch = os.characters.get(p.id);
       if (ch) {
         ch.folderName = p.folderName;
+        ch.projectDir = p.projectDir;
+        ch.projectName = p.projectName;
         ch.agentName = p.agentName;
         ch.providerId = p.providerId;
       }
@@ -641,19 +645,45 @@ export function useExtensionMessages(
           const parentCh = os.characters.get(teammateParentId);
           const palette = parentCh ? parentCh.palette : undefined;
           const hueShift = parentCh ? parentCh.hueShift : undefined;
-          os.addAgent(id, palette, hueShift, undefined, undefined, parentCh?.folderName);
+          os.addAgent(
+            id,
+            palette,
+            hueShift,
+            undefined,
+            undefined,
+            parentCh?.folderName,
+            true,
+            false,
+            parentCh?.projectDir,
+            parentCh?.projectName,
+          );
           // Set team metadata on the character
           const ch = os.characters.get(id);
           if (ch) {
+            ch.projectDir = parentCh?.projectDir;
+            ch.projectName = parentCh?.projectName;
             ch.leadAgentId = teammateParentId;
             ch.teamName = teamName ?? parentCh?.teamName;
             ch.agentName = teammateName;
           }
           setAgentOfficeActivity(os, id, true);
         } else {
-          os.addAgent(id, undefined, undefined, undefined, undefined, folderName);
+          os.addAgent(
+            id,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            folderName,
+            true,
+            false,
+            projectDir,
+            projectName,
+          );
           const ch = os.characters.get(id);
           if (ch) {
+            ch.projectDir = projectDir;
+            ch.projectName = projectName;
             ch.agentName = agentName;
             ch.providerId = providerId;
           }
@@ -720,9 +750,16 @@ export function useExtensionMessages(
         const id = msg.id as number;
         const ch = os.characters.get(id);
         if (ch) {
-          ch.folderName = msg.folderName as string | undefined;
-          ch.agentName = msg.agentName as string | undefined;
-          ch.providerId = msg.providerId as string | undefined;
+          const folderName = msg.folderName as string | undefined;
+          const projectDir = msg.projectDir as string | undefined;
+          const projectName = msg.projectName as string | undefined;
+          const agentName = msg.agentName as string | undefined;
+          const providerId = msg.providerId as string | undefined;
+          if (folderName !== undefined) ch.folderName = folderName;
+          if (projectDir !== undefined) ch.projectDir = projectDir;
+          if (projectName !== undefined) ch.projectName = projectName;
+          if (agentName !== undefined) ch.agentName = agentName;
+          if (providerId !== undefined) ch.providerId = providerId;
         }
         setAgentRuntimeMetadata((prev) => ({
           ...prev,
@@ -776,9 +813,11 @@ export function useExtensionMessages(
           const m = meta[id];
           const ch = os.characters.get(id);
           if (ch) {
-            ch.folderName = folderNames[id];
-            ch.agentName = agentNames[id];
-            ch.providerId = providerIds[id];
+            if (folderNames[id] !== undefined) ch.folderName = folderNames[id];
+            if (projectDirs[id] !== undefined) ch.projectDir = projectDirs[id];
+            if (projectNames[id] !== undefined) ch.projectName = projectNames[id];
+            if (agentNames[id] !== undefined) ch.agentName = agentNames[id];
+            if (providerIds[id] !== undefined) ch.providerId = providerIds[id];
           }
           const restoredAgent: PendingAgent = {
             id,

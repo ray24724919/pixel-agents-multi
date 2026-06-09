@@ -108,8 +108,14 @@ export function normalizeProjectKey(value: string | undefined): string | null {
   return normalized ? normalized.slice(0, PROJECT_ROOM_PROJECT_KEY_MAX_LENGTH) : null;
 }
 
-export function deriveAgentProjectKey(ch: Pick<Character, 'folderName'>): string | null {
-  return normalizeProjectKey(ch.folderName);
+export function deriveAgentProjectKey(
+  ch: Pick<Character, 'folderName' | 'projectDir' | 'projectName'>,
+): string | null {
+  return (
+    normalizeProjectKey(ch.projectDir) ??
+    normalizeProjectKey(ch.projectName) ??
+    normalizeProjectKey(ch.folderName)
+  );
 }
 
 function normalizeProjectRoomProject(value: unknown): ProjectRoom['project'] | undefined {
@@ -291,7 +297,7 @@ export function seatPriorityForProjectKey(
 
 export function seatPriorityForAgent(
   layout: OfficeLayout,
-  ch: Pick<Character, 'folderName'>,
+  ch: Pick<Character, 'folderName' | 'projectDir' | 'projectName'>,
   seat: Pick<Seat, 'seatCol' | 'seatRow'>,
   mode: RoomMode,
 ): number {
