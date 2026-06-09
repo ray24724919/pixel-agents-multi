@@ -14,8 +14,9 @@ coordinate scripts, SendKeys, or direct edits to VS Code user storage as a subst
 
 - Branch: `product/w18-f-project-rooms-live-qa-polish`
 - Base commit: `99c33f0 Merge W18-CDE: project rooms MVP`
-- Package commit: pending at report authoring; final commit hash is the report commit on this
-  branch.
+- Package commit: `aae2a8b test: validate project rooms live qa`
+- Supervisor report finalization commit: documents the actual package hash and repeats the installed
+  extension identity check.
 
 ## Files Changed
 
@@ -72,6 +73,8 @@ No product source files were changed.
   - Node emitted the existing `url.parse()` deprecation warning from the verification script.
 - `code --list-extensions --show-versions | rg "raychen\.pixel-agents-multi|pixel-agents"`
   - Returned `raychen.pixel-agents-multi@1.3.0`.
+- Supervisor verification repeated `npm run verify:installed` and the installed-extension list check
+  after reviewing the report; both still passed.
 
 ## Automated Validation
 
