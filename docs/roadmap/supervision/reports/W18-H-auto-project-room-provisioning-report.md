@@ -10,6 +10,12 @@ Base commit: `3d1a172 Merge W18-G: project rooms installed live QA`
 
 Final commit hash: recorded by git after this report is committed; see final executor response.
 
+Supervisor follow-up after user review: the first auto-generated rooms worked, but the default room
+looked too sparse compared with the existing hand-built workroom. The generated room template now
+prefers the existing lower-workroom style when assets are available: a larger room with a
+`TABLE_FRONT` four-computer work table, `PC_SIDE`/`PC_SIDE:left` pairs, and
+`WOODEN_CHAIR_SIDE`/`WOODEN_CHAIR_SIDE:left` seating.
+
 ## Files Changed
 
 - `webview-ui/src/App.tsx`
@@ -58,7 +64,11 @@ Generated project rooms include:
 
 - walkable floor tiles;
 - safe `projectRooms` metadata with stable id, normalized project key, display name, provider ids, source, and timestamps;
-- one practical workstation using a real desk/table, a matching electronics item, and a work chair;
+- a default collaborative workroom template when assets are available:
+  - `TABLE_FRONT`;
+  - four side-facing PCs;
+  - four side-facing wooden work chairs;
+- fallback to one practical workstation using a real desk/table, a matching electronics item, and a work chair when collaborative assets are unavailable;
 - one rest seat when room size permits.
 
 The W18-G workstation regression remains protected:
@@ -66,6 +76,8 @@ The W18-G workstation regression remains protected:
 - generation prefers `DESK_FRONT + PC_FRONT_OFF` when available;
 - electronics orientation is matched to the workstation orientation;
 - `COFFEE_TABLE + PC_BACK` is not used when a real desk/work PC combination exists.
+- generated collaborative rooms now preserve the current office's lower work-table style and produce
+  four valid workstation seats.
 
 ## Persistence Behavior
 
@@ -103,6 +115,7 @@ Added/expanded webview tests cover:
 - `MAX_COLS`/`MAX_ROWS` overflow safety;
 - stable non-overlapping rooms for multiple projects;
 - real workstation selection and matching electronics orientation;
+- collaborative four-computer default workroom generation;
 - generated rest seats;
 - active/idle seating behavior after generated rooms;
 - no typing in generated rest seats;
@@ -118,7 +131,7 @@ Automated validation:
 - `npm run build`
   - Passed
 - `npm run test:webview`
-  - Passed: 222 tests
+  - Passed: 223 tests after supervisor collaborative-room follow-up
 - `npm run test:server`
   - Passed: 284 tests
 - `npm run verify:installed`
@@ -131,7 +144,7 @@ Package/install validation:
 - `npx vsce package`
   - Passed
   - VSIX: `pixel-agents-multi-1.3.0.vsix`
-  - Contents summary from package output: 188 files, approximately 730.18 KB
+  - Contents summary from package output after supervisor collaborative-room follow-up: 188 files, approximately 730.58 KB
 - `code --install-extension pixel-agents-multi-1.3.0.vsix --force`
   - Passed
 - `code --list-extensions --show-versions | rg "raychen\.pixel-agents-multi|pixel-agents"`

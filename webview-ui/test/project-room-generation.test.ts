@@ -379,6 +379,140 @@ test('generated workstation prefers a front desk with matching front electronics
   assert.notEqual(furnitureByUid.get('project-alpha-tech'), 'PC_BACK');
 });
 
+test('generated room prefers the collaborative four-computer work table when available', () => {
+  const assets: TestCatalogAsset[] = [
+    {
+      id: 'DESK_FRONT',
+      label: 'Desk Front',
+      category: 'desks',
+      width: TILE_SIZE * 3,
+      height: TILE_SIZE * 2,
+      footprintW: 3,
+      footprintH: 2,
+      isDesk: true,
+      backgroundTiles: 1,
+      orientation: 'front',
+    },
+    {
+      id: 'TABLE_FRONT',
+      label: 'Table',
+      category: 'desks',
+      width: TILE_SIZE * 3,
+      height: TILE_SIZE * 4,
+      footprintW: 3,
+      footprintH: 4,
+      isDesk: true,
+      backgroundTiles: 1,
+    },
+    {
+      id: 'PC_FRONT_OFF',
+      label: 'PC Front Off',
+      category: 'electronics',
+      width: TILE_SIZE,
+      height: TILE_SIZE,
+      footprintW: 1,
+      footprintH: 1,
+      isDesk: false,
+      canPlaceOnSurfaces: true,
+      orientation: 'front',
+    },
+    {
+      id: 'PC_SIDE',
+      label: 'PC Side',
+      category: 'electronics',
+      width: TILE_SIZE,
+      height: TILE_SIZE * 2,
+      footprintW: 1,
+      footprintH: 2,
+      isDesk: false,
+      canPlaceOnSurfaces: true,
+      orientation: 'side',
+    },
+    {
+      id: 'PC_SIDE:left',
+      label: 'PC Side Left',
+      category: 'electronics',
+      width: TILE_SIZE,
+      height: TILE_SIZE * 2,
+      footprintW: 1,
+      footprintH: 2,
+      isDesk: false,
+      canPlaceOnSurfaces: true,
+      orientation: 'left',
+    },
+    {
+      id: 'CHAIR_UP',
+      label: 'Chair Up',
+      category: 'chairs',
+      width: TILE_SIZE,
+      height: TILE_SIZE,
+      footprintW: 1,
+      footprintH: 1,
+      isDesk: false,
+      orientation: 'back',
+    },
+    {
+      id: 'WOODEN_CHAIR_SIDE',
+      label: 'Wooden Chair Side',
+      category: 'chairs',
+      width: TILE_SIZE,
+      height: TILE_SIZE * 2,
+      footprintW: 1,
+      footprintH: 2,
+      isDesk: false,
+      backgroundTiles: 1,
+      orientation: 'side',
+    },
+    {
+      id: 'WOODEN_CHAIR_SIDE:left',
+      label: 'Wooden Chair Side Left',
+      category: 'chairs',
+      width: TILE_SIZE,
+      height: TILE_SIZE * 2,
+      footprintW: 1,
+      footprintH: 2,
+      isDesk: false,
+      backgroundTiles: 1,
+      orientation: 'left',
+    },
+    {
+      id: 'CUSHIONED_BENCH',
+      label: 'Cushioned Bench',
+      category: 'chairs',
+      width: TILE_SIZE,
+      height: TILE_SIZE,
+      footprintW: 1,
+      footprintH: 1,
+      isDesk: false,
+    },
+  ];
+  buildDynamicCatalog({
+    catalog: assets,
+    sprites: Object.fromEntries(assets.map((asset) => [asset.id, sprite])),
+  });
+
+  const result = ensureProjectRoomsForAgents(makeLayout(), [
+    { folderName: 'Alpha', isSubagent: false },
+  ]);
+  const furnitureByUid = new Map(result.layout.furniture.map((item) => [item.uid, item.type]));
+  const room = result.createdRooms[0]!;
+  const roomSeats = [...layoutToSeats(result.layout).values()].filter(
+    (seat) =>
+      seat.seatCol >= room.bounds.col &&
+      seat.seatCol < room.bounds.col + room.bounds.width &&
+      seat.seatRow >= room.bounds.row &&
+      seat.seatRow < room.bounds.row + room.bounds.height,
+  );
+
+  assert.equal(furnitureByUid.get('project-alpha-team-table'), 'TABLE_FRONT');
+  assert.equal(furnitureByUid.get('project-alpha-pc-right-2'), 'PC_SIDE');
+  assert.equal(furnitureByUid.get('project-alpha-pc-left-2'), 'PC_SIDE:left');
+  assert.equal(furnitureByUid.get('project-alpha-chair-right-2'), 'WOODEN_CHAIR_SIDE');
+  assert.equal(furnitureByUid.get('project-alpha-chair-left-2'), 'WOODEN_CHAIR_SIDE:left');
+  assert.equal(roomSeats.filter((seat) => seat.seatKind === 'work').length, 4);
+  assert.ok(roomSeats.some((seat) => seat.seatKind === 'rest'));
+});
+
 test('repeated generation does not duplicate rooms and keeps stable ids', () => {
   const first = ensureProjectRoomsForAgents(makeLayout(), [
     { folderName: 'Alpha', isSubagent: false },

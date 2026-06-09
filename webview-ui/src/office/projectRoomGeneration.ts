@@ -1,6 +1,18 @@
 import type { ColorValue } from '../components/ui/types.js';
 import {
   DEFAULT_FLOOR_COLOR,
+  PROJECT_ROOM_COLLAB_BOTTOM_ROW_OFFSET,
+  PROJECT_ROOM_COLLAB_LEFT_CHAIR_OFFSET_COL,
+  PROJECT_ROOM_COLLAB_LEFT_PC_OFFSET_COL,
+  PROJECT_ROOM_COLLAB_REST_SEAT_OFFSET_COL,
+  PROJECT_ROOM_COLLAB_REST_SEAT_OFFSET_ROW,
+  PROJECT_ROOM_COLLAB_RIGHT_CHAIR_OFFSET_COL,
+  PROJECT_ROOM_COLLAB_RIGHT_PC_OFFSET_COL,
+  PROJECT_ROOM_COLLAB_TABLE_OFFSET_COL,
+  PROJECT_ROOM_COLLAB_TABLE_OFFSET_ROW,
+  PROJECT_ROOM_COLLAB_TEMPLATE_MIN_HEIGHT,
+  PROJECT_ROOM_COLLAB_TEMPLATE_MIN_WIDTH,
+  PROJECT_ROOM_COLLAB_TOP_ROW_OFFSET,
   PROJECT_ROOM_DEFAULT_HEIGHT,
   PROJECT_ROOM_DEFAULT_WIDTH,
   PROJECT_ROOM_GENERATED_MARGIN,
@@ -45,6 +57,15 @@ interface RoomTemplateAssets {
   electronics: FurnitureCatalogEntry;
   workChair: FurnitureCatalogEntry;
   restSeat?: FurnitureCatalogEntry;
+  collaboration?: CollaborationTemplateAssets;
+}
+
+interface CollaborationTemplateAssets {
+  table: FurnitureCatalogEntry;
+  rightElectronics: FurnitureCatalogEntry;
+  leftElectronics: FurnitureCatalogEntry;
+  rightChair: FurnitureCatalogEntry;
+  leftChair: FurnitureCatalogEntry;
 }
 
 interface ProjectRoomGenerationProject {
@@ -217,8 +238,84 @@ function pickRoomTemplateAssets(): RoomTemplateAssets | null {
     desk,
     electronics,
     workChair,
+    ...(pickCollaborationTemplateAssets(entries) ?? {}),
     ...(restSeat ? { restSeat } : {}),
   };
+}
+
+function pickCollaborationTemplateAssets(
+  entries: FurnitureCatalogEntry[],
+): Pick<RoomTemplateAssets, 'collaboration'> | null {
+  const table = pickCollaborationTable(entries);
+  const rightElectronics = pickSideElectronics(entries, 'right');
+  const leftElectronics = pickSideElectronics(entries, 'left');
+  const rightChair = pickSideChair(entries, 'right');
+  const leftChair = pickSideChair(entries, 'left');
+  if (!table || !rightElectronics || !leftElectronics || !rightChair || !leftChair) return null;
+  return {
+    collaboration: {
+      table,
+      rightElectronics,
+      leftElectronics,
+      rightChair,
+      leftChair,
+    },
+  };
+}
+
+function pickCollaborationTable(
+  entries: FurnitureCatalogEntry[],
+): FurnitureCatalogEntry | undefined {
+  return pickPreferredEntry(
+    entries,
+    (entry) =>
+      entry.category === 'desks' &&
+      entry.isDesk &&
+      entry.footprintW >= 3 &&
+      entry.footprintH >= 4 &&
+      !isCoffeeFurniture(entry),
+    (entry) => {
+      if (entry.type === 'TABLE_FRONT') return 100;
+      if (/table/i.test(`${entry.type} ${entry.label}`)) return 50;
+      return 0;
+    },
+  );
+}
+
+function pickSideElectronics(
+  entries: FurnitureCatalogEntry[],
+  side: 'left' | 'right',
+): FurnitureCatalogEntry | undefined {
+  return pickPreferredEntry(
+    entries,
+    (entry) =>
+      entry.category === 'electronics' &&
+      !!entry.canPlaceOnSurfaces &&
+      isOffOrStaticElectronics(entry) &&
+      isSideOrientation(entry.orientation, side),
+    (entry) => {
+      if (side === 'left' && entry.type === 'PC_SIDE:left') return 100;
+      if (side === 'right' && entry.type === 'PC_SIDE') return 100;
+      if (/pc/i.test(entry.type)) return 50;
+      return 0;
+    },
+  );
+}
+
+function pickSideChair(
+  entries: FurnitureCatalogEntry[],
+  side: 'left' | 'right',
+): FurnitureCatalogEntry | undefined {
+  return pickPreferredEntry(
+    entries,
+    (entry) => entry.category === 'chairs' && isSideOrientation(entry.orientation, side),
+    (entry) => {
+      if (side === 'left' && entry.type === 'WOODEN_CHAIR_SIDE:left') return 100;
+      if (side === 'right' && entry.type === 'WOODEN_CHAIR_SIDE') return 100;
+      if (/wooden/i.test(entry.type)) return 50;
+      return 0;
+    },
+  );
 }
 
 function pickWorkstationDesk(entries: FurnitureCatalogEntry[]): FurnitureCatalogEntry | undefined {
@@ -285,6 +382,11 @@ function isOrientationCompatible(
   return false;
 }
 
+function isSideOrientation(orientation: string | undefined, side: 'left' | 'right'): boolean {
+  if (side === 'left') return orientation === 'left';
+  return orientation === 'side' || orientation === 'right';
+}
+
 function isOffOrStaticElectronics(entry: FurnitureCatalogEntry): boolean {
   return !/_ON(?:_|$)/i.test(entry.type);
 }
@@ -298,6 +400,17 @@ function pickEntry(
   predicate: (entry: FurnitureCatalogEntry) => boolean,
 ): FurnitureCatalogEntry | undefined {
   return entries.filter(predicate).sort((a, b) => a.type.localeCompare(b.type))[0];
+}
+
+function pickPreferredEntry(
+  entries: FurnitureCatalogEntry[],
+  predicate: (entry: FurnitureCatalogEntry) => boolean,
+  score: (entry: FurnitureCatalogEntry) => number,
+): FurnitureCatalogEntry | undefined {
+  return entries.filter(predicate).sort((a, b) => {
+    const scoreDelta = score(b) - score(a);
+    return scoreDelta === 0 ? a.type.localeCompare(b.type) : scoreDelta;
+  })[0];
 }
 
 function allocateRoomBounds(
@@ -576,6 +689,14 @@ function clampInt(value: number, min: number, max: number): number {
 }
 
 function buildRoomFurniture(room: ProjectRoom, template: RoomTemplateAssets): PlacedFurniture[] {
+  if (
+    template.collaboration &&
+    room.bounds.width >= PROJECT_ROOM_COLLAB_TEMPLATE_MIN_WIDTH &&
+    room.bounds.height >= PROJECT_ROOM_COLLAB_TEMPLATE_MIN_HEIGHT
+  ) {
+    return buildCollaborationRoomFurniture(room, template);
+  }
+
   const { col, row, width } = room.bounds;
   const furniture: PlacedFurniture[] = [
     { uid: `${room.id}-desk`, type: template.desk.type, col: col + 2, row: row + 1 },
@@ -590,6 +711,65 @@ function buildRoomFurniture(room: ProjectRoom, template: RoomTemplateAssets): Pl
       row: row + 4,
     });
   }
+  return furniture;
+}
+
+function buildCollaborationRoomFurniture(
+  room: ProjectRoom,
+  template: RoomTemplateAssets,
+): PlacedFurniture[] {
+  const { col, row } = room.bounds;
+  const collaboration = template.collaboration!;
+  const furniture: PlacedFurniture[] = [
+    {
+      uid: `${room.id}-team-table`,
+      type: collaboration.table.type,
+      col: col + PROJECT_ROOM_COLLAB_TABLE_OFFSET_COL,
+      row: row + PROJECT_ROOM_COLLAB_TABLE_OFFSET_ROW,
+    },
+  ];
+
+  for (const rowOffset of [
+    PROJECT_ROOM_COLLAB_TOP_ROW_OFFSET,
+    PROJECT_ROOM_COLLAB_BOTTOM_ROW_OFFSET,
+  ]) {
+    furniture.push(
+      {
+        uid: `${room.id}-pc-right-${rowOffset}`,
+        type: collaboration.rightElectronics.type,
+        col: col + PROJECT_ROOM_COLLAB_LEFT_PC_OFFSET_COL,
+        row: row + rowOffset,
+      },
+      {
+        uid: `${room.id}-pc-left-${rowOffset}`,
+        type: collaboration.leftElectronics.type,
+        col: col + PROJECT_ROOM_COLLAB_RIGHT_PC_OFFSET_COL,
+        row: row + rowOffset,
+      },
+      {
+        uid: `${room.id}-chair-right-${rowOffset}`,
+        type: collaboration.rightChair.type,
+        col: col + PROJECT_ROOM_COLLAB_LEFT_CHAIR_OFFSET_COL,
+        row: row + rowOffset,
+      },
+      {
+        uid: `${room.id}-chair-left-${rowOffset}`,
+        type: collaboration.leftChair.type,
+        col: col + PROJECT_ROOM_COLLAB_RIGHT_CHAIR_OFFSET_COL,
+        row: row + rowOffset,
+      },
+    );
+  }
+
+  if (template.restSeat) {
+    furniture.push({
+      uid: `${room.id}-rest-seat`,
+      type: template.restSeat.type,
+      col: col + PROJECT_ROOM_COLLAB_REST_SEAT_OFFSET_COL,
+      row: row + PROJECT_ROOM_COLLAB_REST_SEAT_OFFSET_ROW,
+    });
+  }
+
   return furniture;
 }
 
