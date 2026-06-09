@@ -386,6 +386,30 @@ test('active agents match generated project rooms by projectDir before display n
   assert.equal(seatRoom(layout, ch.seatId)?.id, 'room-pixel');
 });
 
+test('late projectDir metadata repair moves an active agent into its project room', () => {
+  const pixelProjectDir = 'C:\\Users\\User\\Documents\\raychen\\pixel-agents-multi';
+  const otherProjectDir = 'C:\\Users\\User\\Documents\\raychen\\animfy_gs1';
+  const layout = makeLayout(
+    [...workstationFurniture('a-other-chair', 0), ...workstationFurniture('z-pixel-chair', 6)],
+    14,
+    8,
+  );
+  layout.projectRooms = [
+    projectRoom('room-other', otherProjectDir, 0, 0, 6, 8),
+    projectRoom('room-pixel', pixelProjectDir, 6, 0, 8, 8),
+  ];
+  const state = new OfficeState(layout);
+
+  addAgent(state, 1, true, 'a-other-chair');
+  const ch = state.characters.get(1)!;
+  ch.projectDir = pixelProjectDir;
+  ch.projectName = 'pixel-agents-multi';
+  state.repairSeatingAssignments('active');
+
+  assert.equal(ch.seatId, 'z-pixel-chair');
+  assert.equal(seatRoom(layout, ch.seatId)?.id, 'room-pixel');
+});
+
 test('two projects with capacity do not claim each other room-local work seats', () => {
   const layout = makeLayout(
     [...workstationFurniture('a-beta-chair', 0), ...workstationFurniture('z-alpha-chair', 6)],

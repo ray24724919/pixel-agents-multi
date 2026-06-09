@@ -1122,12 +1122,20 @@ function ensureLobbyLoungeFurniture(
   for (const room of normalizeProjectRooms(layout).filter(
     (candidate) => candidate.kind === ProjectRoomKind.PUBLIC,
   )) {
-    const seats = roomSeats({ ...layout, furniture }, room);
-    const hasRestSeat = seats.some((seat) => seat.seatKind === 'rest');
-    const hasLoungeTable = roomHasFurniture({ ...layout, furniture }, room, isLoungeTableFurniture);
-    const hasDecor = roomHasFurniture({ ...layout, furniture }, room, isLoungeDecorFurniture);
-    const nextFurniture = [...furniture];
     let roomAdded = 0;
+    const cleanedFurniture = furniture.filter((item) => {
+      const entry = getAllCatalogEntries().find((candidate) => candidate.type === item.type);
+      if (!entry || !rectsOverlap(room.bounds, placedFurnitureBounds(item, entry))) return true;
+      if (!isLobbyWorkFurniture(entry)) return true;
+      roomAdded++;
+      return false;
+    });
+    const layoutAfterCleanup = { ...layout, furniture: cleanedFurniture };
+    const seats = roomSeats(layoutAfterCleanup, room);
+    const hasRestSeat = seats.some((seat) => seat.seatKind === 'rest');
+    const hasLoungeTable = roomHasFurniture(layoutAfterCleanup, room, isLoungeTableFurniture);
+    const hasDecor = roomHasFurniture(layoutAfterCleanup, room, isLoungeDecorFurniture);
+    const nextFurniture = [...cleanedFurniture];
 
     if (!hasRestSeat) {
       for (const item of findLobbyRestSeatPlacements(
@@ -1290,6 +1298,25 @@ function isLoungeDecorFurniture(entry: FurnitureCatalogEntry): boolean {
   return entry.category === 'decor' && /plant|cactus|pot/i.test(`${entry.type} ${entry.label}`);
 }
 
+function isLobbyWorkFurniture(entry: FurnitureCatalogEntry): boolean {
+  if (entry.category === 'electronics') return true;
+  if (entry.isDesk && !isLoungeTableFurniture(entry)) return true;
+  if (entry.category === 'chairs' && !isRestSeatFurniture(entry)) return true;
+  return false;
+}
+
+function isRestSeatFurniture(entry: FurnitureCatalogEntry): boolean {
+  const text = `${entry.type} ${entry.label}`;
+  return (
+    entry.category === 'chairs' && (entry.footprintW >= 2 || /sofa|bench|couch|cushion/i.test(text))
+  );
+}
+
+function isPreferredRestSeatFurniture(entry: FurnitureCatalogEntry): boolean {
+  const text = `${entry.type} ${entry.label}`;
+  return isRestSeatFurniture(entry) && (entry.footprintW >= 2 || /sofa|couch/i.test(text));
+}
+
 function ensureProjectSuiteFurniture(
   layout: OfficeLayout,
   template: RoomTemplateAssets,
@@ -1304,9 +1331,8 @@ function ensureProjectSuiteFurniture(
       (seat) => seat.seatKind === 'work' && seat.zoneSource === 'workstation',
     );
     const missingRest = !seats.some((seat) => seat.seatKind === 'rest');
-    if (!missingWork && !missingRest) continue;
 
-    const nextFurniture = [...furniture];
+    let nextFurniture = [...furniture];
     let roomAdded = 0;
     if (missingWork) {
       const workCandidates = buildRoomFurnitureCandidates(room, template)
@@ -1326,10 +1352,38 @@ function ensureProjectSuiteFurniture(
         roomAdded += workCandidates.length;
       }
     }
-    if (missingRest) {
-      const restSeat = findRestSeatPlacement(layout, room, template.restSeat, nextFurniture);
+    const layoutWithWork = { ...layout, furniture: nextFurniture };
+    const needsRestUpgrade =
+      !missingRest &&
+      isPreferredRestSeatFurniture(template.restSeat) &&
+      !roomHasFurniture(layoutWithWork, room, isPreferredRestSeatFurniture);
+    if (missingRest || needsRestUpgrade) {
+      const generatedRestSeat = nextFurniture.find((item) => item.uid === `${room.id}-rest-seat`);
+      const generatedEntry = generatedRestSeat
+        ? getAllCatalogEntries().find((candidate) => candidate.type === generatedRestSeat.type)
+        : undefined;
+      const baseFurniture =
+        needsRestUpgrade && generatedEntry && !isPreferredRestSeatFurniture(generatedEntry)
+          ? nextFurniture.filter((item) => item.uid !== generatedRestSeat?.uid)
+          : nextFurniture;
+      const restSeat = findRestSeatPlacement(layout, room, template.restSeat, baseFurniture);
       if (restSeat) {
-        nextFurniture.push(restSeat);
+        nextFurniture = [...baseFurniture, restSeat];
+        roomAdded++;
+      }
+    }
+    if (
+      template.loungeTable &&
+      !roomHasFurniture({ ...layout, furniture: nextFurniture }, room, isLoungeTableFurniture)
+    ) {
+      const restTable = findProjectRestTablePlacement(
+        layout,
+        room,
+        template.loungeTable,
+        nextFurniture,
+      );
+      if (restTable) {
+        nextFurniture.push(restTable);
         roomAdded++;
       }
     }
@@ -1369,6 +1423,38 @@ function findRestSeatPlacement(
     if (canPlaceSuiteFurniture(layout, room, candidate, furniture)) return candidate;
   }
   return null;
+}
+
+function findProjectRestTablePlacement(
+  layout: OfficeLayout,
+  room: ProjectRoom,
+  loungeTable: FurnitureCatalogEntry,
+  furniture: PlacedFurniture[],
+): PlacedFurniture | null {
+  const restSeat = furniture.find((item) => item.uid === `${room.id}-rest-seat`);
+  const restEntry = restSeat
+    ? getAllCatalogEntries().find((candidate) => candidate.type === restSeat.type)
+    : undefined;
+  const preferred = restSeat
+    ? [
+        { col: restSeat.col, row: restSeat.row + (restEntry?.footprintH ?? 1) },
+        { col: restSeat.col + (restEntry?.footprintW ?? 1) + 1, row: restSeat.row },
+        { col: restSeat.col, row: restSeat.row - loungeTable.footprintH },
+      ]
+    : [
+        {
+          col: room.bounds.col + 1,
+          row: room.bounds.row + room.bounds.height - loungeTable.footprintH - 2,
+        },
+      ];
+  return findLobbyFurniturePlacement(
+    layout,
+    room,
+    loungeTable,
+    `${room.id}-rest-table`,
+    furniture,
+    preferred,
+  );
 }
 
 function preferredRestSeatPlacement(

@@ -82,6 +82,17 @@ beforeEach(() => {
       orientation: 'front',
     },
     {
+      id: 'CUSHIONED_BENCH',
+      label: 'Cushioned Bench',
+      category: 'chairs',
+      width: TILE_SIZE,
+      height: TILE_SIZE,
+      footprintW: 1,
+      footprintH: 1,
+      isDesk: false,
+      orientation: 'front',
+    },
+    {
       id: 'COFFEE_TABLE',
       label: 'Coffee Table',
       category: 'desks',
@@ -149,6 +160,7 @@ function rectsOverlap(a: ProjectRoom['bounds'], b: ProjectRoom['bounds']): boole
 function furnitureBounds(item: PlacedFurniture): ProjectRoom['bounds'] {
   if (item.type === 'DESK') return { col: item.col, row: item.row, width: 3, height: 2 };
   if (item.type === 'SOFA') return { col: item.col, row: item.row, width: 2, height: 1 };
+  if (item.type === 'COFFEE_TABLE') return { col: item.col, row: item.row, width: 2, height: 2 };
   return { col: item.col, row: item.row, width: 1, height: 1 };
 }
 
@@ -306,6 +318,41 @@ test('public lobby is provisioned as a lounge without duplicating project workst
   );
 });
 
+test('existing public lobby is reshaped from old office workstations into a lounge', () => {
+  const layout = makeLayout();
+  layout.projectRooms = [
+    {
+      id: 'project-room-lobby',
+      kind: ProjectRoomKind.PUBLIC,
+      bounds: { col: 0, row: 0, width: 10, height: 8 },
+      label: 'Lobby',
+    },
+    projectRoom('project-alpha', 'alpha', 0, 0),
+  ];
+  layout.projectRooms[1]!.bounds = { col: 10, row: 0, width: 9, height: 7 };
+  layout.cols = 19;
+  layout.tiles = Array.from({ length: layout.cols * layout.rows }, () => TileType.FLOOR_1);
+  layout.furniture = [
+    { uid: 'old-lobby-desk', type: 'DESK', col: 1, row: 1 },
+    { uid: 'old-lobby-pc', type: 'PC', col: 2, row: 1 },
+    { uid: 'old-lobby-chair', type: 'CHAIR_UP', col: 2, row: 3 },
+    { uid: 'old-lobby-sofa', type: 'SOFA', col: 6, row: 2 },
+    { uid: 'old-lobby-table', type: 'COFFEE_TABLE', col: 6, row: 3 },
+    { uid: 'old-lobby-plant', type: 'PLANT', col: 8, row: 5 },
+  ];
+
+  const result = ensureProjectRoomsForAgents(layout, [{ folderName: 'Alpha', isSubagent: false }]);
+  const furnitureByUid = new Map(result.layout.furniture.map((item) => [item.uid, item.type]));
+
+  assert.ok(result.loungeFurnitureAddedCount >= 3);
+  assert.equal(furnitureByUid.has('old-lobby-desk'), false);
+  assert.equal(furnitureByUid.has('old-lobby-pc'), false);
+  assert.equal(furnitureByUid.has('old-lobby-chair'), false);
+  assert.equal(furnitureByUid.get('old-lobby-sofa'), 'SOFA');
+  assert.equal(furnitureByUid.get('old-lobby-table'), 'COFFEE_TABLE');
+  assert.equal(furnitureByUid.get('old-lobby-plant'), 'PLANT');
+});
+
 test('existing project rooms without suite furniture are repaired with work and rest seats', () => {
   const layout = makeLayout();
   layout.projectRooms = [projectRoom('project-alpha', 'alpha', 0, 0)];
@@ -323,6 +370,24 @@ test('existing project rooms without suite furniture are repaired with work and 
   assert.equal(furnitureByUid.get('project-alpha-rest-seat'), 'SOFA');
   assert.ok(seats.some((seat) => seat.seatKind === 'work' && seat.zoneSource === 'workstation'));
   assert.ok(seats.some((seat) => seat.seatKind === 'rest'));
+});
+
+test('existing project room rest corner upgrades from a small bench to sofa and table', () => {
+  const layout = makeLayout();
+  layout.projectRooms = [projectRoom('project-alpha', 'alpha', 0, 0)];
+  layout.furniture = [
+    { uid: 'project-alpha-desk', type: 'DESK', col: 2, row: 1 },
+    { uid: 'project-alpha-tech', type: 'PC', col: 3, row: 1 },
+    { uid: 'project-alpha-work-chair', type: 'CHAIR_UP', col: 3, row: 3 },
+    { uid: 'project-alpha-rest-seat', type: 'CUSHIONED_BENCH', col: 1, row: 5 },
+  ];
+
+  const result = ensureProjectRoomsForAgents(layout, [{ folderName: 'Alpha', isSubagent: false }]);
+  const furnitureByUid = new Map(result.layout.furniture.map((item) => [item.uid, item.type]));
+
+  assert.ok(result.suiteFurnitureAddedCount >= 2);
+  assert.equal(furnitureByUid.get('project-alpha-rest-seat'), 'SOFA');
+  assert.equal(furnitureByUid.get('project-alpha-rest-table'), 'COFFEE_TABLE');
 });
 
 test('project suite rest seats fall back to a chair when sofa-like assets are unavailable', () => {
