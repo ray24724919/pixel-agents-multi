@@ -135,6 +135,18 @@ function tileAt(layout: OfficeLayout, col: number, row: number): TileTypeVal {
   return layout.tiles[row * layout.cols + col]!;
 }
 
+function roomsByKind(layout: OfficeLayout, kind: ProjectRoomKind): ProjectRoom[] {
+  return (layout.projectRooms ?? []).filter((room) => room.kind === kind);
+}
+
+function projectRooms(layout: OfficeLayout): ProjectRoom[] {
+  return roomsByKind(layout, ProjectRoomKind.PROJECT);
+}
+
+function publicRooms(layout: OfficeLayout): ProjectRoom[] {
+  return roomsByKind(layout, ProjectRoomKind.PUBLIC);
+}
+
 function colorAt(layout: OfficeLayout, col: number, row: number) {
   return layout.tileColors?.[row * layout.cols + col] ?? null;
 }
@@ -161,6 +173,16 @@ function assertFurnitureOnWalkableRoomTiles(layout: OfficeLayout, room: ProjectR
   }
 }
 
+function seatsInRoom(layout: OfficeLayout, room: ProjectRoom) {
+  return [...layoutToSeats(layout).values()].filter(
+    (seat) =>
+      seat.seatCol >= room.bounds.col &&
+      seat.seatCol < room.bounds.col + room.bounds.width &&
+      seat.seatRow >= room.bounds.row &&
+      seat.seatRow < room.bounds.row + room.bounds.height,
+  );
+}
+
 function hasWalkablePath(
   layout: OfficeLayout,
   start: { col: number; row: number },
@@ -184,8 +206,10 @@ test('a new visible project with no room creates exactly one project room', () =
   ]);
 
   assert.equal(result.createdRooms.length, 1);
-  assert.equal(result.layout.projectRooms?.length, 1);
-  assert.equal(result.layout.projectRooms?.[0]?.project?.key, 'alpha project');
+  assert.equal(projectRooms(result.layout).length, 1);
+  assert.equal(publicRooms(result.layout).length, 1);
+  assert.equal(projectRooms(result.layout)[0]?.project?.key, 'alpha project');
+  assert.equal(result.createdLobbyRoom?.label, 'Lobby');
 });
 
 test('a new visible Codex projectDir creates one project room with safe provider metadata', () => {
@@ -232,15 +256,84 @@ test('generated room contains a valid workstation seat and a rest seat when spac
     { folderName: 'Alpha', isSubagent: false },
   ]);
   const room = result.createdRooms[0]!;
-  const seats = [...layoutToSeats(result.layout).values()].filter(
-    (seat) =>
-      seat.seatCol >= room.bounds.col &&
-      seat.seatCol < room.bounds.col + room.bounds.width &&
-      seat.seatRow >= room.bounds.row &&
-      seat.seatRow < room.bounds.row + room.bounds.height,
-  );
+  const seats = seatsInRoom(result.layout, room);
 
   assert.ok(seats.some((seat) => seat.seatKind === 'work' && seat.zoneSource === 'workstation'));
+  assert.ok(seats.some((seat) => seat.seatKind === 'rest'));
+  assert.equal(
+    result.layout.furniture.some((item) => item.uid === `${room.id}-rest-seat`),
+    true,
+  );
+});
+
+test('existing project rooms without suite furniture are repaired with work and rest seats', () => {
+  const layout = makeLayout();
+  layout.projectRooms = [projectRoom('project-alpha', 'alpha', 0, 0)];
+
+  const result = ensureProjectRoomsForAgents(layout, [{ folderName: 'Alpha', isSubagent: false }]);
+  const room = projectRooms(result.layout)[0]!;
+  const seats = seatsInRoom(result.layout, room);
+  const furnitureByUid = new Map(result.layout.furniture.map((item) => [item.uid, item.type]));
+
+  assert.equal(result.createdRooms.length, 0);
+  assert.ok(result.suiteFurnitureAddedCount >= 4);
+  assert.equal(furnitureByUid.get('project-alpha-desk'), 'DESK');
+  assert.equal(furnitureByUid.get('project-alpha-tech'), 'PC');
+  assert.equal(furnitureByUid.get('project-alpha-work-chair'), 'CHAIR_UP');
+  assert.equal(furnitureByUid.get('project-alpha-rest-seat'), 'SOFA');
+  assert.ok(seats.some((seat) => seat.seatKind === 'work' && seat.zoneSource === 'workstation'));
+  assert.ok(seats.some((seat) => seat.seatKind === 'rest'));
+});
+
+test('project suite rest seats fall back to a chair when sofa-like assets are unavailable', () => {
+  const assets: TestCatalogAsset[] = [
+    {
+      id: 'DESK',
+      label: 'Desk',
+      category: 'desks',
+      width: TILE_SIZE * 3,
+      height: TILE_SIZE * 2,
+      footprintW: 3,
+      footprintH: 2,
+      isDesk: true,
+      backgroundTiles: 1,
+    },
+    {
+      id: 'PC',
+      label: 'PC',
+      category: 'electronics',
+      width: TILE_SIZE,
+      height: TILE_SIZE,
+      footprintW: 1,
+      footprintH: 1,
+      isDesk: false,
+      canPlaceOnSurfaces: true,
+    },
+    {
+      id: 'CHAIR_UP',
+      label: 'Chair Up',
+      category: 'chairs',
+      width: TILE_SIZE,
+      height: TILE_SIZE,
+      footprintW: 1,
+      footprintH: 1,
+      isDesk: false,
+      orientation: 'back',
+    },
+  ];
+  buildDynamicCatalog({
+    catalog: assets,
+    sprites: Object.fromEntries(assets.map((asset) => [asset.id, sprite])),
+  });
+
+  const result = ensureProjectRoomsForAgents(makeLayout(), [
+    { folderName: 'Alpha', isSubagent: false },
+  ]);
+  const room = result.createdRooms[0]!;
+  const seats = seatsInRoom(result.layout, room);
+  const restSeat = result.layout.furniture.find((item) => item.uid === `${room.id}-rest-seat`);
+
+  assert.equal(restSeat?.type, 'CHAIR_UP');
   assert.ok(seats.some((seat) => seat.seatKind === 'rest'));
 });
 
@@ -251,8 +344,9 @@ test('generated rooms persist through layout serialization and normalization', (
 
   const restored = deserializeLayout(serializeLayout(result.layout));
 
-  assert.equal(restored?.projectRooms?.length, 1);
-  assert.equal(restored?.projectRooms?.[0]?.project?.key, 'alpha');
+  assert.equal(projectRooms(restored!).length, 1);
+  assert.equal(publicRooms(restored!).length, 1);
+  assert.equal(projectRooms(restored!)[0]?.project?.key, 'alpha');
 });
 
 test('provisioning order is deterministic by normalized project key', () => {
@@ -601,7 +695,8 @@ test('repeated generation does not duplicate rooms and keeps stable ids', () => 
 
   assert.equal(first.createdRooms[0]?.id, 'project-alpha');
   assert.equal(second.createdRooms.length, 0);
-  assert.equal(second.layout.projectRooms?.length, 1);
+  assert.equal(projectRooms(second.layout).length, 1);
+  assert.equal(publicRooms(second.layout).length, 1);
 });
 
 test('multiple sessions with the same cwd/project key produce one room', () => {

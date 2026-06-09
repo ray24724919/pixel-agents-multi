@@ -379,9 +379,15 @@ export function useEditorActions(
             };
           }),
       );
-      if (result.layout !== layout && result.createdRooms.length > 0) {
+      const hasProvisioningChanges =
+        result.createdRooms.length > 0 ||
+        result.suiteFurnitureAddedCount > 0 ||
+        result.createdLobbyRoom !== null;
+      if (hasProvisioningChanges) {
         applyEdit(result.layout);
-        editorState.selectedProjectRoomId = result.createdRooms[0]?.id ?? null;
+        if (result.createdRooms.length > 0) {
+          editorState.selectedProjectRoomId = result.createdRooms[0]?.id ?? null;
+        }
         editorState.selectedFurnitureUid = null;
       }
     },
@@ -411,7 +417,11 @@ export function useEditorActions(
             };
           }),
       );
-      if (result.layout === layout || result.createdRooms.length === 0) return false;
+      const hasProvisioningChanges =
+        result.createdRooms.length > 0 ||
+        result.suiteFurnitureAddedCount > 0 ||
+        result.createdLobbyRoom !== null;
+      if (!hasProvisioningChanges) return false;
       os.rebuildFromLayout(result.layout);
       saveLayout(result.layout);
       lastSavedLayoutRef.current = structuredClone(result.layout);
