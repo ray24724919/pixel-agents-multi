@@ -23,6 +23,11 @@ import {
   HANDOFF_WORK_PACKAGE_RELATIVE_DIR,
   HANDOFF_WORK_PACKAGE_SUFFIX,
 } from './constants.js';
+import type {
+  HandoffExecutorLaunchEvidence,
+  HandoffLaunchEvidenceOptions,
+} from './handoffLaunchEvidence.js';
+import { waitForHandoffExecutorLaunchConfirmation } from './handoffLaunchEvidence.js';
 
 export interface HandoffArtifactNamingInput {
   project?: unknown;
@@ -852,6 +857,73 @@ export function markHandoffExecutorLaunched(
     dispatchPackage,
     execution,
   };
+}
+
+/** Minimal agent shape needed to confirm a launch and attribute the execution. */
+export interface HandoffExecutorLaunchAgent {
+  id: number;
+  agentName?: string;
+  providerId?: string;
+  projectName?: string;
+  folderName?: string;
+  projectDir: string;
+  sessionId: string;
+  hookDelivered: boolean;
+  jsonlFile: string;
+  linesProcessed: number;
+}
+
+export type ConfirmAndMarkHandoffExecutorLaunchOutcome =
+  | {
+      confirmed: true;
+      evidence?: HandoffExecutorLaunchEvidence;
+      result: HandoffExecutorLaunchResult;
+    }
+  | { confirmed: false; errorMessage: string };
+
+/** Operator-facing message shown when a launched terminal never produced a real session signal. */
+export function handoffExecutorLaunchUnconfirmedMessage(providerId: 'claude' | 'codex'): string {
+  return providerId === 'claude'
+    ? 'Claude executor terminal opened, but Pixel Agents did not detect a Claude session transcript yet. Check the terminal for Claude auth, permission, or input prompts; handoff metadata was not marked active.'
+    : 'Codex executor terminal opened, but Pixel Agents did not detect a Codex session yet (no ~/.codex rollout bound). Check the terminal for Codex auth, permission, or input prompts; handoff metadata was not marked active.';
+}
+
+/**
+ * Wait for real launch evidence (Claude transcript/hook, Codex bound rollout) and only then mark the
+ * handoff executor active. The whole point: an opened terminal alone is NOT proof a session started,
+ * so a launch with no evidence must leave the sidecar untouched and report a failure rather than lie
+ * by marking it active. `markLaunched` is injectable for testing; it defaults to the real writer.
+ */
+export async function confirmAndMarkHandoffExecutorLaunch(params: {
+  repoRoot: string;
+  markdownRelativePath: string;
+  providerId: 'claude' | 'codex';
+  agent: HandoffExecutorLaunchAgent;
+  options?: HandoffLaunchEvidenceOptions;
+  nowMs?: number;
+  markLaunched?: typeof markHandoffExecutorLaunched;
+}): Promise<ConfirmAndMarkHandoffExecutorLaunchOutcome> {
+  const { repoRoot, markdownRelativePath, providerId, agent, options, nowMs } = params;
+  const markLaunched = params.markLaunched ?? markHandoffExecutorLaunched;
+
+  const confirmation = await waitForHandoffExecutorLaunchConfirmation(providerId, agent, options);
+  if (!confirmation.confirmed) {
+    return { confirmed: false, errorMessage: handoffExecutorLaunchUnconfirmedMessage(providerId) };
+  }
+
+  const result = markLaunched(
+    repoRoot,
+    markdownRelativePath,
+    {
+      agentId: agent.id,
+      agentName: agent.agentName ?? `Agent #${agent.id}`,
+      providerId: agent.providerId ?? providerId,
+      projectName: agent.projectName ?? agent.folderName ?? path.basename(agent.projectDir),
+      sessionId: agent.sessionId,
+    },
+    nowMs,
+  );
+  return { confirmed: true, evidence: confirmation.evidence, result };
 }
 
 export function detectHandoffCompletionStatus(

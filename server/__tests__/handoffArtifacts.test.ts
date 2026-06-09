@@ -10,6 +10,7 @@ import {
   buildHandoffDispatchPrompt,
   buildHandoffWorkPackagePrompt,
   buildHandoffWorkPackageTarget,
+  confirmAndMarkHandoffExecutorLaunch,
   createHandoffWorkPackage,
   detectHandoffCompletionStatus,
   extractHandoffMarkdownTitle,
@@ -889,6 +890,102 @@ describe('handoff artifact path safety', () => {
       expect(fs.readFileSync(workPackage.packageAbsolutePath, 'utf8')).toBe(workPackageMarkdown);
     } finally {
       fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('confirms+marks a bound executor active but refuses to mark a launch with no evidence', async () => {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pixel-handoff-confirm-launch-'));
+    const scratchDirs: string[] = [];
+    const nonEmptyRollout = (): string => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pixel-codex-rollout-'));
+      scratchDirs.push(dir);
+      const file = path.join(dir, 'rollout.jsonl');
+      fs.writeFileSync(file, '{"type":"session_meta"}\n', 'utf8');
+      return file;
+    };
+    try {
+      // Seed a draft handoff with a created work package (the state that exposes "Launch executor").
+      const target = buildHandoffArtifactTarget(
+        repoRoot,
+        { project: 'Launch Gate' },
+        Date.UTC(2026, 5, 4, 7, 7),
+      );
+      fs.mkdirSync(path.dirname(target.absolutePath), { recursive: true });
+      fs.writeFileSync(target.absolutePath, '# Handoff\n\nBody', 'utf8');
+      const metadata = buildHandoffArtifactMetadata(
+        target,
+        { title: 'Gate', projectName: 'Pixel Agents Multi' },
+        Date.UTC(2026, 5, 4, 7, 7),
+      );
+      fs.writeFileSync(
+        target.metadataAbsolutePath,
+        `${JSON.stringify(metadata, null, 2)}\n`,
+        'utf8',
+      );
+      createHandoffWorkPackage(repoRoot, target.relativePath, Date.UTC(2026, 5, 4, 8, 30));
+
+      // No bound rollout + immediate timeout: the terminal "opened" but no Codex session appeared.
+      // The launch MUST NOT be marked active, and the sidecar must be left exactly as seeded.
+      const unbound = await confirmAndMarkHandoffExecutorLaunch({
+        repoRoot,
+        markdownRelativePath: target.relativePath,
+        providerId: 'codex',
+        agent: {
+          id: 7,
+          projectDir: repoRoot,
+          sessionId: 'placeholder-uuid',
+          hookDelivered: false,
+          jsonlFile: '',
+          linesProcessed: 0,
+        },
+        options: { timeoutMs: 0, pollMs: 1 },
+      });
+      expect(unbound.confirmed).toBe(false);
+      if (!unbound.confirmed) {
+        expect(unbound.errorMessage).toMatch(/Codex/);
+      }
+      const afterUnbound = parseHandoffArtifactMetadata(
+        JSON.parse(fs.readFileSync(target.metadataAbsolutePath, 'utf8')),
+      );
+      expect(afterUnbound?.dispatchPackage?.status).toBe('draft');
+      expect(afterUnbound?.dispatchPackage?.execution).toBeUndefined();
+
+      // A bound, non-empty rollout is real evidence: now the launch is confirmed and marked active.
+      const bound = await confirmAndMarkHandoffExecutorLaunch({
+        repoRoot,
+        markdownRelativePath: target.relativePath,
+        providerId: 'codex',
+        agent: {
+          id: 9,
+          agentName: 'Codex executor',
+          providerId: 'codex',
+          projectName: 'Pixel Agents Multi',
+          projectDir: repoRoot,
+          sessionId: 'real-thread-id',
+          hookDelivered: false,
+          jsonlFile: nonEmptyRollout(),
+          linesProcessed: 0,
+        },
+        options: { timeoutMs: 0, pollMs: 1 },
+        nowMs: Date.UTC(2026, 5, 4, 9, 45),
+      });
+      expect(bound.confirmed).toBe(true);
+      if (bound.confirmed) {
+        expect(bound.evidence).toBe('codex-rollout-file');
+        expect(bound.result.execution.status).toBe('active');
+        expect(bound.result.dispatchPackage.status).toBe('dispatched');
+      }
+      const afterBound = parseHandoffArtifactMetadata(
+        JSON.parse(fs.readFileSync(target.metadataAbsolutePath, 'utf8')),
+      );
+      expect(afterBound?.dispatchPackage?.status).toBe('dispatched');
+      expect(afterBound?.dispatchPackage?.execution?.agentId).toBe(9);
+      expect(afterBound?.dispatchPackage?.execution?.status).toBe('active');
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+      for (const dir of scratchDirs) {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
     }
   });
 
