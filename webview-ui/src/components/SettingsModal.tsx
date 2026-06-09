@@ -19,6 +19,8 @@ interface SettingsModalProps {
   onToggleDebugMode: () => void;
   alwaysShowOverlay: boolean;
   onToggleAlwaysShowOverlay: () => void;
+  autoCreateProjectRooms: boolean;
+  onToggleAutoCreateProjectRooms: () => void;
   buildIdentity: BuildIdentity;
   externalAssetDirectories: string[];
   watchAllSessions: boolean;
@@ -34,6 +36,8 @@ export function SettingsModal({
   onToggleDebugMode,
   alwaysShowOverlay,
   onToggleAlwaysShowOverlay,
+  autoCreateProjectRooms,
+  onToggleAutoCreateProjectRooms,
   buildIdentity,
   externalAssetDirectories,
   watchAllSessions,
@@ -137,6 +141,11 @@ export function SettingsModal({
         label="Always Show Labels"
         checked={alwaysShowOverlay}
         onChange={onToggleAlwaysShowOverlay}
+      />
+      <Checkbox
+        label="Auto-create Project Rooms"
+        checked={autoCreateProjectRooms}
+        onChange={onToggleAutoCreateProjectRooms}
       />
       <Checkbox label="Debug View" checked={isDebugMode} onChange={onToggleDebugMode} />
       <div className="mt-4 border-t border-border px-10 py-4">

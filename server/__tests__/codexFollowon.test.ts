@@ -555,6 +555,7 @@ describe('Codex thread follow-on', () => {
       agentName: 'Main Supervisor',
       providerId: 'codex',
       projectDir: '/workspace/project',
+      projectName: 'project',
       transcriptPath: threadPath,
     });
     expect(

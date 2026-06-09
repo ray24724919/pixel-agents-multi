@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { beforeEach, test } from 'node:test';
 
 import { FALLBACK_FLOOR_COLOR } from '../src/constants.ts';
-import { buildDynamicCatalog } from '../src/office/layout/furnitureCatalog.ts';
+import { buildDynamicCatalog, getCatalogEntry } from '../src/office/layout/furnitureCatalog.ts';
 import {
   deserializeLayout,
   getBlockedTiles,
@@ -124,6 +124,32 @@ function furnitureBounds(item: PlacedFurniture): ProjectRoom['bounds'] {
   if (item.type === 'DESK') return { col: item.col, row: item.row, width: 3, height: 2 };
   if (item.type === 'SOFA') return { col: item.col, row: item.row, width: 2, height: 1 };
   return { col: item.col, row: item.row, width: 1, height: 1 };
+}
+
+function tileAt(layout: OfficeLayout, col: number, row: number): TileTypeVal {
+  return layout.tiles[row * layout.cols + col]!;
+}
+
+function assertFurnitureOnWalkableRoomTiles(layout: OfficeLayout, room: ProjectRoom): void {
+  const generatedFurniture = layout.furniture.filter((item) => item.uid.startsWith(`${room.id}-`));
+  for (const item of generatedFurniture) {
+    const entry = getCatalogEntry(item.type);
+    assert.ok(entry, `missing catalog entry for ${item.type}`);
+    for (let row = item.row; row < item.row + entry.footprintH; row++) {
+      for (let col = item.col; col < item.col + entry.footprintW; col++) {
+        assert.notEqual(
+          tileAt(layout, col, row),
+          TileType.WALL,
+          `${item.uid} overlaps generated wall at ${col},${row}`,
+        );
+        assert.notEqual(
+          tileAt(layout, col, row),
+          TileType.VOID,
+          `${item.uid} overlaps generated void at ${col},${row}`,
+        );
+      }
+    }
+  }
 }
 
 function hasWalkablePath(
@@ -251,6 +277,27 @@ test('generated room is connected back to the lobby core by walkable floor', () 
   const end = { col: Math.floor(room.bounds.col + room.bounds.width / 2), row: room.bounds.row };
 
   assert.ok(hasWalkablePath(result.layout, start, end));
+});
+
+test('generated room shell leaves a walkable doorway and corridor to the lobby', () => {
+  const result = ensureProjectRoomsForAgents(makeLayout(), [
+    { folderName: 'Alpha', isSubagent: false },
+  ]);
+  const room = result.createdRooms[0]!;
+  const doorway = {
+    col: Math.floor(room.bounds.col + room.bounds.width / 2),
+    row: room.bounds.row,
+  };
+  const outsideDoor = { col: doorway.col, row: doorway.row - 1 };
+
+  assert.equal(tileAt(result.layout, room.bounds.col, room.bounds.row), TileType.WALL);
+  assert.equal(
+    tileAt(result.layout, room.bounds.col + room.bounds.width - 1, room.bounds.row),
+    TileType.WALL,
+  );
+  assert.equal(tileAt(result.layout, doorway.col, doorway.row), TileType.FLOOR_1);
+  assert.equal(tileAt(result.layout, outsideDoor.col, outsideDoor.row), TileType.FLOOR_1);
+  assert.ok(hasWalkablePath(result.layout, { col: doorway.col, row: 1 }, doorway));
 });
 
 test('generated room does not overlap existing rooms or existing furniture', () => {
@@ -511,6 +558,7 @@ test('generated room prefers the collaborative four-computer work table when ava
   assert.equal(furnitureByUid.get('project-alpha-chair-left-2'), 'WOODEN_CHAIR_SIDE:left');
   assert.equal(roomSeats.filter((seat) => seat.seatKind === 'work').length, 4);
   assert.ok(roomSeats.some((seat) => seat.seatKind === 'rest'));
+  assertFurnitureOnWalkableRoomTiles(result.layout, room);
 });
 
 test('repeated generation does not duplicate rooms and keeps stable ids', () => {

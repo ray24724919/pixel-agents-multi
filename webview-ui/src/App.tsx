@@ -90,6 +90,8 @@ function App() {
     watchAllSessions,
     setWatchAllSessions,
     alwaysShowLabels,
+    autoCreateProjectRooms,
+    setAutoCreateProjectRooms,
     hooksEnabled,
     setHooksEnabled,
     hooksInfoShown,
@@ -217,6 +219,7 @@ function App() {
             ch?.folderName ?? '',
             ch?.providerId ?? '',
             runtime?.projectDir ?? '',
+            runtime?.projectName ?? '',
           ].join(':');
         })
         .join('|'),
@@ -224,6 +227,7 @@ function App() {
   );
 
   useEffect(() => {
+    if (!autoCreateProjectRooms) return;
     if (!layoutReady || !loadedAssets || agents.length === 0) return;
     if (editorIsEditMode && editorIsDirty) return;
     const timer = window.setTimeout(() => {
@@ -237,6 +241,7 @@ function App() {
   }, [
     agentRuntimeMetadata,
     agents,
+    autoCreateProjectRooms,
     autoProvisionIdentityKey,
     editorIsDirty,
     editorIsEditMode,
@@ -414,7 +419,13 @@ function App() {
                       onRoomSelect={editor.handleSelectRoom}
                       onRoomUpdate={editor.handleUpdateSelectedRoom}
                       onRoomDelete={editor.handleDeleteSelectedRoom}
-                      onAutoCreateRooms={() => editor.handleAutoCreateProjectRooms(visibleAgentIds)}
+                      onAutoCreateRooms={() =>
+                        editor.handleAutoCreateProjectRooms({
+                          agentIds: visibleAgents,
+                          hiddenAgents,
+                          agentRuntimeMetadata,
+                        })
+                      }
                       loadedAssets={loadedAssets}
                     />
                   );
@@ -676,6 +687,12 @@ function App() {
         onToggleDebugMode={handleToggleDebugMode}
         alwaysShowOverlay={alwaysShowOverlay}
         onToggleAlwaysShowOverlay={handleToggleAlwaysShowOverlay}
+        autoCreateProjectRooms={autoCreateProjectRooms}
+        onToggleAutoCreateProjectRooms={() => {
+          const newVal = !autoCreateProjectRooms;
+          setAutoCreateProjectRooms(newVal);
+          vscode.postMessage({ type: 'setAutoCreateProjectRooms', enabled: newVal });
+        }}
         buildIdentity={buildIdentity}
         externalAssetDirectories={externalAssetDirectories}
         watchAllSessions={watchAllSessions}

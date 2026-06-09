@@ -1,6 +1,7 @@
 import type { ColorValue } from '../components/ui/types.js';
 import {
   DEFAULT_FLOOR_COLOR,
+  DEFAULT_WALL_COLOR,
   PROJECT_ROOM_COLLAB_BOTTOM_ROW_OFFSET,
   PROJECT_ROOM_COLLAB_LEFT_CHAIR_OFFSET_COL,
   PROJECT_ROOM_COLLAB_LEFT_PC_OFFSET_COL,
@@ -15,8 +16,10 @@ import {
   PROJECT_ROOM_COLLAB_TOP_ROW_OFFSET,
   PROJECT_ROOM_DEFAULT_HEIGHT,
   PROJECT_ROOM_DEFAULT_WIDTH,
+  PROJECT_ROOM_GENERATED_DOORWAY_WIDTH,
   PROJECT_ROOM_GENERATED_MARGIN,
   PROJECT_ROOM_GENERATED_REST_MIN_WIDTH,
+  PROJECT_ROOM_GENERATED_SHELL_THICKNESS,
 } from '../constants.js';
 import { getAllCatalogEntries } from './layout/furnitureCatalog.js';
 import {
@@ -73,6 +76,14 @@ interface ProjectRoomGenerationProject {
   displayName: string;
   source: ProjectIdentitySource;
   providerIds: string[];
+}
+
+interface RoomDoorway {
+  col: number;
+  row: number;
+  outsideCol: number;
+  outsideRow: number;
+  side: 'top' | 'right' | 'bottom' | 'left';
 }
 
 export function ensureProjectRoomsForAgents(
@@ -550,13 +561,96 @@ function paintRoomFloor(
   const tiles = [...layout.tiles];
   const tileColors = [...(layout.tileColors ?? new Array(layout.tiles.length).fill(null))];
   const zones = [...(layout.zones ?? new Array(layout.tiles.length).fill(null))];
+  const doorway = deriveRoomDoorway(room.bounds, lobbyCore);
   for (let row = room.bounds.row; row < room.bounds.row + room.bounds.height; row++) {
     for (let col = room.bounds.col; col < room.bounds.col + room.bounds.width; col++) {
       paintWalkableFloor(layout, tiles, tileColors, zones, col, row);
     }
   }
-  paintCorridorToLobby(layout, tiles, tileColors, zones, lobbyCore, room.bounds);
+  paintRoomShell(layout, tiles, tileColors, zones, room.bounds, doorway);
+  paintCorridorToLobby(layout, tiles, tileColors, zones, lobbyCore, doorway);
   return { ...layout, tiles, tileColors, zones };
+}
+
+function deriveRoomDoorway(
+  room: ProjectRoom['bounds'],
+  lobbyCore: ProjectRoom['bounds'],
+): RoomDoorway {
+  const centerCol = Math.floor(room.col + room.width / 2);
+  const centerRow = Math.floor(room.row + room.height / 2);
+  if (room.row >= lobbyCore.row + lobbyCore.height) {
+    return {
+      col: centerCol,
+      row: room.row,
+      outsideCol: centerCol,
+      outsideRow: room.row - PROJECT_ROOM_GENERATED_SHELL_THICKNESS,
+      side: 'top',
+    };
+  }
+  if (room.col >= lobbyCore.col + lobbyCore.width) {
+    return {
+      col: room.col,
+      row: centerRow,
+      outsideCol: room.col - PROJECT_ROOM_GENERATED_SHELL_THICKNESS,
+      outsideRow: centerRow,
+      side: 'left',
+    };
+  }
+  if (room.col + room.width <= lobbyCore.col) {
+    return {
+      col: room.col + room.width - 1,
+      row: centerRow,
+      outsideCol: room.col + room.width,
+      outsideRow: centerRow,
+      side: 'right',
+    };
+  }
+  if (room.row + room.height <= lobbyCore.row) {
+    return {
+      col: centerCol,
+      row: room.row + room.height - 1,
+      outsideCol: centerCol,
+      outsideRow: room.row + room.height,
+      side: 'bottom',
+    };
+  }
+  return {
+    col: centerCol,
+    row: room.row,
+    outsideCol: centerCol,
+    outsideRow: room.row - PROJECT_ROOM_GENERATED_SHELL_THICKNESS,
+    side: 'top',
+  };
+}
+
+function paintRoomShell(
+  layout: OfficeLayout,
+  tiles: TileTypeVal[],
+  tileColors: Array<ColorValue | null>,
+  zones: Array<ZoneType | null>,
+  room: ProjectRoom['bounds'],
+  doorway: RoomDoorway,
+): void {
+  for (let row = room.row; row < room.row + room.height; row++) {
+    for (let col = room.col; col < room.col + room.width; col++) {
+      const onPerimeter =
+        row === room.row ||
+        row === room.row + room.height - PROJECT_ROOM_GENERATED_SHELL_THICKNESS ||
+        col === room.col ||
+        col === room.col + room.width - PROJECT_ROOM_GENERATED_SHELL_THICKNESS;
+      if (!onPerimeter) continue;
+      if (isDoorwayTile(col, row, doorway)) continue;
+      paintWallTile(layout, tiles, tileColors, zones, col, row);
+    }
+  }
+}
+
+function isDoorwayTile(col: number, row: number, doorway: RoomDoorway): boolean {
+  const halfWidth = Math.floor(PROJECT_ROOM_GENERATED_DOORWAY_WIDTH / 2);
+  if (doorway.side === 'top' || doorway.side === 'bottom') {
+    return row === doorway.row && Math.abs(col - doorway.col) <= halfWidth;
+  }
+  return col === doorway.col && Math.abs(row - doorway.row) <= halfWidth;
 }
 
 function paintCorridorToLobby(
@@ -565,14 +659,12 @@ function paintCorridorToLobby(
   tileColors: Array<ColorValue | null>,
   zones: Array<ZoneType | null>,
   lobbyCore: ProjectRoom['bounds'],
-  room: ProjectRoom['bounds'],
+  doorway: RoomDoorway,
 ): void {
-  const roomCenterCol = Math.floor(room.col + room.width / 2);
-  const roomCenterRow = Math.floor(room.row + room.height / 2);
   const coreCenterCol = Math.floor(lobbyCore.col + lobbyCore.width / 2);
 
-  if (room.row >= lobbyCore.row + lobbyCore.height) {
-    const col = clampInt(roomCenterCol, lobbyCore.col, lobbyCore.col + lobbyCore.width - 1);
+  if (doorway.side === 'top') {
+    const col = clampInt(doorway.col, lobbyCore.col, lobbyCore.col + lobbyCore.width - 1);
     paintVerticalFloor(
       layout,
       tiles,
@@ -580,61 +672,75 @@ function paintCorridorToLobby(
       zones,
       col,
       lobbyCore.row + lobbyCore.height - 1,
-      room.row,
+      doorway.outsideRow,
     );
-    paintHorizontalFloor(layout, tiles, tileColors, zones, col, roomCenterCol, room.row);
+    paintHorizontalFloor(
+      layout,
+      tiles,
+      tileColors,
+      zones,
+      col,
+      doorway.outsideCol,
+      doorway.outsideRow,
+    );
+    paintWalkableFloor(layout, tiles, tileColors, zones, doorway.col, doorway.row);
     return;
   }
-  if (room.col >= lobbyCore.col + lobbyCore.width) {
-    const row = clampInt(roomCenterRow, lobbyCore.row, lobbyCore.row + lobbyCore.height - 1);
+  if (doorway.side === 'left') {
+    const row = clampInt(doorway.row, lobbyCore.row, lobbyCore.row + lobbyCore.height - 1);
     paintHorizontalFloor(
       layout,
       tiles,
       tileColors,
       zones,
       lobbyCore.col + lobbyCore.width - 1,
-      room.col,
+      doorway.outsideCol,
       row,
     );
-    return;
-  }
-  if (room.col + room.width <= lobbyCore.col) {
-    const row = clampInt(roomCenterRow, lobbyCore.row, lobbyCore.row + lobbyCore.height - 1);
-    paintHorizontalFloor(
-      layout,
-      tiles,
-      tileColors,
-      zones,
-      room.col + room.width - 1,
-      lobbyCore.col,
-      row,
-    );
-    return;
-  }
-  if (room.row + room.height <= lobbyCore.row) {
-    const col = clampInt(roomCenterCol, lobbyCore.col, lobbyCore.col + lobbyCore.width - 1);
     paintVerticalFloor(
       layout,
       tiles,
       tileColors,
       zones,
-      col,
-      room.row + room.height - 1,
-      lobbyCore.row,
+      doorway.outsideCol,
+      row,
+      doorway.outsideRow,
     );
-    paintHorizontalFloor(layout, tiles, tileColors, zones, col, coreCenterCol, lobbyCore.row);
+    paintWalkableFloor(layout, tiles, tileColors, zones, doorway.col, doorway.row);
+    return;
+  }
+  if (doorway.side === 'right') {
+    const row = clampInt(doorway.row, lobbyCore.row, lobbyCore.row + lobbyCore.height - 1);
+    paintHorizontalFloor(layout, tiles, tileColors, zones, doorway.outsideCol, lobbyCore.col, row);
+    paintVerticalFloor(
+      layout,
+      tiles,
+      tileColors,
+      zones,
+      doorway.outsideCol,
+      row,
+      doorway.outsideRow,
+    );
+    paintWalkableFloor(layout, tiles, tileColors, zones, doorway.col, doorway.row);
+    return;
+  }
+  if (doorway.side === 'bottom') {
+    const col = clampInt(doorway.col, lobbyCore.col, lobbyCore.col + lobbyCore.width - 1);
+    paintVerticalFloor(layout, tiles, tileColors, zones, col, doorway.outsideRow, lobbyCore.row);
+    paintHorizontalFloor(
+      layout,
+      tiles,
+      tileColors,
+      zones,
+      col,
+      doorway.outsideCol,
+      doorway.outsideRow,
+    );
+    paintWalkableFloor(layout, tiles, tileColors, zones, doorway.col, doorway.row);
     return;
   }
 
-  paintHorizontalFloor(
-    layout,
-    tiles,
-    tileColors,
-    zones,
-    coreCenterCol,
-    roomCenterCol,
-    roomCenterRow,
-  );
+  paintHorizontalFloor(layout, tiles, tileColors, zones, coreCenterCol, doorway.col, doorway.row);
 }
 
 function paintHorizontalFloor(
@@ -681,6 +787,21 @@ function paintWalkableFloor(
   const idx = row * layout.cols + col;
   tiles[idx] = TileType.FLOOR_1;
   tileColors[idx] = { ...DEFAULT_FLOOR_COLOR };
+  zones[idx] = null;
+}
+
+function paintWallTile(
+  layout: OfficeLayout,
+  tiles: TileTypeVal[],
+  tileColors: Array<ColorValue | null>,
+  zones: Array<ZoneType | null>,
+  col: number,
+  row: number,
+): void {
+  if (col < 0 || col >= layout.cols || row < 0 || row >= layout.rows) return;
+  const idx = row * layout.cols + col;
+  tiles[idx] = TileType.WALL;
+  tileColors[idx] = { ...DEFAULT_WALL_COLOR };
   zones[idx] = null;
 }
 
