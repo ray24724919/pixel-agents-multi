@@ -1315,6 +1315,7 @@ function ensureLobbyLoungeFurniture(
     const hasLoungeTable = roomHasFurniture(layoutAfterCleanup, room, isLoungeTableFurniture);
     const hasDecor = roomHasFurniture(layoutAfterCleanup, room, isLoungeDecorFurniture);
     const nextFurniture = [...cleanedFurniture];
+    const isCorridorLobby = isWorkCorridorLobby(room);
 
     if (!hasRestSeat) {
       for (const item of findLobbyRestSeatPlacements(
@@ -1328,7 +1329,17 @@ function ensureLobbyLoungeFurniture(
       }
     }
 
-    if (!hasLoungeTable && template.loungeTable) {
+    if (isCorridorLobby && template.loungeTable) {
+      roomAdded += appendCorridorSofaTables(
+        layout,
+        room,
+        template.restSeat,
+        template.loungeTable,
+        nextFurniture,
+      );
+    }
+
+    if (!isCorridorLobby && !hasLoungeTable && template.loungeTable) {
       const table = findLobbyFurniturePlacement(
         layout,
         room,
@@ -1389,6 +1400,14 @@ function ensureLobbyLoungeFurniture(
   return addedCount > 0 ? { layout: { ...layout, furniture }, addedCount } : { layout, addedCount };
 }
 
+function isWorkCorridorLobby(room: ProjectRoom): boolean {
+  return (
+    room.kind === ProjectRoomKind.PUBLIC &&
+    room.bounds.height >= PROJECT_ROOM_WORK_CORRIDOR_HEIGHT &&
+    room.bounds.width >= PROJECT_ROOM_WORK_CORRIDOR_MIN_WIDTH
+  );
+}
+
 function findLobbyRestSeatPlacements(
   layout: OfficeLayout,
   room: ProjectRoom,
@@ -1420,6 +1439,39 @@ function findLobbyRestSeatPlacements(
     if (placement) placements.push(placement);
   }
   return placements;
+}
+
+function appendCorridorSofaTables(
+  layout: OfficeLayout,
+  room: ProjectRoom,
+  restSeat: FurnitureCatalogEntry,
+  loungeTable: FurnitureCatalogEntry,
+  furniture: PlacedFurniture[],
+): number {
+  const seats = [
+    { uid: `${room.id}-lounge-seat-a`, tableUid: `${room.id}-lounge-table-a` },
+    { uid: `${room.id}-lounge-seat-b`, tableUid: `${room.id}-lounge-table-b` },
+  ];
+  let added = 0;
+  for (const seatConfig of seats) {
+    if (furniture.some((item) => item.uid === seatConfig.tableUid)) continue;
+    const seat = furniture.find((item) => item.uid === seatConfig.uid);
+    if (!seat) continue;
+    const table = findTableNearLobbySeat(
+      layout,
+      room,
+      seat,
+      restSeat,
+      loungeTable,
+      seatConfig.tableUid,
+      furniture,
+    );
+    if (table) {
+      furniture.push(table);
+      added++;
+    }
+  }
+  return added;
 }
 
 function appendLobbyLoungePods(
