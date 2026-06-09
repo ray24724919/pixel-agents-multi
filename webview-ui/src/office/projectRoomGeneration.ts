@@ -34,6 +34,8 @@ import {
   PROJECT_ROOM_LOBBY_LOUNGE_TILES_PER_POD,
   PROJECT_ROOM_MIN_HEIGHT,
   PROJECT_ROOM_MIN_WIDTH,
+  PROJECT_ROOM_WORK_CORRIDOR_HEIGHT,
+  PROJECT_ROOM_WORK_CORRIDOR_MIN_WIDTH,
 } from '../constants.js';
 import { getAllCatalogEntries } from './layout/furnitureCatalog.js';
 import { layoutToSeats } from './layout/layoutSerializer.js';
@@ -148,11 +150,16 @@ export function ensureProjectRoomsForAgents(
     };
   }
 
-  const lobbyCore = deriveLobbyCoreBounds(current);
+  let lobbyCore = deriveWorkCorridorBounds(current);
   if (projectInputs.length > 0 || initialProjectRooms.length > 0) {
     const lobbyResult = ensurePublicLobbyRoom(current, lobbyCore);
     current = lobbyResult.layout;
     createdLobbyRoom = lobbyResult.createdRoom;
+
+    const corridorResult = ensureWorkCorridorCampusLayout(current, lobbyCore, template);
+    current = corridorResult.layout;
+    lobbyCore = corridorResult.lobbyCore;
+    suiteFurnitureAddedCount += corridorResult.changedCount;
   }
 
   for (const project of projectInputs) {
@@ -191,7 +198,7 @@ export function ensureProjectRoomsForAgents(
 
   const suiteResult = ensureProjectSuiteFurniture(current, template);
   current = suiteResult.layout;
-  suiteFurnitureAddedCount = suiteResult.addedCount;
+  suiteFurnitureAddedCount += suiteResult.addedCount;
 
   const loungeResult = ensureLobbyLoungeFurniture(current, template);
   current = loungeResult.layout;
@@ -561,17 +568,156 @@ function ensurePublicLobbyRoom(
     createdAtMs: now,
     updatedAtMs: now,
   };
-  const nextLayout = paintLobbyVoidFloor(
+  const expanded = ensureLayoutSize(
     {
       ...layout,
       projectRooms: [room, ...rooms],
     },
-    room,
+    bounds.col + bounds.width,
+    bounds.row + bounds.height,
   );
+  const shouldPrepareCornerSlots =
+    layout.cols < bounds.col + bounds.width || layout.rows < bounds.row + bounds.height;
+  const prepared = shouldPrepareCornerSlots
+    ? clearCampusTiles(
+        expanded,
+        buildWorkCorridorRoomSlots(bounds, PROJECT_ROOM_DEFAULT_WIDTH, PROJECT_ROOM_DEFAULT_HEIGHT),
+      )
+    : expanded;
+  const nextLayout = paintLobbyVoidFloor(prepared, room);
   return {
     layout: nextLayout,
     createdRoom: room,
   };
+}
+
+function ensureWorkCorridorCampusLayout(
+  layout: OfficeLayout,
+  lobbyCore: ProjectRoom['bounds'],
+  template: RoomTemplateAssets,
+): { layout: OfficeLayout; lobbyCore: ProjectRoom['bounds']; changedCount: number } {
+  const rooms = normalizeProjectRooms(layout);
+  const publicRoom = rooms.find((room) => room.kind === ProjectRoomKind.PUBLIC);
+  const projectRooms = rooms.filter((room) => room.kind === ProjectRoomKind.PROJECT);
+  if (!publicRoom || projectRooms.length === 0) return { layout, lobbyCore, changedCount: 0 };
+
+  const corridorBounds = deriveWorkCorridorBounds(layout);
+  const roomSlots = buildWorkCorridorRoomSlots(
+    corridorBounds,
+    PROJECT_ROOM_DEFAULT_WIDTH,
+    PROJECT_ROOM_DEFAULT_HEIGHT,
+  );
+  const sortedProjectRooms = [...projectRooms].sort(compareProjectRoomsForCampus);
+  const nextProjectBounds = new Map<string, ProjectRoom['bounds']>();
+  for (let index = 0; index < sortedProjectRooms.length; index++) {
+    const slot = roomSlots[index];
+    if (slot) nextProjectBounds.set(sortedProjectRooms[index]!.id, slot);
+  }
+
+  const hasBoundsChange =
+    !boundsEqual(publicRoom.bounds, corridorBounds) ||
+    sortedProjectRooms.some((room) => {
+      const bounds = nextProjectBounds.get(room.id);
+      return bounds !== undefined && !boundsEqual(room.bounds, bounds);
+    });
+  const hasStaleLobbyPods = layout.furniture.some((item) => item.uid.includes('-lounge-pod-'));
+  if (!hasBoundsChange && !hasStaleLobbyPods) {
+    return { layout, lobbyCore: corridorBounds, changedCount: 0 };
+  }
+
+  const oldCampusBounds = rooms
+    .filter((room) => room.kind === ProjectRoomKind.PUBLIC || room.kind === ProjectRoomKind.PROJECT)
+    .map((room) => room.bounds);
+  const roomIds = new Set(rooms.map((room) => room.id));
+  const nextRooms = rooms.map((room) => {
+    if (room.id === publicRoom.id) {
+      return { ...room, bounds: corridorBounds, label: room.label ?? PROJECT_ROOM_LOBBY_LABEL };
+    }
+    const nextBounds = nextProjectBounds.get(room.id);
+    if (nextBounds) return { ...room, bounds: nextBounds };
+    return room;
+  });
+  const movedProjectRooms = nextRooms.filter(
+    (room) => room.kind === ProjectRoomKind.PROJECT,
+  ) as ProjectRoom[];
+  const maxCol = Math.max(
+    corridorBounds.col + corridorBounds.width,
+    ...movedProjectRooms.map((room) => room.bounds.col + room.bounds.width),
+  );
+  const maxRow = Math.max(
+    corridorBounds.row + corridorBounds.height,
+    ...movedProjectRooms.map((room) => room.bounds.row + room.bounds.height),
+  );
+
+  const removedFurniture = layout.furniture.filter((item) =>
+    shouldRemoveGeneratedCampusFurniture(item, oldCampusBounds, roomIds),
+  ).length;
+  let current = ensureLayoutSize(
+    {
+      ...layout,
+      projectRooms: nextRooms,
+      furniture: layout.furniture.filter(
+        (item) => !shouldRemoveGeneratedCampusFurniture(item, oldCampusBounds, roomIds),
+      ),
+    },
+    maxCol,
+    maxRow,
+  );
+  current = clearCampusTiles(current, oldCampusBounds);
+  current = paintLobbyVoidFloor(current, { ...publicRoom, bounds: corridorBounds });
+
+  const rebuiltFurniture: PlacedFurniture[] = [];
+  for (const room of movedProjectRooms) {
+    current = paintRoomFloor(current, room, corridorBounds);
+    rebuiltFurniture.push(...buildRoomFurniture(room, template));
+  }
+  current = {
+    ...current,
+    furniture: [...current.furniture, ...rebuiltFurniture],
+  };
+  return {
+    layout: current,
+    lobbyCore: corridorBounds,
+    changedCount: Math.max(1, removedFurniture + rebuiltFurniture.length),
+  };
+}
+
+function compareProjectRoomsForCampus(a: ProjectRoom, b: ProjectRoom): number {
+  const aLabel =
+    normalizeProjectKey(a.project?.displayName ?? a.label ?? a.project?.key ?? a.id) ?? a.id;
+  const bLabel =
+    normalizeProjectKey(b.project?.displayName ?? b.label ?? b.project?.key ?? b.id) ?? b.id;
+  return aLabel.localeCompare(bLabel);
+}
+
+function shouldRemoveGeneratedCampusFurniture(
+  item: PlacedFurniture,
+  oldCampusBounds: ProjectRoom['bounds'][],
+  roomIds: Set<string>,
+): boolean {
+  if ([...roomIds].some((roomId) => item.uid.startsWith(`${roomId}-`))) return true;
+  const entry = getAllCatalogEntries().find((candidate) => candidate.type === item.type);
+  if (!entry) return false;
+  return oldCampusBounds.some((bounds) => rectsOverlap(bounds, placedFurnitureBounds(item, entry)));
+}
+
+function clearCampusTiles(layout: OfficeLayout, boundsList: ProjectRoom['bounds'][]): OfficeLayout {
+  if (boundsList.length === 0) return layout;
+  const tiles = [...layout.tiles];
+  const tileColors = [...(layout.tileColors ?? new Array(layout.tiles.length).fill(null))];
+  const zones = [...(layout.zones ?? new Array(layout.tiles.length).fill(null))];
+  for (const bounds of boundsList) {
+    for (let row = bounds.row; row < bounds.row + bounds.height; row++) {
+      for (let col = bounds.col; col < bounds.col + bounds.width; col++) {
+        if (col < 0 || col >= layout.cols || row < 0 || row >= layout.rows) continue;
+        const idx = row * layout.cols + col;
+        tiles[idx] = TileType.VOID;
+        tileColors[idx] = null;
+        zones[idx] = null;
+      }
+    }
+  }
+  return { ...layout, tiles, tileColors, zones };
 }
 
 function allocateRoomBounds(
@@ -600,7 +746,7 @@ function buildRoomAllocationCandidates(
   height: number,
 ): ProjectRoom['bounds'][] {
   const margin = PROJECT_ROOM_GENERATED_MARGIN;
-  const candidates: ProjectRoom['bounds'][] = [];
+  const candidates: ProjectRoom['bounds'][] = [...buildWorkCorridorRoomSlots(core, width, height)];
   const seen = new Set<string>();
   const horizontalSlots = Math.max(
     1,
@@ -626,6 +772,10 @@ function buildRoomAllocationCandidates(
     candidates.push(bounds);
   };
 
+  for (const bounds of candidates) {
+    seen.add(`${bounds.col},${bounds.row},${bounds.width},${bounds.height}`);
+  }
+
   for (let ring = 0; ring <= maxRings; ring++) {
     const belowRow = core.row + core.height + margin + ring * (height + margin);
     for (let slot = 0; slot < horizontalSlots; slot++) {
@@ -649,6 +799,28 @@ function buildRoomAllocationCandidates(
   }
 
   return candidates;
+}
+
+function buildWorkCorridorRoomSlots(
+  core: ProjectRoom['bounds'],
+  width: number,
+  height: number,
+): ProjectRoom['bounds'][] {
+  const margin = PROJECT_ROOM_GENERATED_MARGIN;
+  const leftCol = core.col;
+  const rightCol = Math.max(leftCol + width + margin, core.col + core.width - width);
+  const topRow = core.row - height - margin;
+  const bottomRow = core.row + core.height + margin;
+  return [
+    { col: leftCol, row: topRow, width, height },
+    { col: rightCol, row: topRow, width, height },
+    { col: leftCol, row: bottomRow, width, height },
+    { col: rightCol, row: bottomRow, width, height },
+  ].filter((bounds) => bounds.col >= 0 && bounds.row >= 0 && boundsFitMax(bounds));
+}
+
+function boundsEqual(a: ProjectRoom['bounds'], b: ProjectRoom['bounds']): boolean {
+  return a.col === b.col && a.row === b.row && a.width === b.width && a.height === b.height;
 }
 
 function boundsFitMax(bounds: ProjectRoom['bounds']): boolean {
@@ -1792,6 +1964,29 @@ function stableUniqueRoomId(base: string, rooms: ProjectRoom[]): string {
     if (!ids.has(id)) return id;
   }
   return `${base}-${rooms.length + 1}`;
+}
+
+function deriveWorkCorridorBounds(layout: OfficeLayout): ProjectRoom['bounds'] {
+  const base = deriveLobbyCoreBounds(layout);
+  const width = Math.min(
+    MAX_COLS,
+    Math.max(PROJECT_ROOM_WORK_CORRIDOR_MIN_WIDTH, layout.cols, base.width),
+  );
+  const col = clampInt(base.col, 0, MAX_COLS - width);
+  const preferredRow =
+    base.row > 0 ? base.row : PROJECT_ROOM_DEFAULT_HEIGHT + PROJECT_ROOM_GENERATED_MARGIN;
+  const minRow = PROJECT_ROOM_DEFAULT_HEIGHT + PROJECT_ROOM_GENERATED_MARGIN;
+  const maxRow =
+    MAX_ROWS -
+    PROJECT_ROOM_DEFAULT_HEIGHT -
+    PROJECT_ROOM_GENERATED_MARGIN -
+    PROJECT_ROOM_WORK_CORRIDOR_HEIGHT;
+  return {
+    col,
+    row: clampInt(preferredRow, minRow, maxRow),
+    width,
+    height: PROJECT_ROOM_WORK_CORRIDOR_HEIGHT,
+  };
 }
 
 function deriveLobbyCoreBounds(layout: OfficeLayout): ProjectRoom['bounds'] {
