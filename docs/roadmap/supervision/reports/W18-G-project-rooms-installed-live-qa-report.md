@@ -16,7 +16,7 @@ for generated front-facing workstations.
 - Branch: `product/w18-g-project-rooms-installed-live-qa`
 - Base commit: `2adb78a Merge W18-F: project rooms live QA report`
 - Initial W18-G report commit: `c89a49d test: run project rooms installed live qa`
-- Supervisor follow-up fix commit: recorded by the final W18-G supervisor commit on this branch.
+- Supervisor follow-up fix commit: `8f729eb fix: align generated room workstation assets`
 
 ## Files Changed
 
