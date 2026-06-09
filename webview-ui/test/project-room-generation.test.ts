@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import { beforeEach, test } from 'node:test';
 
-import { FALLBACK_FLOOR_COLOR } from '../src/constants.ts';
+import {
+  FALLBACK_FLOOR_COLOR,
+  PROJECT_ROOM_GENERATED_FLOOR_COLOR,
+  PROJECT_ROOM_GENERATED_FLOOR_TILE,
+  PROJECT_ROOM_GENERATED_WALL_COLOR,
+} from '../src/constants.ts';
 import { buildDynamicCatalog, getCatalogEntry } from '../src/office/layout/furnitureCatalog.ts';
 import {
   deserializeLayout,
@@ -128,6 +133,10 @@ function furnitureBounds(item: PlacedFurniture): ProjectRoom['bounds'] {
 
 function tileAt(layout: OfficeLayout, col: number, row: number): TileTypeVal {
   return layout.tiles[row * layout.cols + col]!;
+}
+
+function colorAt(layout: OfficeLayout, col: number, row: number) {
+  return layout.tileColors?.[row * layout.cols + col] ?? null;
 }
 
 function assertFurnitureOnWalkableRoomTiles(layout: OfficeLayout, room: ProjectRoom): void {
@@ -291,12 +300,23 @@ test('generated room shell leaves a walkable doorway and corridor to the lobby',
   const outsideDoor = { col: doorway.col, row: doorway.row - 1 };
 
   assert.equal(tileAt(result.layout, room.bounds.col, room.bounds.row), TileType.WALL);
+  assert.deepEqual(
+    colorAt(result.layout, room.bounds.col, room.bounds.row),
+    PROJECT_ROOM_GENERATED_WALL_COLOR,
+  );
   assert.equal(
     tileAt(result.layout, room.bounds.col + room.bounds.width - 1, room.bounds.row),
     TileType.WALL,
   );
-  assert.equal(tileAt(result.layout, doorway.col, doorway.row), TileType.FLOOR_1);
-  assert.equal(tileAt(result.layout, outsideDoor.col, outsideDoor.row), TileType.FLOOR_1);
+  assert.equal(tileAt(result.layout, doorway.col, doorway.row), PROJECT_ROOM_GENERATED_FLOOR_TILE);
+  assert.deepEqual(
+    colorAt(result.layout, doorway.col, doorway.row),
+    PROJECT_ROOM_GENERATED_FLOOR_COLOR,
+  );
+  assert.equal(
+    tileAt(result.layout, outsideDoor.col, outsideDoor.row),
+    PROJECT_ROOM_GENERATED_FLOOR_TILE,
+  );
   assert.ok(hasWalkablePath(result.layout, { col: doorway.col, row: 1 }, doorway));
 });
 
@@ -542,6 +562,12 @@ test('generated room prefers the collaborative four-computer work table when ava
     { folderName: 'Alpha', isSubagent: false },
   ]);
   const furnitureByUid = new Map(result.layout.furniture.map((item) => [item.uid, item.type]));
+  const furnitureByOffset = new Map(
+    result.layout.furniture.map((item) => [
+      `${item.col - result.createdRooms[0]!.bounds.col},${item.row - result.createdRooms[0]!.bounds.row}`,
+      item.type,
+    ]),
+  );
   const room = result.createdRooms[0]!;
   const roomSeats = [...layoutToSeats(result.layout).values()].filter(
     (seat) =>
@@ -556,6 +582,10 @@ test('generated room prefers the collaborative four-computer work table when ava
   assert.equal(furnitureByUid.get('project-alpha-pc-left-2'), 'PC_SIDE:left');
   assert.equal(furnitureByUid.get('project-alpha-chair-right-2'), 'WOODEN_CHAIR_SIDE');
   assert.equal(furnitureByUid.get('project-alpha-chair-left-2'), 'WOODEN_CHAIR_SIDE:left');
+  assert.equal(furnitureByOffset.get('4,2'), 'PC_SIDE');
+  assert.equal(furnitureByOffset.get('6,2'), 'PC_SIDE:left');
+  assert.equal(furnitureByOffset.get('3,2'), 'WOODEN_CHAIR_SIDE');
+  assert.equal(furnitureByOffset.get('7,2'), 'WOODEN_CHAIR_SIDE:left');
   assert.equal(roomSeats.filter((seat) => seat.seatKind === 'work').length, 4);
   assert.ok(roomSeats.some((seat) => seat.seatKind === 'rest'));
   assertFurnitureOnWalkableRoomTiles(result.layout, room);
