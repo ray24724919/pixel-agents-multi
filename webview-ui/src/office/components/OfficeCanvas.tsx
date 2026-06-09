@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef } from 'react';
 import {
   CAMERA_FOLLOW_LERP,
   CAMERA_FOLLOW_SNAP_THRESHOLD,
+  PAN_DRAG_THRESHOLD_PX,
   PAN_MARGIN_FRACTION,
   ZOOM_MAX,
   ZOOM_MIN,
@@ -65,6 +66,9 @@ export function OfficeCanvas({
   const offsetRef = useRef({ x: 0, y: 0 });
   // Middle-mouse pan state (imperative, no re-renders)
   const isPanningRef = useRef(false);
+  const primaryPanCandidateRef = useRef(false);
+  const primaryPanHasDraggedRef = useRef(false);
+  const suppressNextClickRef = useRef(false);
   const panStartRef = useRef({ mouseX: 0, mouseY: 0, panX: 0, panY: 0 });
   // Delete/rotate button bounds (updated each frame by renderer)
   const deleteButtonBoundsRef = useRef<DeleteButtonBounds | null>(null);
@@ -395,6 +399,25 @@ export function OfficeCanvas({
         return;
       }
 
+      if (primaryPanCandidateRef.current) {
+        const cssDx = e.clientX - panStartRef.current.mouseX;
+        const cssDy = e.clientY - panStartRef.current.mouseY;
+        const distance = Math.hypot(cssDx, cssDy);
+        if (distance >= PAN_DRAG_THRESHOLD_PX) {
+          const dpr = window.devicePixelRatio || 1;
+          officeState.cameraFollowId = null;
+          primaryPanHasDraggedRef.current = true;
+          isPanningRef.current = true;
+          panRef.current = clampPan(
+            panStartRef.current.panX + cssDx * dpr,
+            panStartRef.current.panY + cssDy * dpr,
+          );
+          const canvas = canvasRef.current;
+          if (canvas) canvas.style.cursor = 'grabbing';
+          return;
+        }
+      }
+
       if (isEditMode) {
         const tile = screenToTile(e.clientX, e.clientY);
         officeState.hoveredTile = tile;
@@ -528,6 +551,8 @@ export function OfficeCanvas({
               }
             }
           }
+        } else {
+          cursor = 'grab';
         }
         canvas.style.cursor = cursor;
       }
@@ -567,6 +592,37 @@ export function OfficeCanvas({
         const canvas = canvasRef.current;
         if (canvas) canvas.style.cursor = 'grabbing';
         return;
+      }
+
+      if (e.button === 0 && !isEditMode) {
+        const pos = screenToWorld(e.clientX, e.clientY);
+        const hitId = pos ? officeState.getCharacterAt(pos.worldX, pos.worldY) : null;
+        const visibleHitId = hitId !== null && isAgentVisible(hitId) ? hitId : null;
+        const tile = screenToTile(e.clientX, e.clientY);
+        const selectedCh =
+          officeState.selectedAgentId !== null
+            ? officeState.characters.get(officeState.selectedAgentId)
+            : null;
+        const seatId =
+          tile && selectedCh && !selectedCh.isSubagent
+            ? officeState.getSeatAtTile(tile.col, tile.row)
+            : null;
+        const seat = seatId ? officeState.seats.get(seatId) : null;
+        const clickableSeat =
+          !!seat && (!seat.assigned || (selectedCh ? selectedCh.seatId === seat.uid : false));
+        if (visibleHitId === null && !clickableSeat) {
+          primaryPanCandidateRef.current = true;
+          primaryPanHasDraggedRef.current = false;
+          panStartRef.current = {
+            mouseX: e.clientX,
+            mouseY: e.clientY,
+            panX: panRef.current.x,
+            panY: panRef.current.y,
+          };
+          const canvas = canvasRef.current;
+          if (canvas) canvas.style.cursor = 'grab';
+          return;
+        }
       }
 
       // Right-click in edit mode for erasing
@@ -661,6 +717,7 @@ export function OfficeCanvas({
       hitTestDeleteButton,
       hitTestRotateButton,
       panRef,
+      isAgentVisible,
     ],
   );
 
@@ -670,6 +727,17 @@ export function OfficeCanvas({
         isPanningRef.current = false;
         const canvas = canvasRef.current;
         if (canvas) canvas.style.cursor = isEditMode ? 'crosshair' : 'default';
+        return;
+      }
+      if (e.button === 0 && primaryPanCandidateRef.current) {
+        if (primaryPanHasDraggedRef.current || isPanningRef.current) {
+          suppressNextClickRef.current = true;
+        }
+        primaryPanCandidateRef.current = false;
+        primaryPanHasDraggedRef.current = false;
+        isPanningRef.current = false;
+        const canvas = canvasRef.current;
+        if (canvas) canvas.style.cursor = isEditMode ? 'crosshair' : 'grab';
         return;
       }
       if (e.button === 2) {
@@ -722,6 +790,10 @@ export function OfficeCanvas({
 
   const handleClick = useCallback(
     (e: React.MouseEvent) => {
+      if (suppressNextClickRef.current) {
+        suppressNextClickRef.current = false;
+        return;
+      }
       if (isEditMode) return; // handled by mouseDown/mouseUp
       const pos = screenToWorld(e.clientX, e.clientY);
       if (!pos) return;
@@ -787,6 +859,11 @@ export function OfficeCanvas({
   );
 
   const handleMouseLeave = useCallback(() => {
+    if (primaryPanCandidateRef.current && primaryPanHasDraggedRef.current) {
+      suppressNextClickRef.current = true;
+    }
+    primaryPanCandidateRef.current = false;
+    primaryPanHasDraggedRef.current = false;
     isPanningRef.current = false;
     isEraseDraggingRef.current = false;
     editorState.isDragging = false;

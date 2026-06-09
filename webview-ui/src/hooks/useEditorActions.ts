@@ -382,6 +382,7 @@ export function useEditorActions(
       const hasProvisioningChanges =
         result.createdRooms.length > 0 ||
         result.suiteFurnitureAddedCount > 0 ||
+        result.loungeFurnitureAddedCount > 0 ||
         result.createdLobbyRoom !== null;
       if (hasProvisioningChanges) {
         applyEdit(result.layout);
@@ -420,6 +421,7 @@ export function useEditorActions(
       const hasProvisioningChanges =
         result.createdRooms.length > 0 ||
         result.suiteFurnitureAddedCount > 0 ||
+        result.loungeFurnitureAddedCount > 0 ||
         result.createdLobbyRoom !== null;
       if (!hasProvisioningChanges) return false;
       os.rebuildFromLayout(result.layout);

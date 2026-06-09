@@ -133,6 +133,7 @@ export function renderProjectRooms(
   zoom: number,
   selectedRoomId: string | null = null,
   hoveredRoomId: string | null = null,
+  includeDoorplates = true,
 ): void {
   const rooms = buildRoomRenderInstructions(layout, zoom, selectedRoomId, hoveredRoomId);
   if (rooms.length === 0) return;
@@ -148,34 +149,60 @@ export function renderProjectRooms(
     ctx.setLineDash(room.selected || room.hovered ? [] : [4 * zoom, 2 * zoom]);
     ctx.strokeRect(x + 0.5, y + 0.5, room.w - 1, room.h - 1);
 
-    if (!room.doorplate.visible || room.doorplate.maxWidth <= 0) continue;
-    const fontSize = Math.max(
-      PROJECT_ROOM_DOORPLATE_FONT_PX * zoom,
-      PROJECT_ROOM_DOORPLATE_FONT_PX,
-    );
-    const padX = PROJECT_ROOM_DOORPLATE_PADDING_X_PX * zoom;
-    const padY = PROJECT_ROOM_DOORPLATE_PADDING_Y_PX * zoom;
-    ctx.font = `${fontSize}px "FS Pixel Sans", monospace`;
-    ctx.textBaseline = 'top';
-    const textWidth = Math.min(
-      ctx.measureText(room.doorplate.label).width,
-      room.doorplate.maxWidth,
-    );
-    const plateW = Math.min(room.doorplate.maxWidth, textWidth + padX * 2);
-    const plateH = fontSize + padY * 2;
-    const plateX = offsetX + room.doorplate.x;
-    const plateY = offsetY + room.doorplate.y;
-    ctx.setLineDash([]);
-    ctx.fillStyle = PROJECT_ROOM_DOORPLATE_BG;
-    ctx.fillRect(plateX, plateY, plateW, plateH);
-    ctx.fillStyle = PROJECT_ROOM_DOORPLATE_TEXT;
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(plateX, plateY, plateW, plateH);
-    ctx.clip();
-    ctx.fillText(room.doorplate.label, plateX + padX, plateY + padY);
-    ctx.restore();
+    if (includeDoorplates) {
+      drawProjectRoomDoorplate(ctx, room, offsetX, offsetY, zoom);
+    }
   }
+  ctx.restore();
+}
+
+/** @internal */
+export function renderProjectRoomDoorplates(
+  ctx: CanvasRenderingContext2D,
+  layout: OfficeLayout,
+  offsetX: number,
+  offsetY: number,
+  zoom: number,
+  selectedRoomId: string | null = null,
+  hoveredRoomId: string | null = null,
+): void {
+  const rooms = buildRoomRenderInstructions(layout, zoom, selectedRoomId, hoveredRoomId);
+  if (rooms.length === 0) return;
+
+  ctx.save();
+  for (const room of rooms) {
+    drawProjectRoomDoorplate(ctx, room, offsetX, offsetY, zoom);
+  }
+  ctx.restore();
+}
+
+function drawProjectRoomDoorplate(
+  ctx: CanvasRenderingContext2D,
+  room: ReturnType<typeof buildRoomRenderInstructions>[number],
+  offsetX: number,
+  offsetY: number,
+  zoom: number,
+): void {
+  if (!room.doorplate.visible || room.doorplate.maxWidth <= 0) return;
+  const fontSize = Math.max(PROJECT_ROOM_DOORPLATE_FONT_PX * zoom, PROJECT_ROOM_DOORPLATE_FONT_PX);
+  const padX = PROJECT_ROOM_DOORPLATE_PADDING_X_PX * zoom;
+  const padY = PROJECT_ROOM_DOORPLATE_PADDING_Y_PX * zoom;
+  ctx.font = `${fontSize}px "FS Pixel Sans", monospace`;
+  ctx.textBaseline = 'top';
+  const textWidth = Math.min(ctx.measureText(room.doorplate.label).width, room.doorplate.maxWidth);
+  const plateW = Math.min(room.doorplate.maxWidth, textWidth + padX * 2);
+  const plateH = fontSize + padY * 2;
+  const plateX = offsetX + room.doorplate.x;
+  const plateY = offsetY + room.doorplate.y;
+  ctx.setLineDash([]);
+  ctx.fillStyle = PROJECT_ROOM_DOORPLATE_BG;
+  ctx.fillRect(plateX, plateY, plateW, plateH);
+  ctx.fillStyle = PROJECT_ROOM_DOORPLATE_TEXT;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(plateX, plateY, plateW, plateH);
+  ctx.clip();
+  ctx.fillText(room.doorplate.label, plateX + padX, plateY + padY);
   ctx.restore();
 }
 
@@ -751,6 +778,7 @@ export function renderFrame(
       zoom,
       editor?.selectedProjectRoomId ?? null,
       editor?.hoveredProjectRoomId ?? null,
+      false,
     );
   }
 
@@ -776,6 +804,18 @@ export function renderFrame(
   const selectedId = selection?.selectedAgentId ?? null;
   const hoveredId = selection?.hoveredAgentId ?? null;
   renderScene(ctx, allFurniture, characters, offsetX, offsetY, zoom, selectedId, hoveredId);
+
+  if (layout) {
+    renderProjectRoomDoorplates(
+      ctx,
+      layout,
+      offsetX,
+      offsetY,
+      zoom,
+      editor?.selectedProjectRoomId ?? null,
+      editor?.hoveredProjectRoomId ?? null,
+    );
+  }
 
   // Speech bubbles (always on top of characters)
   renderBubbles(ctx, characters, offsetX, offsetY, zoom);

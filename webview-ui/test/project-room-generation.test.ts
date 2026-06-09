@@ -81,6 +81,27 @@ beforeEach(() => {
       isDesk: false,
       orientation: 'front',
     },
+    {
+      id: 'COFFEE_TABLE',
+      label: 'Coffee Table',
+      category: 'desks',
+      width: TILE_SIZE * 2,
+      height: TILE_SIZE * 2,
+      footprintW: 2,
+      footprintH: 2,
+      isDesk: false,
+    },
+    {
+      id: 'PLANT',
+      label: 'Plant',
+      category: 'decor',
+      width: TILE_SIZE,
+      height: TILE_SIZE * 2,
+      footprintW: 1,
+      footprintH: 2,
+      isDesk: false,
+      backgroundTiles: 1,
+    },
   ];
 
   buildDynamicCatalog({
@@ -263,6 +284,25 @@ test('generated room contains a valid workstation seat and a rest seat when spac
   assert.equal(
     result.layout.furniture.some((item) => item.uid === `${room.id}-rest-seat`),
     true,
+  );
+});
+
+test('public lobby is provisioned as a lounge without duplicating project workstations', () => {
+  const result = ensureProjectRoomsForAgents(makeLayout(), [
+    { folderName: 'Alpha', isSubagent: false },
+  ]);
+  const lobby = publicRooms(result.layout)[0]!;
+  const seats = seatsInRoom(result.layout, lobby);
+  const furnitureByUid = new Map(result.layout.furniture.map((item) => [item.uid, item.type]));
+
+  assert.ok(result.loungeFurnitureAddedCount >= 3);
+  assert.equal(furnitureByUid.get(`${lobby.id}-lounge-seat-a`), 'SOFA');
+  assert.equal(furnitureByUid.get(`${lobby.id}-lounge-table`), 'COFFEE_TABLE');
+  assert.equal(furnitureByUid.get(`${lobby.id}-lounge-decor`), 'PLANT');
+  assert.ok(seats.some((seat) => seat.seatKind === 'rest'));
+  assert.equal(
+    result.layout.furniture.some((item) => item.uid === `${lobby.id}-desk`),
+    false,
   );
 });
 
@@ -449,6 +489,30 @@ test('multiple new projects produce stable non-overlapping lobby-adjacent rooms'
       );
     }
   }
+});
+
+test('campus allocation fills a compact lower wing before side wings', () => {
+  const result = ensureProjectRoomsForAgents(makeLayout(), [
+    { folderName: 'Alpha', isSubagent: false },
+    { folderName: 'Beta', isSubagent: false },
+    { folderName: 'Delta', isSubagent: false },
+    { folderName: 'Epsilon', isSubagent: false },
+    { folderName: 'Gamma', isSubagent: false },
+  ]);
+  const rooms = result.createdRooms;
+  const lowerWingRow = rooms[0]!.bounds.row;
+
+  assert.equal(rooms.length, 5);
+  assert.deepEqual(
+    rooms.slice(0, 4).map((room) => room.bounds.row),
+    [lowerWingRow, lowerWingRow, lowerWingRow, lowerWingRow],
+  );
+  assert.deepEqual(
+    rooms.slice(0, 4).map((room) => room.bounds.col),
+    [0, 11, 22, 33],
+  );
+  assert.equal(rooms[4]!.bounds.row < lowerWingRow, true);
+  assert.equal(result.layout.cols >= 43, true);
 });
 
 test('generated workstation prefers a front desk with matching front electronics', () => {
@@ -695,6 +759,8 @@ test('repeated generation does not duplicate rooms and keeps stable ids', () => 
 
   assert.equal(first.createdRooms[0]?.id, 'project-alpha');
   assert.equal(second.createdRooms.length, 0);
+  assert.ok(first.loungeFurnitureAddedCount > 0);
+  assert.equal(second.loungeFurnitureAddedCount, 0);
   assert.equal(projectRooms(second.layout).length, 1);
   assert.equal(publicRooms(second.layout).length, 1);
 });
@@ -764,4 +830,24 @@ test('generated room paints usable floor tiles in expanded space', () => {
   });
 
   assert.ok(roomTiles.every((tile) => tile !== TileType.VOID));
+});
+
+test('auto-created lobby repairs void floor so lounge seats can be placed', () => {
+  const result = ensureProjectRoomsForAgents(makeVoidLayout(10, 8), [
+    { folderName: 'Alpha', isSubagent: false },
+  ]);
+  const lobby = publicRooms(result.layout)[0]!;
+  const lobbyTiles = result.layout.tiles.filter((_, idx) => {
+    const col = idx % result.layout.cols;
+    const row = Math.floor(idx / result.layout.cols);
+    return (
+      col >= lobby.bounds.col &&
+      col < lobby.bounds.col + lobby.bounds.width &&
+      row >= lobby.bounds.row &&
+      row < lobby.bounds.row + lobby.bounds.height
+    );
+  });
+
+  assert.ok(lobbyTiles.every((tile) => tile !== TileType.VOID));
+  assert.ok(seatsInRoom(result.layout, lobby).some((seat) => seat.seatKind === 'rest'));
 });
