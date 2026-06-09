@@ -49,8 +49,10 @@ export const HANDOFF_COMPLETION_REPORT_SCAN_BYTES = 32 * 1024;
 export const HANDOFF_COMPLETION_REVIEW_MAX_LINES = 4;
 export const HANDOFF_COMPLETION_REVIEW_MAX_LINE_LENGTH = 180;
 export const HANDOFF_COMPLETION_REVIEW_MAX_WARNINGS = 6;
-export const HANDOFF_CLAUDE_LAUNCH_EVIDENCE_TIMEOUT_MS = 12_000;
-export const HANDOFF_CLAUDE_LAUNCH_EVIDENCE_POLL_MS = 500;
+// Launch-evidence gate (both providers): how long to wait for a real session signal
+// (Claude transcript/hook, Codex bound rollout) before reporting the launch unconfirmed.
+export const HANDOFF_LAUNCH_EVIDENCE_TIMEOUT_MS = 12_000;
+export const HANDOFF_LAUNCH_EVIDENCE_POLL_MS = 500;
 
 // ── Settings Persistence (VS Code globalState keys) ─────────
 export const GLOBAL_KEY_SOUND_ENABLED = `${EXTENSION_NAME}.soundEnabled`;

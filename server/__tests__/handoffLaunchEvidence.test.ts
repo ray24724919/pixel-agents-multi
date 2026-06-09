@@ -25,14 +25,62 @@ describe('handoff executor launch evidence', () => {
     return transcript;
   }
 
-  it('confirms Codex launches from the terminal agent path without transcript evidence', () => {
+  it('confirms Codex launches only from a bound rollout transcript', async () => {
+    // A bound, non-empty ~/.codex rollout file is the truthful "the session started" signal.
+    expect(
+      getHandoffExecutorLaunchEvidence('codex', {
+        hookDelivered: false,
+        jsonlFile: tempTranscript('{"type":"session_meta"}\n'),
+        linesProcessed: 0,
+      }),
+    ).toBe('codex-rollout-file');
+    // Processed transcript lines are even stronger evidence the executor is doing work.
+    expect(
+      getHandoffExecutorLaunchEvidence('codex', {
+        hookDelivered: false,
+        jsonlFile: '',
+        linesProcessed: 1,
+      }),
+    ).toBe('codex-rollout-lines');
+    await expect(
+      waitForHandoffExecutorLaunchConfirmation(
+        'codex',
+        {
+          hookDelivered: false,
+          jsonlFile: tempTranscript('{"type":"session_meta"}\n'),
+          linesProcessed: 0,
+        },
+        { timeoutMs: 0, pollMs: 1 },
+      ),
+    ).resolves.toEqual({ confirmed: true, evidence: 'codex-rollout-file' });
+  });
+
+  it('does not confirm Codex launches before a rollout is bound', async () => {
+    // Terminal opened but no ~/.codex thread has appeared yet (auth/permission prompt, or the
+    // CLI errored out): no evidence, so the launch must NOT be marked active.
     expect(
       getHandoffExecutorLaunchEvidence('codex', {
         hookDelivered: false,
         jsonlFile: '',
         linesProcessed: 0,
       }),
-    ).toBe('codex-terminal');
+    ).toBeUndefined();
+    // An empty rollout file is not yet a started session.
+    const emptyRollout = tempTranscript();
+    expect(
+      getHandoffExecutorLaunchEvidence('codex', {
+        hookDelivered: false,
+        jsonlFile: emptyRollout,
+        linesProcessed: 0,
+      }),
+    ).toBeUndefined();
+    await expect(
+      waitForHandoffExecutorLaunchConfirmation(
+        'codex',
+        { hookDelivered: false, jsonlFile: '', linesProcessed: 0 },
+        { timeoutMs: 0, pollMs: 1 },
+      ),
+    ).resolves.toEqual({ confirmed: false });
   });
 
   it('confirms Claude launches from hook, processed-line, or nonempty transcript evidence', () => {
