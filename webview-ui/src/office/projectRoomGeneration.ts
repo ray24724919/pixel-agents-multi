@@ -1,5 +1,7 @@
 import type { ColorValue } from '../components/ui/types.js';
 import {
+  PROJECT_ROOM_CAMPUS_MAX_HORIZONTAL_SLOTS,
+  PROJECT_ROOM_CAMPUS_MAX_VERTICAL_SLOTS,
   PROJECT_ROOM_COLLAB_BOTTOM_ROW_OFFSET,
   PROJECT_ROOM_COLLAB_LEFT_CHAIR_OFFSET_COL,
   PROJECT_ROOM_COLLAB_LEFT_PC_OFFSET_COL,
@@ -59,6 +61,7 @@ export interface ProjectRoomGenerationResult {
   createdRooms: ProjectRoom[];
   createdLobbyRoom: ProjectRoom | null;
   suiteFurnitureAddedCount: number;
+  loungeFurnitureAddedCount: number;
   skippedUnknownCount: number;
   overflowCount: number;
 }
@@ -68,6 +71,8 @@ interface RoomTemplateAssets {
   electronics: FurnitureCatalogEntry;
   workChair: FurnitureCatalogEntry;
   restSeat: FurnitureCatalogEntry;
+  loungeTable?: FurnitureCatalogEntry;
+  loungeDecor?: FurnitureCatalogEntry;
   collaboration?: CollaborationTemplateAssets;
 }
 
@@ -118,6 +123,7 @@ export function ensureProjectRoomsForAgents(
   const createdRooms: ProjectRoom[] = [];
   let createdLobbyRoom: ProjectRoom | null = null;
   let suiteFurnitureAddedCount = 0;
+  let loungeFurnitureAddedCount = 0;
   const skippedUnknownCount = agents.filter(
     (agent) => shouldGenerateForAgent(agent) && !deriveGenerationProject(agent),
   ).length;
@@ -129,6 +135,7 @@ export function ensureProjectRoomsForAgents(
       createdRooms,
       createdLobbyRoom,
       suiteFurnitureAddedCount,
+      loungeFurnitureAddedCount,
       skippedUnknownCount,
       overflowCount: projectInputs.length,
     };
@@ -179,11 +186,16 @@ export function ensureProjectRoomsForAgents(
   current = suiteResult.layout;
   suiteFurnitureAddedCount = suiteResult.addedCount;
 
+  const loungeResult = ensureLobbyLoungeFurniture(current, template);
+  current = loungeResult.layout;
+  loungeFurnitureAddedCount = loungeResult.addedCount;
+
   return {
     layout: current,
     createdRooms,
     createdLobbyRoom,
     suiteFurnitureAddedCount,
+    loungeFurnitureAddedCount,
     skippedUnknownCount,
     overflowCount,
   };
@@ -273,22 +285,73 @@ function pickRoomTemplateAssets(): RoomTemplateAssets | null {
     pickEntry(entries, (entry) => entry.category === 'chairs' && entry.orientation === 'back') ??
     pickEntry(entries, (entry) => entry.category === 'chairs');
   if (!desk || !electronics || !workChair) return null;
-  const restSeat =
-    pickEntry(
-      entries,
-      (entry) =>
-        entry.category === 'chairs' &&
-        (entry.footprintW >= 2 || /sofa|bench|couch|cushion/i.test(entry.type + entry.label)),
-    ) ??
-    pickEntry(entries, (entry) => entry.category === 'chairs' && entry.type !== workChair.type) ??
-    workChair;
+  const restSeat = pickRestSeat(entries, workChair) ?? workChair;
+  const loungeTable = pickLoungeTable(entries);
+  const loungeDecor = pickLoungeDecor(entries);
   return {
     desk,
     electronics,
     workChair,
     restSeat,
+    ...(loungeTable ? { loungeTable } : {}),
+    ...(loungeDecor ? { loungeDecor } : {}),
     ...(pickCollaborationTemplateAssets(entries) ?? {}),
   };
+}
+
+function pickRestSeat(
+  entries: FurnitureCatalogEntry[],
+  workChair: FurnitureCatalogEntry,
+): FurnitureCatalogEntry | undefined {
+  return (
+    pickPreferredEntry(
+      entries,
+      (entry) =>
+        entry.category === 'chairs' &&
+        (entry.footprintW >= 2 || /sofa|bench|couch|cushion/i.test(`${entry.type} ${entry.label}`)),
+      (entry) => {
+        const text = `${entry.type} ${entry.label}`;
+        if (/sofa/i.test(text) && entry.orientation === 'front') return 120;
+        if (/sofa/i.test(text)) return 110;
+        if (/bench|couch|cushion/i.test(text) && entry.footprintW >= 2) return 90;
+        if (entry.footprintW >= 2) return 70;
+        if (/bench|couch|cushion/i.test(text)) return 60;
+        return 0;
+      },
+    ) ??
+    pickEntry(entries, (entry) => entry.category === 'chairs' && entry.type !== workChair.type) ??
+    workChair
+  );
+}
+
+function pickLoungeTable(entries: FurnitureCatalogEntry[]): FurnitureCatalogEntry | undefined {
+  return pickPreferredEntry(
+    entries,
+    (entry) =>
+      (entry.category === 'desks' || entry.category === 'misc') &&
+      /coffee|small.*table|table/i.test(`${entry.type} ${entry.label}`) &&
+      !entry.canPlaceOnSurfaces,
+    (entry) => {
+      if (/coffee/i.test(`${entry.type} ${entry.label}`)) return 100;
+      if (/small.*table/i.test(`${entry.type} ${entry.label}`)) return 70;
+      return 20;
+    },
+  );
+}
+
+function pickLoungeDecor(entries: FurnitureCatalogEntry[]): FurnitureCatalogEntry | undefined {
+  return pickPreferredEntry(
+    entries,
+    (entry) =>
+      entry.category === 'decor' &&
+      /plant|cactus|pot/i.test(`${entry.type} ${entry.label}`) &&
+      !entry.canPlaceOnWalls,
+    (entry) => {
+      if (/plant/i.test(`${entry.type} ${entry.label}`)) return 100;
+      if (/cactus/i.test(`${entry.type} ${entry.label}`)) return 60;
+      return 20;
+    },
+  );
 }
 
 function pickCollaborationTemplateAssets(
@@ -491,11 +554,15 @@ function ensurePublicLobbyRoom(
     createdAtMs: now,
     updatedAtMs: now,
   };
-  return {
-    layout: {
+  const nextLayout = paintLobbyVoidFloor(
+    {
       ...layout,
       projectRooms: [room, ...rooms],
     },
+    room,
+  );
+  return {
+    layout: nextLayout,
     createdRoom: room,
   };
 }
@@ -528,8 +595,20 @@ function buildRoomAllocationCandidates(
   const margin = PROJECT_ROOM_GENERATED_MARGIN;
   const candidates: ProjectRoom['bounds'][] = [];
   const seen = new Set<string>();
-  const horizontalSlots = Math.max(1, Math.ceil(core.width / (width + margin)));
-  const verticalSlots = Math.max(1, Math.ceil(core.height / (height + margin)));
+  const horizontalSlots = Math.max(
+    1,
+    Math.min(
+      PROJECT_ROOM_CAMPUS_MAX_HORIZONTAL_SLOTS,
+      Math.floor((MAX_COLS - core.col + margin) / (width + margin)),
+    ),
+  );
+  const verticalSlots = Math.max(
+    1,
+    Math.min(
+      PROJECT_ROOM_CAMPUS_MAX_VERTICAL_SLOTS,
+      Math.floor((MAX_ROWS - core.row + margin) / (height + margin)),
+    ),
+  );
   const maxRings = Math.ceil(Math.max(MAX_COLS, MAX_ROWS) / Math.min(width, height));
   const push = (col: number, row: number) => {
     const bounds = { col, row, width, height };
@@ -646,6 +725,25 @@ function paintRoomFloor(
   paintRoomShell(layout, tiles, tileColors, zones, room.bounds, doorway);
   paintCorridorToLobby(layout, tiles, tileColors, zones, lobbyCore, doorway);
   return { ...layout, tiles, tileColors, zones };
+}
+
+function paintLobbyVoidFloor(layout: OfficeLayout, room: ProjectRoom): OfficeLayout {
+  const tiles = [...layout.tiles];
+  const tileColors = [...(layout.tileColors ?? new Array(layout.tiles.length).fill(null))];
+  const zones = [...(layout.zones ?? new Array(layout.tiles.length).fill(null))];
+  let changed = false;
+  for (let row = room.bounds.row; row < room.bounds.row + room.bounds.height; row++) {
+    for (let col = room.bounds.col; col < room.bounds.col + room.bounds.width; col++) {
+      if (col < 0 || col >= layout.cols || row < 0 || row >= layout.rows) continue;
+      const idx = row * layout.cols + col;
+      if (tiles[idx] !== TileType.VOID) continue;
+      tiles[idx] = PROJECT_ROOM_GENERATED_FLOOR_TILE;
+      tileColors[idx] = { ...PROJECT_ROOM_GENERATED_FLOOR_COLOR };
+      zones[idx] = null;
+      changed = true;
+    }
+  }
+  return changed ? { ...layout, tiles, tileColors, zones } : layout;
 }
 
 function deriveRoomDoorway(
@@ -1013,6 +1111,183 @@ function buildCollaborationRoomFurnitureCandidates(
   });
 
   return furniture;
+}
+
+function ensureLobbyLoungeFurniture(
+  layout: OfficeLayout,
+  template: RoomTemplateAssets,
+): { layout: OfficeLayout; addedCount: number } {
+  let furniture = layout.furniture;
+  let addedCount = 0;
+  for (const room of normalizeProjectRooms(layout).filter(
+    (candidate) => candidate.kind === ProjectRoomKind.PUBLIC,
+  )) {
+    const seats = roomSeats({ ...layout, furniture }, room);
+    const hasRestSeat = seats.some((seat) => seat.seatKind === 'rest');
+    const hasLoungeTable = roomHasFurniture({ ...layout, furniture }, room, isLoungeTableFurniture);
+    const hasDecor = roomHasFurniture({ ...layout, furniture }, room, isLoungeDecorFurniture);
+    const nextFurniture = [...furniture];
+    let roomAdded = 0;
+
+    if (!hasRestSeat) {
+      for (const item of findLobbyRestSeatPlacements(
+        layout,
+        room,
+        template.restSeat,
+        nextFurniture,
+      )) {
+        nextFurniture.push(item);
+        roomAdded++;
+      }
+    }
+
+    if (!hasLoungeTable && template.loungeTable) {
+      const table = findLobbyFurniturePlacement(
+        layout,
+        room,
+        template.loungeTable,
+        `${room.id}-lounge-table`,
+        nextFurniture,
+        [
+          {
+            col:
+              room.bounds.col +
+              Math.max(1, Math.floor((room.bounds.width - template.loungeTable.footprintW) / 2)),
+            row:
+              room.bounds.row +
+              Math.max(2, Math.floor((room.bounds.height - template.loungeTable.footprintH) / 2)),
+          },
+        ],
+      );
+      if (table) {
+        nextFurniture.push(table);
+        roomAdded++;
+      }
+    }
+
+    if (!hasDecor && template.loungeDecor) {
+      const decor = findLobbyFurniturePlacement(
+        layout,
+        room,
+        template.loungeDecor,
+        `${room.id}-lounge-decor`,
+        nextFurniture,
+        [
+          {
+            col: room.bounds.col + 1,
+            row: room.bounds.row + room.bounds.height - template.loungeDecor.footprintH - 1,
+          },
+          {
+            col: room.bounds.col + room.bounds.width - template.loungeDecor.footprintW - 1,
+            row: room.bounds.row + 1,
+          },
+        ],
+      );
+      if (decor) {
+        nextFurniture.push(decor);
+        roomAdded++;
+      }
+    }
+
+    if (roomAdded > 0) {
+      furniture = nextFurniture;
+      addedCount += roomAdded;
+    }
+  }
+  return addedCount > 0 ? { layout: { ...layout, furniture }, addedCount } : { layout, addedCount };
+}
+
+function findLobbyRestSeatPlacements(
+  layout: OfficeLayout,
+  room: ProjectRoom,
+  restSeat: FurnitureCatalogEntry,
+  furniture: PlacedFurniture[],
+): PlacedFurniture[] {
+  const placements: PlacedFurniture[] = [];
+  const preferred = [
+    {
+      uid: `${room.id}-lounge-seat-a`,
+      col: room.bounds.col + 2,
+      row: room.bounds.row + 2,
+    },
+    {
+      uid: `${room.id}-lounge-seat-b`,
+      col: room.bounds.col + room.bounds.width - restSeat.footprintW - 3,
+      row: room.bounds.row + 2,
+    },
+  ];
+  for (const candidate of preferred) {
+    const placement = findLobbyFurniturePlacement(
+      layout,
+      room,
+      restSeat,
+      candidate.uid,
+      [...furniture, ...placements],
+      [{ col: candidate.col, row: candidate.row }],
+    );
+    if (placement) placements.push(placement);
+  }
+  return placements;
+}
+
+function findLobbyFurniturePlacement(
+  layout: OfficeLayout,
+  room: ProjectRoom,
+  entry: FurnitureCatalogEntry,
+  uid: string,
+  furniture: PlacedFurniture[],
+  preferred: Array<{ col: number; row: number }>,
+): PlacedFurniture | null {
+  const candidates = [
+    ...preferred.map((position) => ({ uid, type: entry.type, ...position })),
+    ...buildFallbackLobbyFurnitureCandidates(room, entry, uid),
+  ];
+  const seen = new Set<string>();
+  for (const candidate of candidates) {
+    const key = `${candidate.col},${candidate.row},${candidate.type}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (canPlaceSuiteFurniture(layout, room, candidate, furniture)) return candidate;
+  }
+  return null;
+}
+
+function buildFallbackLobbyFurnitureCandidates(
+  room: ProjectRoom,
+  entry: FurnitureCatalogEntry,
+  uid: string,
+): PlacedFurniture[] {
+  const candidates: PlacedFurniture[] = [];
+  const minCol = room.bounds.col + 1;
+  const maxCol = room.bounds.col + room.bounds.width - entry.footprintW - 1;
+  const minRow = room.bounds.row + 1;
+  const maxRow = room.bounds.row + room.bounds.height - entry.footprintH - 1;
+  for (let row = minRow; row <= maxRow; row++) {
+    for (let col = minCol; col <= maxCol; col++) {
+      candidates.push({ uid, type: entry.type, col, row });
+    }
+  }
+  return candidates;
+}
+
+function roomHasFurniture(
+  layout: OfficeLayout,
+  room: ProjectRoom,
+  predicate: (entry: FurnitureCatalogEntry) => boolean,
+): boolean {
+  return layout.furniture.some((item) => {
+    const entry = getAllCatalogEntries().find((candidate) => candidate.type === item.type);
+    if (!entry || !predicate(entry)) return false;
+    return rectsOverlap(room.bounds, placedFurnitureBounds(item, entry));
+  });
+}
+
+function isLoungeTableFurniture(entry: FurnitureCatalogEntry): boolean {
+  return isCoffeeFurniture(entry) || /small.*table/i.test(`${entry.type} ${entry.label}`);
+}
+
+function isLoungeDecorFurniture(entry: FurnitureCatalogEntry): boolean {
+  return entry.category === 'decor' && /plant|cactus|pot/i.test(`${entry.type} ${entry.label}`);
 }
 
 function ensureProjectSuiteFurniture(

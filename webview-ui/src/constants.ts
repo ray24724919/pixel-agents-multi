@@ -107,6 +107,7 @@ export const ZOOM_LEVEL_FADE_DELAY_MS = 1500;
 export const ZOOM_LEVEL_HIDE_DELAY_MS = 2000;
 export const ZOOM_LEVEL_FADE_DURATION_SEC = 0.5;
 export const ZOOM_SCROLL_THRESHOLD = 50;
+export const PAN_DRAG_THRESHOLD_PX = 4;
 export const PAN_MARGIN_FRACTION = 0.25;
 
 // ── Editor ───────────────────────────────────────────────────
@@ -202,6 +203,8 @@ export const PROJECT_ROOM_MIN_HEIGHT = 3;
 export const PROJECT_ROOM_LOBBY_ID = 'project-room-lobby';
 export const PROJECT_ROOM_LOBBY_LABEL = 'Lobby';
 export const PROJECT_ROOM_GENERATED_MARGIN = 1;
+export const PROJECT_ROOM_CAMPUS_MAX_HORIZONTAL_SLOTS = 4;
+export const PROJECT_ROOM_CAMPUS_MAX_VERTICAL_SLOTS = 3;
 export const PROJECT_ROOM_GENERATED_SHELL_THICKNESS = 1;
 export const PROJECT_ROOM_GENERATED_DOORWAY_WIDTH = 1;
 export const PROJECT_ROOM_GENERATED_FLOOR_TILE = 7;
