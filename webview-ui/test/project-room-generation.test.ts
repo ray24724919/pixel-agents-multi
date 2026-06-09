@@ -112,6 +112,95 @@ test('generated room contains a valid workstation seat and a rest seat when spac
   assert.ok(seats.some((seat) => seat.seatKind === 'rest'));
 });
 
+test('generated workstation prefers a front desk with matching front electronics', () => {
+  const assets: TestCatalogAsset[] = [
+    {
+      id: 'COFFEE_TABLE',
+      label: 'Coffee Table',
+      category: 'desks',
+      width: TILE_SIZE * 3,
+      height: TILE_SIZE * 2,
+      footprintW: 3,
+      footprintH: 2,
+      isDesk: true,
+      backgroundTiles: 1,
+    },
+    {
+      id: 'DESK_FRONT',
+      label: 'Desk Front',
+      category: 'desks',
+      width: TILE_SIZE * 3,
+      height: TILE_SIZE * 2,
+      footprintW: 3,
+      footprintH: 2,
+      isDesk: true,
+      backgroundTiles: 1,
+      orientation: 'front',
+    },
+    {
+      id: 'PC_BACK',
+      label: 'PC Back',
+      category: 'electronics',
+      width: TILE_SIZE,
+      height: TILE_SIZE,
+      footprintW: 1,
+      footprintH: 1,
+      isDesk: false,
+      canPlaceOnSurfaces: true,
+      orientation: 'back',
+    },
+    {
+      id: 'PC_FRONT_OFF',
+      label: 'PC Front Off',
+      category: 'electronics',
+      width: TILE_SIZE,
+      height: TILE_SIZE,
+      footprintW: 1,
+      footprintH: 1,
+      isDesk: false,
+      canPlaceOnSurfaces: true,
+      orientation: 'front',
+    },
+    {
+      id: 'PC_FRONT_ON_1',
+      label: 'PC Front On',
+      category: 'electronics',
+      width: TILE_SIZE,
+      height: TILE_SIZE,
+      footprintW: 1,
+      footprintH: 1,
+      isDesk: false,
+      canPlaceOnSurfaces: true,
+      orientation: 'front',
+    },
+    {
+      id: 'CHAIR_UP',
+      label: 'Chair Up',
+      category: 'chairs',
+      width: TILE_SIZE,
+      height: TILE_SIZE,
+      footprintW: 1,
+      footprintH: 1,
+      isDesk: false,
+      orientation: 'back',
+    },
+  ];
+  buildDynamicCatalog({
+    catalog: assets,
+    sprites: Object.fromEntries(assets.map((asset) => [asset.id, sprite])),
+  });
+
+  const result = ensureProjectRoomsForAgents(makeLayout(), [
+    { folderName: 'Alpha', isSubagent: false },
+  ]);
+  const furnitureByUid = new Map(result.layout.furniture.map((item) => [item.uid, item.type]));
+
+  assert.equal(furnitureByUid.get('project-alpha-desk'), 'DESK_FRONT');
+  assert.equal(furnitureByUid.get('project-alpha-tech'), 'PC_FRONT_OFF');
+  assert.notEqual(furnitureByUid.get('project-alpha-desk'), 'COFFEE_TABLE');
+  assert.notEqual(furnitureByUid.get('project-alpha-tech'), 'PC_BACK');
+});
+
 test('repeated generation does not duplicate rooms and keeps stable ids', () => {
   const first = ensureProjectRoomsForAgents(makeLayout(), [
     { folderName: 'Alpha', isSubagent: false },

@@ -131,11 +131,8 @@ function collectMissingProjects(
 
 function pickRoomTemplateAssets(): RoomTemplateAssets | null {
   const entries = getAllCatalogEntries();
-  const desk = pickEntry(entries, (entry) => entry.category === 'desks' && entry.isDesk);
-  const electronics = pickEntry(
-    entries,
-    (entry) => entry.category === 'electronics' && !!entry.canPlaceOnSurfaces,
-  );
+  const desk = pickWorkstationDesk(entries);
+  const electronics = desk ? pickDeskElectronics(entries, desk) : undefined;
   const workChair =
     pickEntry(entries, (entry) => entry.category === 'chairs' && entry.orientation === 'back') ??
     pickEntry(entries, (entry) => entry.category === 'chairs');
@@ -154,6 +151,78 @@ function pickRoomTemplateAssets(): RoomTemplateAssets | null {
     workChair,
     ...(restSeat ? { restSeat } : {}),
   };
+}
+
+function pickWorkstationDesk(entries: FurnitureCatalogEntry[]): FurnitureCatalogEntry | undefined {
+  return (
+    pickEntry(
+      entries,
+      (entry) =>
+        entry.category === 'desks' &&
+        entry.isDesk &&
+        entry.orientation === 'front' &&
+        !isCoffeeFurniture(entry),
+    ) ??
+    pickEntry(
+      entries,
+      (entry) => entry.category === 'desks' && entry.isDesk && !isCoffeeFurniture(entry),
+    ) ??
+    pickEntry(entries, (entry) => entry.category === 'desks' && entry.isDesk)
+  );
+}
+
+function pickDeskElectronics(
+  entries: FurnitureCatalogEntry[],
+  desk: FurnitureCatalogEntry,
+): FurnitureCatalogEntry | undefined {
+  const isSurfaceElectronics = (entry: FurnitureCatalogEntry) =>
+    entry.category === 'electronics' && !!entry.canPlaceOnSurfaces;
+  return (
+    pickEntry(
+      entries,
+      (entry) =>
+        isSurfaceElectronics(entry) &&
+        isOrientationCompatible(entry.orientation, desk.orientation) &&
+        isOffOrStaticElectronics(entry),
+    ) ??
+    pickEntry(
+      entries,
+      (entry) =>
+        isSurfaceElectronics(entry) && isOrientationCompatible(entry.orientation, desk.orientation),
+    ) ??
+    pickEntry(
+      entries,
+      (entry) =>
+        isSurfaceElectronics(entry) &&
+        (entry.orientation === 'front' || !entry.orientation) &&
+        isOffOrStaticElectronics(entry),
+    ) ??
+    pickEntry(entries, (entry) => isSurfaceElectronics(entry) && isOffOrStaticElectronics(entry)) ??
+    pickEntry(entries, isSurfaceElectronics)
+  );
+}
+
+function isOrientationCompatible(
+  electronicsOrientation: string | undefined,
+  deskOrientation: string | undefined,
+): boolean {
+  if (!deskOrientation) return electronicsOrientation === 'front' || !electronicsOrientation;
+  if (deskOrientation === electronicsOrientation) return true;
+  if (deskOrientation === 'side' || deskOrientation === 'right') {
+    return electronicsOrientation === 'side' || electronicsOrientation === 'right';
+  }
+  if (deskOrientation === 'left') {
+    return electronicsOrientation === 'left' || electronicsOrientation === 'side';
+  }
+  return false;
+}
+
+function isOffOrStaticElectronics(entry: FurnitureCatalogEntry): boolean {
+  return !/_ON(?:_|$)/i.test(entry.type);
+}
+
+function isCoffeeFurniture(entry: FurnitureCatalogEntry): boolean {
+  return /coffee/i.test(`${entry.type} ${entry.label}`);
 }
 
 function pickEntry(
