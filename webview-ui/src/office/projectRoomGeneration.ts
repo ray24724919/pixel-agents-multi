@@ -1032,14 +1032,21 @@ function paintRoomShell(
   room: ProjectRoom['bounds'],
   doorway: RoomDoorway,
 ): void {
+  // The front (south) wall is intentionally never painted, so the camera can always see into the
+  // studio — matching the hand-designed default office. This holds regardless of the room's row:
+  // a top-row room's open front doubles as its corridor-facing entrance, and a bottom-row room
+  // keeps its furniture fixed with the entrance as a doorway in its (north) corridor-facing wall
+  // while its front still stays open.
+  const southWallRow = room.row + room.height - PROJECT_ROOM_GENERATED_SHELL_THICKNESS;
   for (let row = room.row; row < room.row + room.height; row++) {
     for (let col = room.col; col < room.col + room.width; col++) {
       const onPerimeter =
         row === room.row ||
-        row === room.row + room.height - PROJECT_ROOM_GENERATED_SHELL_THICKNESS ||
+        row === southWallRow ||
         col === room.col ||
         col === room.col + room.width - PROJECT_ROOM_GENERATED_SHELL_THICKNESS;
       if (!onPerimeter) continue;
+      if (row >= southWallRow) continue; // front wall always open
       if (isDoorwayTile(col, row, doorway)) continue;
       paintWallTile(layout, tiles, tileColors, zones, col, row);
     }
