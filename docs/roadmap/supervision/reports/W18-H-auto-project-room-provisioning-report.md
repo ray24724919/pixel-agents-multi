@@ -8,7 +8,7 @@ Branch: `product/w18-h-auto-project-room-provisioning`
 
 Base commit: `3d1a172 Merge W18-G: project rooms installed live QA`
 
-Final commit hash: recorded by git after this report is committed; see final executor response.
+Final implementation commits: `d364374 feat: auto-provision project rooms from lobby`, `03ea4ca fix: use collaborative default project room template`.
 
 Supervisor follow-up after user review: the first auto-generated rooms worked, but the default room
 looked too sparse compared with the existing hand-built workroom. The generated room template now
@@ -127,7 +127,7 @@ Added/expanded webview tests cover:
 Automated validation:
 
 - `cd webview-ui; node --import tsx/esm --test test/project-room-generation.test.ts test/seating-invariants.test.ts`
-  - Passed: 45 tests
+  - Passed: 46 tests after supervisor collaborative-room follow-up
 - `npm run build`
   - Passed
 - `npm run test:webview`
