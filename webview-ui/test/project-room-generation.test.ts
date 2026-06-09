@@ -351,6 +351,20 @@ test('existing public lobby is reshaped from old office workstations into a loun
   assert.equal(furnitureByUid.get('old-lobby-sofa'), 'SOFA');
   assert.equal(furnitureByUid.get('old-lobby-table'), 'COFFEE_TABLE');
   assert.equal(furnitureByUid.get('old-lobby-plant'), 'PLANT');
+  assert.ok(
+    result.layout.furniture.filter(
+      (item) => item.uid.startsWith('project-room-lobby-lounge-pod-') && item.type === 'SOFA',
+    ).length >= 2,
+  );
+  assert.ok(
+    result.layout.furniture.filter(
+      (item) =>
+        item.uid.startsWith('project-room-lobby-lounge-pod-') && item.type === 'COFFEE_TABLE',
+    ).length >= 2,
+  );
+  assert.ok(
+    result.layout.furniture.some((item) => item.uid === 'project-room-lobby-lounge-decor-1'),
+  );
 });
 
 test('existing project rooms without suite furniture are repaired with work and rest seats', () => {

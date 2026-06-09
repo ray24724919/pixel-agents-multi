@@ -25,6 +25,13 @@ import {
   PROJECT_ROOM_GENERATED_WALL_COLOR,
   PROJECT_ROOM_LOBBY_ID,
   PROJECT_ROOM_LOBBY_LABEL,
+  PROJECT_ROOM_LOBBY_LOUNGE_EDGE_PADDING_TILES,
+  PROJECT_ROOM_LOBBY_LOUNGE_MAX_DECOR,
+  PROJECT_ROOM_LOBBY_LOUNGE_MAX_PODS,
+  PROJECT_ROOM_LOBBY_LOUNGE_MIN_DECOR,
+  PROJECT_ROOM_LOBBY_LOUNGE_MIN_PODS,
+  PROJECT_ROOM_LOBBY_LOUNGE_TILES_PER_DECOR,
+  PROJECT_ROOM_LOBBY_LOUNGE_TILES_PER_POD,
   PROJECT_ROOM_MIN_HEIGHT,
   PROJECT_ROOM_MIN_WIDTH,
 } from '../constants.js';
@@ -1197,6 +1204,11 @@ function ensureLobbyLoungeFurniture(
       }
     }
 
+    roomAdded += appendLobbyLoungePods(layout, room, template, nextFurniture);
+    if (template.loungeDecor) {
+      roomAdded += appendLobbyLoungeDecor(layout, room, template.loungeDecor, nextFurniture);
+    }
+
     if (roomAdded > 0) {
       furniture = nextFurniture;
       addedCount += roomAdded;
@@ -1236,6 +1248,216 @@ function findLobbyRestSeatPlacements(
     if (placement) placements.push(placement);
   }
   return placements;
+}
+
+function appendLobbyLoungePods(
+  layout: OfficeLayout,
+  room: ProjectRoom,
+  template: RoomTemplateAssets,
+  furniture: PlacedFurniture[],
+): number {
+  const target = targetLobbyLoungePodCount(room);
+  const generatedLegacySeats = furniture.filter(
+    (item) => item.uid === `${room.id}-lounge-seat-a` || item.uid === `${room.id}-lounge-seat-b`,
+  ).length;
+  let added = 0;
+  for (let podIndex = generatedLegacySeats; podIndex < target; podIndex++) {
+    const podNumber = podIndex + 1;
+    const seatUid = `${room.id}-lounge-pod-${podNumber}-seat`;
+    const tableUid = `${room.id}-lounge-pod-${podNumber}-table`;
+    const seatExists = furniture.some((item) => item.uid === seatUid);
+    const tableExists = !template.loungeTable || furniture.some((item) => item.uid === tableUid);
+    if (seatExists && tableExists) continue;
+
+    if (seatExists) {
+      const seat = furniture.find((item) => item.uid === seatUid);
+      if (seat && template.loungeTable && !tableExists) {
+        const table = findTableNearLobbySeat(
+          layout,
+          room,
+          seat,
+          template.restSeat,
+          template.loungeTable,
+          tableUid,
+          furniture,
+        );
+        if (table) {
+          furniture.push(table);
+          added++;
+        }
+      }
+      continue;
+    }
+
+    const pod = findLobbyLoungePodPlacement(
+      layout,
+      room,
+      template.restSeat,
+      template.loungeTable,
+      seatUid,
+      tableUid,
+      podIndex,
+      furniture,
+    );
+    if (pod) {
+      furniture.push(pod.seat);
+      added++;
+      if (pod.table) {
+        furniture.push(pod.table);
+        added++;
+      }
+    }
+  }
+  return added;
+}
+
+function appendLobbyLoungeDecor(
+  layout: OfficeLayout,
+  room: ProjectRoom,
+  decor: FurnitureCatalogEntry,
+  furniture: PlacedFurniture[],
+): number {
+  const target = targetLobbyLoungeDecorCount(room);
+  const legacyDecorCount = furniture.some((item) => item.uid === `${room.id}-lounge-decor`) ? 1 : 0;
+  let added = 0;
+  for (let decorIndex = legacyDecorCount; decorIndex < target; decorIndex++) {
+    const uid = `${room.id}-lounge-decor-${decorIndex + 1}`;
+    if (furniture.some((item) => item.uid === uid)) continue;
+    const placement = findLobbyFurniturePlacement(
+      layout,
+      room,
+      decor,
+      uid,
+      furniture,
+      buildLobbyDecorPreferredPositions(room, decor, decorIndex),
+    );
+    if (placement) {
+      furniture.push(placement);
+      added++;
+    }
+  }
+  return added;
+}
+
+function targetLobbyLoungePodCount(room: ProjectRoom): number {
+  return clampInt(
+    Math.floor((room.bounds.width * room.bounds.height) / PROJECT_ROOM_LOBBY_LOUNGE_TILES_PER_POD),
+    PROJECT_ROOM_LOBBY_LOUNGE_MIN_PODS,
+    PROJECT_ROOM_LOBBY_LOUNGE_MAX_PODS,
+  );
+}
+
+function targetLobbyLoungeDecorCount(room: ProjectRoom): number {
+  return clampInt(
+    Math.floor(
+      (room.bounds.width * room.bounds.height) / PROJECT_ROOM_LOBBY_LOUNGE_TILES_PER_DECOR,
+    ),
+    PROJECT_ROOM_LOBBY_LOUNGE_MIN_DECOR,
+    PROJECT_ROOM_LOBBY_LOUNGE_MAX_DECOR,
+  );
+}
+
+function findLobbyLoungePodPlacement(
+  layout: OfficeLayout,
+  room: ProjectRoom,
+  restSeat: FurnitureCatalogEntry,
+  loungeTable: FurnitureCatalogEntry | undefined,
+  seatUid: string,
+  tableUid: string,
+  podIndex: number,
+  furniture: PlacedFurniture[],
+): { seat: PlacedFurniture; table?: PlacedFurniture } | null {
+  const candidates = buildLobbyPodSeatCandidates(room, restSeat, loungeTable, seatUid, podIndex);
+  const seen = new Set<string>();
+  for (const seat of candidates) {
+    const key = `${seat.col},${seat.row},${seat.type}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (!canPlaceSuiteFurniture(layout, room, seat, furniture)) continue;
+    if (!loungeTable) return { seat };
+    const table = findTableNearLobbySeat(layout, room, seat, restSeat, loungeTable, tableUid, [
+      ...furniture,
+      seat,
+    ]);
+    if (table) return { seat, table };
+  }
+  return null;
+}
+
+function buildLobbyPodSeatCandidates(
+  room: ProjectRoom,
+  restSeat: FurnitureCatalogEntry,
+  loungeTable: FurnitureCatalogEntry | undefined,
+  uid: string,
+  podIndex: number,
+): PlacedFurniture[] {
+  const pad = PROJECT_ROOM_LOBBY_LOUNGE_EDGE_PADDING_TILES;
+  const maxCol = room.bounds.col + room.bounds.width - restSeat.footprintW - pad;
+  const maxRow =
+    room.bounds.row +
+    room.bounds.height -
+    restSeat.footprintH -
+    (loungeTable?.footprintH ?? 0) -
+    pad;
+  const minCol = room.bounds.col + pad;
+  const minRow = room.bounds.row + pad;
+  const centerCol = room.bounds.col + Math.floor((room.bounds.width - restSeat.footprintW) / 2);
+  const centerRow =
+    room.bounds.row +
+    Math.floor((room.bounds.height - restSeat.footprintH - (loungeTable?.footprintH ?? 0)) / 2);
+  const primary = [
+    { col: minCol, row: minRow },
+    { col: maxCol, row: minRow },
+    { col: minCol, row: maxRow },
+    { col: maxCol, row: maxRow },
+    { col: centerCol, row: centerRow },
+    { col: minCol, row: centerRow },
+  ];
+  return [
+    primary[podIndex % primary.length]!,
+    ...primary,
+    ...buildFallbackLobbyFurnitureCandidates(room, restSeat, uid),
+  ].map((position) => ({ uid, type: restSeat.type, col: position.col, row: position.row }));
+}
+
+function findTableNearLobbySeat(
+  layout: OfficeLayout,
+  room: ProjectRoom,
+  seat: PlacedFurniture,
+  restSeat: FurnitureCatalogEntry,
+  loungeTable: FurnitureCatalogEntry,
+  tableUid: string,
+  furniture: PlacedFurniture[],
+): PlacedFurniture | null {
+  const preferred = [
+    { col: seat.col, row: seat.row + restSeat.footprintH },
+    { col: seat.col, row: seat.row - loungeTable.footprintH },
+    { col: seat.col + restSeat.footprintW + 1, row: seat.row },
+    { col: seat.col - loungeTable.footprintW - 1, row: seat.row },
+  ];
+  return findLobbyFurniturePlacement(layout, room, loungeTable, tableUid, furniture, preferred);
+}
+
+function buildLobbyDecorPreferredPositions(
+  room: ProjectRoom,
+  decor: FurnitureCatalogEntry,
+  decorIndex: number,
+): Array<{ col: number; row: number }> {
+  const pad = PROJECT_ROOM_LOBBY_LOUNGE_EDGE_PADDING_TILES;
+  const maxCol = room.bounds.col + room.bounds.width - decor.footprintW - pad;
+  const maxRow = room.bounds.row + room.bounds.height - decor.footprintH - pad;
+  const minCol = room.bounds.col + pad;
+  const minRow = room.bounds.row + pad;
+  const centerCol = room.bounds.col + Math.floor((room.bounds.width - decor.footprintW) / 2);
+  const centerRow = room.bounds.row + Math.floor((room.bounds.height - decor.footprintH) / 2);
+  const positions = [
+    { col: minCol, row: maxRow },
+    { col: maxCol, row: maxRow },
+    { col: minCol, row: minRow },
+    { col: maxCol, row: minRow },
+    { col: centerCol, row: centerRow },
+  ];
+  return [positions[decorIndex % positions.length]!, ...positions];
 }
 
 function findLobbyFurniturePlacement(
