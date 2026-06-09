@@ -673,6 +673,8 @@ export class OfficeState {
     folderName?: string,
     initialActive = true,
     randomizeInitialSeat = false,
+    projectDir?: string,
+    projectName?: string,
   ): void {
     if (this.characters.has(id)) return;
 
@@ -690,7 +692,7 @@ export class OfficeState {
     // Persisted seats are preferences. Only valid workstation seats can seed active agents.
     let seatId: string | null = null;
     const initialMode = initialActive ? 'work' : 'rest';
-    const projectKey = deriveAgentProjectKey({ folderName });
+    const projectKey = deriveAgentProjectKey({ folderName, projectDir, projectName });
     if (!randomizeInitialSeat && preferredSeatId && this.seats.has(preferredSeatId)) {
       const seat = this.seats.get(preferredSeatId)!;
       if (
@@ -743,6 +745,12 @@ export class OfficeState {
 
     if (folderName) {
       ch.folderName = folderName;
+    }
+    if (projectDir) {
+      ch.projectDir = projectDir;
+    }
+    if (projectName) {
+      ch.projectName = projectName;
     }
     if (!skipSpawnEffect) {
       ch.matrixEffect = 'spawn';

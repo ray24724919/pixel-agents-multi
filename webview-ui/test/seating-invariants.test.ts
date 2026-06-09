@@ -162,8 +162,21 @@ function addAgent(
   active = true,
   preferredSeatId?: string,
   folderName?: string,
+  projectDir?: string,
+  projectName?: string,
 ): void {
-  state.addAgent(id, undefined, undefined, preferredSeatId, true, folderName, active);
+  state.addAgent(
+    id,
+    undefined,
+    undefined,
+    preferredSeatId,
+    true,
+    folderName,
+    active,
+    false,
+    projectDir,
+    projectName,
+  );
 }
 
 function seatRoom(
@@ -350,6 +363,27 @@ test('active agents use valid work seats inside their own project room first', (
   const ch = state.characters.get(1)!;
   assert.equal(ch.seatId, 'z-alpha-chair');
   assert.equal(seatRoom(layout, ch.seatId)?.id, 'room-alpha');
+});
+
+test('active agents match generated project rooms by projectDir before display names', () => {
+  const pixelProjectDir = 'C:\\Users\\User\\Documents\\raychen\\pixel-agents-multi';
+  const otherProjectDir = 'C:\\Users\\User\\Documents\\raychen\\animfy_gs1';
+  const layout = makeLayout(
+    [...workstationFurniture('a-other-chair', 0), ...workstationFurniture('z-pixel-chair', 6)],
+    14,
+    8,
+  );
+  layout.projectRooms = [
+    projectRoom('room-other', otherProjectDir, 0, 0, 6, 8),
+    projectRoom('room-pixel', pixelProjectDir, 6, 0, 8, 8),
+  ];
+  const state = new OfficeState(layout);
+
+  addAgent(state, 1, true, undefined, 'pixel-agents-multi', pixelProjectDir, 'pixel-agents-multi');
+
+  const ch = state.characters.get(1)!;
+  assert.equal(ch.seatId, 'z-pixel-chair');
+  assert.equal(seatRoom(layout, ch.seatId)?.id, 'room-pixel');
 });
 
 test('two projects with capacity do not claim each other room-local work seats', () => {
