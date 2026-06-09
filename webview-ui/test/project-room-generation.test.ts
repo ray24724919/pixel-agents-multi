@@ -206,6 +206,25 @@ function assertFurnitureOnWalkableRoomTiles(layout: OfficeLayout, room: ProjectR
   }
 }
 
+function assertGeneratedFurnitureInsetFromRoomWalls(layout: OfficeLayout, room: ProjectRoom): void {
+  const generatedFurniture = layout.furniture.filter((item) => item.uid.startsWith(`${room.id}-`));
+  for (const item of generatedFurniture) {
+    const entry = getCatalogEntry(item.type);
+    assert.ok(entry, `missing catalog entry for ${item.type}`);
+    const bounds = furnitureBounds(item);
+    assert.ok(bounds.col > room.bounds.col, `${item.uid} touches the left room wall`);
+    assert.ok(bounds.row > room.bounds.row, `${item.uid} touches the top room wall`);
+    assert.ok(
+      bounds.col + entry.footprintW < room.bounds.col + room.bounds.width,
+      `${item.uid} touches the right room wall`,
+    );
+    assert.ok(
+      bounds.row + entry.footprintH < room.bounds.row + room.bounds.height,
+      `${item.uid} touches the bottom room wall`,
+    );
+  }
+}
+
 function seatsInRoom(layout: OfficeLayout, room: ProjectRoom) {
   return [...layoutToSeats(layout).values()].filter(
     (seat) =>
@@ -363,6 +382,55 @@ test('existing public lobby is rebuilt as a horizontal work corridor lounge', ()
   assert.equal(furnitureByUid.get('project-room-lobby-lounge-seat-a'), 'SOFA');
   assert.equal(furnitureByUid.get('project-room-lobby-lounge-table-a'), 'COFFEE_TABLE');
   assert.equal(furnitureByUid.get('project-room-lobby-lounge-table-b'), 'COFFEE_TABLE');
+  assert.equal(furnitureByUid.get('project-room-lobby-lounge-seat-a-back'), 'SOFA');
+  assert.equal(furnitureByUid.get('project-room-lobby-lounge-seat-a-left'), 'SOFA');
+  assert.equal(furnitureByUid.get('project-room-lobby-lounge-seat-a-right'), 'SOFA');
+  assert.equal(furnitureByUid.get('project-room-lobby-lounge-seat-b-back'), 'SOFA');
+  assert.equal(furnitureByUid.get('project-room-lobby-lounge-seat-b-left'), 'SOFA');
+  assert.equal(furnitureByUid.get('project-room-lobby-lounge-seat-b-right'), 'SOFA');
+  assert.equal(
+    result.layout.furniture.some((item) => item.uid.includes('-lounge-pod-')),
+    false,
+  );
+});
+
+test('existing two-sofa work corridor lounge upgrades to old-lobby-style sofa clusters', () => {
+  const layout = makeLayout(21, 15);
+  layout.projectRooms = [
+    {
+      id: 'project-room-lobby',
+      kind: ProjectRoomKind.PUBLIC,
+      bounds: { col: 0, row: 9, width: 21, height: 6 },
+      label: 'Lobby',
+    },
+    {
+      id: 'project-alpha',
+      kind: ProjectRoomKind.PROJECT,
+      bounds: { col: 0, row: 0, width: 10, height: 8 },
+      project: { key: 'alpha', displayName: 'alpha', source: 'folderName' },
+    },
+  ];
+  layout.furniture = [
+    { uid: 'project-room-lobby-lounge-seat-a', type: 'SOFA', col: 2, row: 11 },
+    { uid: 'project-room-lobby-lounge-seat-b', type: 'SOFA', col: 16, row: 11 },
+    { uid: 'project-room-lobby-lounge-table-a', type: 'COFFEE_TABLE', col: 2, row: 12 },
+    { uid: 'project-room-lobby-lounge-table-b', type: 'COFFEE_TABLE', col: 16, row: 12 },
+    { uid: 'project-room-lobby-lounge-decor', type: 'PLANT', col: 18, row: 10 },
+  ];
+
+  const result = ensureProjectRoomsForAgents(layout, [{ folderName: 'Alpha', isSubagent: false }]);
+  const furnitureByUid = new Map(result.layout.furniture.map((item) => [item.uid, item]));
+
+  assert.equal(furnitureByUid.get('project-room-lobby-lounge-table-a')?.col, 3);
+  assert.equal(furnitureByUid.get('project-room-lobby-lounge-table-a')?.row, 11);
+  assert.equal(furnitureByUid.get('project-room-lobby-lounge-table-b')?.col, 15);
+  assert.equal(furnitureByUid.get('project-room-lobby-lounge-table-b')?.row, 11);
+  assert.equal(furnitureByUid.get('project-room-lobby-lounge-seat-a-back')?.type, 'SOFA');
+  assert.equal(furnitureByUid.get('project-room-lobby-lounge-seat-a-left')?.type, 'SOFA');
+  assert.equal(furnitureByUid.get('project-room-lobby-lounge-seat-a-right')?.type, 'SOFA');
+  assert.equal(furnitureByUid.get('project-room-lobby-lounge-seat-b-back')?.type, 'SOFA');
+  assert.equal(furnitureByUid.get('project-room-lobby-lounge-seat-b-left')?.type, 'SOFA');
+  assert.equal(furnitureByUid.get('project-room-lobby-lounge-seat-b-right')?.type, 'SOFA');
   assert.equal(
     result.layout.furniture.some((item) => item.uid.includes('-lounge-pod-')),
     false,
@@ -386,6 +454,42 @@ test('existing project rooms without suite furniture are repaired with work and 
   assert.equal(furnitureByUid.get('project-alpha-rest-seat'), 'SOFA');
   assert.ok(seats.some((seat) => seat.seatKind === 'work' && seat.zoneSource === 'workstation'));
   assert.ok(seats.some((seat) => seat.seatKind === 'rest'));
+});
+
+test('existing generated project room furniture is reflowed away from room walls', () => {
+  const layout = makeLayout(21, 15);
+  layout.projectRooms = [
+    {
+      id: 'project-room-lobby',
+      kind: ProjectRoomKind.PUBLIC,
+      bounds: { col: 0, row: 9, width: 21, height: 6 },
+      label: 'Lobby',
+    },
+    {
+      id: 'project-alpha',
+      kind: ProjectRoomKind.PROJECT,
+      bounds: { col: 0, row: 0, width: 10, height: 8 },
+      project: { key: 'alpha', displayName: 'alpha', source: 'folderName' },
+    },
+  ];
+  layout.furniture = [
+    { uid: 'project-alpha-desk', type: 'DESK', col: 2, row: 1 },
+    { uid: 'project-alpha-tech', type: 'PC', col: 3, row: 1 },
+    { uid: 'project-alpha-work-chair', type: 'CHAIR_UP', col: 3, row: 3 },
+    { uid: 'project-alpha-rest-seat', type: 'SOFA', col: 7, row: 4 },
+    { uid: 'project-alpha-rest-table', type: 'COFFEE_TABLE', col: 7, row: 5 },
+  ];
+
+  const result = ensureProjectRoomsForAgents(layout, [{ folderName: 'Alpha', isSubagent: false }]);
+  const room = projectRooms(result.layout)[0]!;
+  const furnitureByUid = new Map(result.layout.furniture.map((item) => [item.uid, item]));
+
+  assert.equal(furnitureByUid.get('project-alpha-desk')?.row, 2);
+  assert.equal(furnitureByUid.get('project-alpha-tech')?.row, 2);
+  assert.equal(furnitureByUid.get('project-alpha-work-chair')?.row, 4);
+  assert.equal(furnitureByUid.get('project-alpha-rest-seat')?.row, 5);
+  assert.equal(furnitureByUid.get('project-alpha-rest-table')?.row, 3);
+  assertGeneratedFurnitureInsetFromRoomWalls(result.layout, room);
 });
 
 test('existing project room rest corner upgrades from a small bench to sofa and table', () => {

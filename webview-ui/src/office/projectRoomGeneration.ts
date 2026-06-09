@@ -34,7 +34,19 @@ import {
   PROJECT_ROOM_LOBBY_LOUNGE_TILES_PER_POD,
   PROJECT_ROOM_MIN_HEIGHT,
   PROJECT_ROOM_MIN_WIDTH,
+  PROJECT_ROOM_STANDARD_DESK_OFFSET_COL,
+  PROJECT_ROOM_STANDARD_DESK_OFFSET_ROW,
+  PROJECT_ROOM_STANDARD_REST_SEAT_MIN_OFFSET_COL,
+  PROJECT_ROOM_STANDARD_REST_SEAT_OFFSET_ROW,
+  PROJECT_ROOM_STANDARD_REST_SEAT_RIGHT_MARGIN,
+  PROJECT_ROOM_STANDARD_TECH_OFFSET_COL,
+  PROJECT_ROOM_STANDARD_TECH_OFFSET_ROW,
+  PROJECT_ROOM_STANDARD_WORK_CHAIR_OFFSET_COL,
+  PROJECT_ROOM_STANDARD_WORK_CHAIR_OFFSET_ROW,
   PROJECT_ROOM_WORK_CORRIDOR_HEIGHT,
+  PROJECT_ROOM_WORK_CORRIDOR_LOUNGE_LEFT_TABLE_COL_OFFSET,
+  PROJECT_ROOM_WORK_CORRIDOR_LOUNGE_RIGHT_TABLE_MARGIN,
+  PROJECT_ROOM_WORK_CORRIDOR_LOUNGE_TABLE_ROW_OFFSET,
   PROJECT_ROOM_WORK_CORRIDOR_MIN_WIDTH,
 } from '../constants.js';
 import { getAllCatalogEntries } from './layout/furnitureCatalog.js';
@@ -1182,15 +1194,20 @@ function buildRoomFurnitureCandidates(
   const furniture: SuiteFurnitureCandidate[] = [
     {
       role: 'work',
-      item: { uid: `${room.id}-desk`, type: template.desk.type, col: col + 2, row: row + 1 },
+      item: {
+        uid: `${room.id}-desk`,
+        type: template.desk.type,
+        col: col + PROJECT_ROOM_STANDARD_DESK_OFFSET_COL,
+        row: row + PROJECT_ROOM_STANDARD_DESK_OFFSET_ROW,
+      },
     },
     {
       role: 'work',
       item: {
         uid: `${room.id}-tech`,
         type: template.electronics.type,
-        col: col + 3,
-        row: row + 1,
+        col: col + PROJECT_ROOM_STANDARD_TECH_OFFSET_COL,
+        row: row + PROJECT_ROOM_STANDARD_TECH_OFFSET_ROW,
       },
     },
     {
@@ -1198,8 +1215,8 @@ function buildRoomFurnitureCandidates(
       item: {
         uid: `${room.id}-work-chair`,
         type: template.workChair.type,
-        col: col + 3,
-        row: row + 3,
+        col: col + PROJECT_ROOM_STANDARD_WORK_CHAIR_OFFSET_COL,
+        row: row + PROJECT_ROOM_STANDARD_WORK_CHAIR_OFFSET_ROW,
       },
     },
   ];
@@ -1209,8 +1226,13 @@ function buildRoomFurnitureCandidates(
       item: {
         uid: `${room.id}-rest-seat`,
         type: template.restSeat.type,
-        col: col + Math.max(5, width - template.restSeat.footprintW - 1),
-        row: row + 4,
+        col:
+          col +
+          Math.max(
+            PROJECT_ROOM_STANDARD_REST_SEAT_MIN_OFFSET_COL,
+            width - template.restSeat.footprintW - PROJECT_ROOM_STANDARD_REST_SEAT_RIGHT_MARGIN,
+          ),
+        row: row + PROJECT_ROOM_STANDARD_REST_SEAT_OFFSET_ROW,
       },
     });
   }
@@ -1317,6 +1339,21 @@ function ensureLobbyLoungeFurniture(
     const nextFurniture = [...cleanedFurniture];
     const isCorridorLobby = isWorkCorridorLobby(room);
 
+    if (isCorridorLobby) {
+      const corridorResult = ensureWorkCorridorLobbyLoungeFurniture(
+        layout,
+        room,
+        nextFurniture,
+        template,
+      );
+      const changedCount = roomAdded + corridorResult.changedCount;
+      if (changedCount > 0) {
+        furniture = corridorResult.furniture;
+        addedCount += changedCount;
+      }
+      continue;
+    }
+
     if (!hasRestSeat) {
       for (const item of findLobbyRestSeatPlacements(
         layout,
@@ -1329,17 +1366,7 @@ function ensureLobbyLoungeFurniture(
       }
     }
 
-    if (isCorridorLobby && template.loungeTable) {
-      roomAdded += appendCorridorSofaTables(
-        layout,
-        room,
-        template.restSeat,
-        template.loungeTable,
-        nextFurniture,
-      );
-    }
-
-    if (!isCorridorLobby && !hasLoungeTable && template.loungeTable) {
+    if (!hasLoungeTable && template.loungeTable) {
       const table = findLobbyFurniturePlacement(
         layout,
         room,
@@ -1441,37 +1468,248 @@ function findLobbyRestSeatPlacements(
   return placements;
 }
 
-function appendCorridorSofaTables(
+function ensureWorkCorridorLobbyLoungeFurniture(
   layout: OfficeLayout,
   room: ProjectRoom,
-  restSeat: FurnitureCatalogEntry,
-  loungeTable: FurnitureCatalogEntry,
   furniture: PlacedFurniture[],
-): number {
-  const seats = [
-    { uid: `${room.id}-lounge-seat-a`, tableUid: `${room.id}-lounge-table-a` },
-    { uid: `${room.id}-lounge-seat-b`, tableUid: `${room.id}-lounge-table-b` },
+  template: RoomTemplateAssets,
+): { furniture: PlacedFurniture[]; changedCount: number } {
+  const baseFurniture = furniture.filter((item) => !isGeneratedLobbyLoungeFurniture(room, item));
+  const generatedFurniture = furniture.filter((item) =>
+    isGeneratedLobbyLoungeFurniture(room, item),
+  );
+  const plannedFurniture = buildWorkCorridorLobbyLoungeFurniture(
+    layout,
+    room,
+    template,
+    baseFurniture,
+  );
+  if (sameFurnitureSet(generatedFurniture, plannedFurniture)) {
+    return { furniture, changedCount: 0 };
+  }
+  return {
+    furniture: [...baseFurniture, ...plannedFurniture],
+    changedCount: generatedFurniture.length + plannedFurniture.length,
+  };
+}
+
+function buildWorkCorridorLobbyLoungeFurniture(
+  layout: OfficeLayout,
+  room: ProjectRoom,
+  template: RoomTemplateAssets,
+  baseFurniture: PlacedFurniture[],
+): PlacedFurniture[] {
+  const planned: PlacedFurniture[] = [];
+  if (!template.loungeTable) return planned;
+
+  const entries = getAllCatalogEntries();
+  const frontSeat = pickDirectionalRestSeat(entries, template.restSeat, 'front');
+  const backSeat = pickDirectionalRestSeat(entries, template.restSeat, 'back');
+  const rightFacingSeat = pickDirectionalRestSeat(entries, template.restSeat, 'right');
+  const leftFacingSeat = pickDirectionalRestSeat(entries, template.restSeat, 'left');
+  const tableRow = clampInt(
+    room.bounds.row + PROJECT_ROOM_WORK_CORRIDOR_LOUNGE_TABLE_ROW_OFFSET,
+    room.bounds.row + 1,
+    room.bounds.row + room.bounds.height - template.loungeTable.footprintH - 1,
+  );
+  const tableCols = [
+    room.bounds.col + PROJECT_ROOM_WORK_CORRIDOR_LOUNGE_LEFT_TABLE_COL_OFFSET,
+    room.bounds.col +
+      room.bounds.width -
+      template.loungeTable.footprintW -
+      PROJECT_ROOM_WORK_CORRIDOR_LOUNGE_RIGHT_TABLE_MARGIN,
   ];
-  let added = 0;
-  for (const seatConfig of seats) {
-    if (furniture.some((item) => item.uid === seatConfig.tableUid)) continue;
-    const seat = furniture.find((item) => item.uid === seatConfig.uid);
-    if (!seat) continue;
-    const table = findTableNearLobbySeat(
+
+  for (const [index, preferredCol] of tableCols.entries()) {
+    const suffix = index === 0 ? 'a' : 'b';
+    const table = tryPlanLobbyFurniture(
       layout,
       room,
-      seat,
-      restSeat,
-      loungeTable,
-      seatConfig.tableUid,
-      furniture,
+      template.loungeTable,
+      `${room.id}-lounge-table-${suffix}`,
+      baseFurniture,
+      planned,
+      [{ col: preferredCol, row: tableRow }],
     );
-    if (table) {
-      furniture.push(table);
-      added++;
+    if (!table) continue;
+    planned.push(table);
+    for (const seat of buildCorridorSofaClusterSeats(
+      room,
+      table,
+      template.loungeTable,
+      frontSeat,
+      backSeat,
+      rightFacingSeat,
+      leftFacingSeat,
+      `${room.id}-lounge-seat-${suffix}`,
+    )) {
+      const placement = tryPlanLobbyFurniture(
+        layout,
+        room,
+        seat.entry,
+        seat.uid,
+        baseFurniture,
+        planned,
+        [{ col: seat.col, row: seat.row }],
+      );
+      if (placement) planned.push(placement);
     }
   }
-  return added;
+
+  if (template.loungeDecor) {
+    const targetDecor = targetLobbyLoungeDecorCount(room);
+    for (let decorIndex = 0; decorIndex < targetDecor; decorIndex++) {
+      const uid =
+        decorIndex === 0 ? `${room.id}-lounge-decor` : `${room.id}-lounge-decor-${decorIndex + 1}`;
+      const decor = tryPlanLobbyFurniture(
+        layout,
+        room,
+        template.loungeDecor,
+        uid,
+        baseFurniture,
+        planned,
+        buildCorridorLobbyDecorPreferredPositions(room, template.loungeDecor, decorIndex),
+      );
+      if (decor) planned.push(decor);
+    }
+  }
+
+  return planned;
+}
+
+function pickDirectionalRestSeat(
+  entries: FurnitureCatalogEntry[],
+  fallback: FurnitureCatalogEntry,
+  direction: 'front' | 'back' | 'left' | 'right',
+): FurnitureCatalogEntry {
+  return (
+    pickPreferredEntry(
+      entries,
+      (entry) =>
+        entry.category === 'chairs' &&
+        isRestSeatFurniture(entry) &&
+        directionalRestSeatMatches(entry, direction),
+      (entry) => {
+        const text = `${entry.type} ${entry.label}`;
+        if (/sofa/i.test(text)) return 100;
+        if (/couch/i.test(text)) return 90;
+        if (/bench|cushion/i.test(text)) return 60;
+        return 10;
+      },
+    ) ?? fallback
+  );
+}
+
+function directionalRestSeatMatches(
+  entry: FurnitureCatalogEntry,
+  direction: 'front' | 'back' | 'left' | 'right',
+): boolean {
+  if (direction === 'front' || direction === 'back') return entry.orientation === direction;
+  return isSideOrientation(entry.orientation, direction);
+}
+
+function buildCorridorSofaClusterSeats(
+  room: ProjectRoom,
+  table: PlacedFurniture,
+  tableEntry: FurnitureCatalogEntry,
+  frontSeat: FurnitureCatalogEntry,
+  backSeat: FurnitureCatalogEntry,
+  rightFacingSeat: FurnitureCatalogEntry,
+  leftFacingSeat: FurnitureCatalogEntry,
+  uidPrefix: string,
+): Array<{ uid: string; entry: FurnitureCatalogEntry; col: number; row: number }> {
+  const centerCol = table.col + Math.floor((tableEntry.footprintW - frontSeat.footprintW) / 2);
+  const backCol = table.col + Math.floor((tableEntry.footprintW - backSeat.footprintW) / 2);
+  return [
+    {
+      uid: uidPrefix,
+      entry: frontSeat,
+      col: clampInt(
+        centerCol,
+        room.bounds.col + 1,
+        room.bounds.col + room.bounds.width - frontSeat.footprintW - 1,
+      ),
+      row: table.row - frontSeat.footprintH,
+    },
+    {
+      uid: `${uidPrefix}-back`,
+      entry: backSeat,
+      col: clampInt(
+        backCol,
+        room.bounds.col + 1,
+        room.bounds.col + room.bounds.width - backSeat.footprintW - 1,
+      ),
+      row: table.row + tableEntry.footprintH,
+    },
+    {
+      uid: `${uidPrefix}-left`,
+      entry: rightFacingSeat,
+      col: table.col - rightFacingSeat.footprintW,
+      row: table.row,
+    },
+    {
+      uid: `${uidPrefix}-right`,
+      entry: leftFacingSeat,
+      col: table.col + tableEntry.footprintW,
+      row: table.row,
+    },
+  ];
+}
+
+function tryPlanLobbyFurniture(
+  layout: OfficeLayout,
+  room: ProjectRoom,
+  entry: FurnitureCatalogEntry,
+  uid: string,
+  baseFurniture: PlacedFurniture[],
+  plannedFurniture: PlacedFurniture[],
+  preferred: Array<{ col: number; row: number }>,
+): PlacedFurniture | null {
+  return findLobbyFurniturePlacement(
+    layout,
+    room,
+    entry,
+    uid,
+    [...baseFurniture, ...plannedFurniture],
+    preferred,
+  );
+}
+
+function isGeneratedLobbyLoungeFurniture(room: ProjectRoom, item: PlacedFurniture): boolean {
+  return item.uid.startsWith(`${room.id}-lounge-`);
+}
+
+function buildCorridorLobbyDecorPreferredPositions(
+  room: ProjectRoom,
+  decor: FurnitureCatalogEntry,
+  decorIndex: number,
+): Array<{ col: number; row: number }> {
+  const topRow = room.bounds.row + 1;
+  const centerCol = room.bounds.col + Math.floor((room.bounds.width - decor.footprintW) / 2);
+  const rightCol = room.bounds.col + room.bounds.width - decor.footprintW - 1;
+  const leftAccentCol =
+    room.bounds.col +
+    PROJECT_ROOM_WORK_CORRIDOR_LOUNGE_LEFT_TABLE_COL_OFFSET +
+    decor.footprintW +
+    1;
+  const positions = [
+    { col: centerCol, row: topRow },
+    { col: rightCol, row: topRow },
+    { col: leftAccentCol, row: topRow },
+    ...buildLobbyDecorPreferredPositions(room, decor, decorIndex),
+  ];
+  return [positions[decorIndex % positions.length]!, ...positions];
+}
+
+function sameFurnitureSet(actual: PlacedFurniture[], expected: PlacedFurniture[]): boolean {
+  if (actual.length !== expected.length) return false;
+  const actualByUid = new Map(actual.map((item) => [item.uid, item]));
+  return expected.every((item) => {
+    const actualItem = actualByUid.get(item.uid);
+    return (
+      actualItem?.type === item.type && actualItem.col === item.col && actualItem.row === item.row
+    );
+  });
 }
 
 function appendLobbyLoungePods(
@@ -1780,6 +2018,13 @@ function ensureProjectSuiteFurniture(
 
     let nextFurniture = [...furniture];
     let roomAdded = 0;
+    const reflowResult = reflowGeneratedProjectRoomFurniture(layout, room, template, nextFurniture);
+    if (reflowResult.changedCount > 0) {
+      furniture = reflowResult.furniture;
+      addedCount += reflowResult.changedCount;
+      continue;
+    }
+
     if (missingWork) {
       const workCandidates = buildRoomFurnitureCandidates(room, template)
         .filter((candidate) => candidate.role === 'work')
@@ -1841,6 +2086,63 @@ function ensureProjectSuiteFurniture(
   return addedCount > 0 ? { layout: { ...layout, furniture }, addedCount } : { layout, addedCount };
 }
 
+function reflowGeneratedProjectRoomFurniture(
+  layout: OfficeLayout,
+  room: ProjectRoom,
+  template: RoomTemplateAssets,
+  furniture: PlacedFurniture[],
+): { furniture: PlacedFurniture[]; changedCount: number } {
+  const generatedFurniture = furniture.filter((item) =>
+    isGeneratedProjectRoomFurniture(room, item),
+  );
+  if (generatedFurniture.length === 0) return { furniture, changedCount: 0 };
+
+  const baseFurniture = furniture.filter((item) => !isGeneratedProjectRoomFurniture(room, item));
+  const plannedFurniture = buildGeneratedProjectRoomFurniture(
+    layout,
+    room,
+    template,
+    baseFurniture,
+  );
+  if (plannedFurniture.length === 0 || sameFurnitureSet(generatedFurniture, plannedFurniture)) {
+    return { furniture, changedCount: 0 };
+  }
+
+  return {
+    furniture: [...baseFurniture, ...plannedFurniture],
+    changedCount: generatedFurniture.length + plannedFurniture.length,
+  };
+}
+
+function buildGeneratedProjectRoomFurniture(
+  layout: OfficeLayout,
+  room: ProjectRoom,
+  template: RoomTemplateAssets,
+  baseFurniture: PlacedFurniture[],
+): PlacedFurniture[] {
+  const planned: PlacedFurniture[] = [];
+  for (const candidate of buildRoomFurnitureCandidates(room, template).map((item) => item.item)) {
+    if (!canPlaceSuiteFurniture(layout, room, candidate, [...baseFurniture, ...planned])) {
+      return [];
+    }
+    planned.push(candidate);
+  }
+
+  if (template.loungeTable) {
+    const restTable = findProjectRestTablePlacement(layout, room, template.loungeTable, [
+      ...baseFurniture,
+      ...planned,
+    ]);
+    if (restTable) planned.push(restTable);
+  }
+
+  return planned;
+}
+
+function isGeneratedProjectRoomFurniture(room: ProjectRoom, item: PlacedFurniture): boolean {
+  return item.uid.startsWith(`${room.id}-`);
+}
+
 function roomSeats(layout: OfficeLayout, room: ProjectRoom) {
   return [...layoutToSeats(layout).values()].filter(
     (seat) =>
@@ -1883,9 +2185,10 @@ function findProjectRestTablePlacement(
     : undefined;
   const preferred = restSeat
     ? [
-        { col: restSeat.col, row: restSeat.row + (restEntry?.footprintH ?? 1) },
-        { col: restSeat.col + (restEntry?.footprintW ?? 1) + 1, row: restSeat.row },
         { col: restSeat.col, row: restSeat.row - loungeTable.footprintH },
+        { col: restSeat.col - loungeTable.footprintW - 1, row: restSeat.row },
+        { col: restSeat.col + (restEntry?.footprintW ?? 1) + 1, row: restSeat.row },
+        { col: restSeat.col, row: restSeat.row + (restEntry?.footprintH ?? 1) },
       ]
     : [
         {
@@ -1916,8 +2219,14 @@ function preferredRestSeatPlacement(
     type: restSeat.type,
     col: isCollaborationRoom
       ? col + PROJECT_ROOM_COLLAB_REST_SEAT_OFFSET_COL
-      : col + Math.max(5, width - restSeat.footprintW - 1),
-    row: isCollaborationRoom ? row + PROJECT_ROOM_COLLAB_REST_SEAT_OFFSET_ROW : row + 4,
+      : col +
+        Math.max(
+          PROJECT_ROOM_STANDARD_REST_SEAT_MIN_OFFSET_COL,
+          width - restSeat.footprintW - PROJECT_ROOM_STANDARD_REST_SEAT_RIGHT_MARGIN,
+        ),
+    row: isCollaborationRoom
+      ? row + PROJECT_ROOM_COLLAB_REST_SEAT_OFFSET_ROW
+      : row + PROJECT_ROOM_STANDARD_REST_SEAT_OFFSET_ROW,
   };
 }
 
