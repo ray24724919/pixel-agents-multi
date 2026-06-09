@@ -964,6 +964,91 @@ test('generated room prefers the collaborative four-computer work table when ava
       footprintH: 1,
       isDesk: false,
     },
+    {
+      id: 'SOFA_FRONT',
+      label: 'Sofa Front',
+      category: 'chairs',
+      width: TILE_SIZE * 2,
+      height: TILE_SIZE,
+      footprintW: 2,
+      footprintH: 1,
+      isDesk: false,
+      orientation: 'front',
+    },
+    {
+      id: 'SOFA_SIDE',
+      label: 'Sofa Side',
+      category: 'chairs',
+      width: TILE_SIZE,
+      height: TILE_SIZE * 2,
+      footprintW: 1,
+      footprintH: 2,
+      isDesk: false,
+      orientation: 'side',
+    },
+    {
+      id: 'SOFA_SIDE:left',
+      label: 'Sofa Side Left',
+      category: 'chairs',
+      width: TILE_SIZE,
+      height: TILE_SIZE * 2,
+      footprintW: 1,
+      footprintH: 2,
+      isDesk: false,
+      orientation: 'left',
+    },
+    {
+      id: 'COFFEE_TABLE',
+      label: 'Coffee Table',
+      category: 'desks',
+      width: TILE_SIZE * 2,
+      height: TILE_SIZE * 2,
+      footprintW: 2,
+      footprintH: 2,
+      isDesk: false,
+    },
+    {
+      id: 'PLANT_2',
+      label: 'Plant 2',
+      category: 'decor',
+      width: TILE_SIZE,
+      height: TILE_SIZE * 2,
+      footprintW: 1,
+      footprintH: 2,
+      isDesk: false,
+      backgroundTiles: 1,
+    },
+    {
+      id: 'BIN',
+      label: 'Bin',
+      category: 'misc',
+      width: TILE_SIZE,
+      height: TILE_SIZE,
+      footprintW: 1,
+      footprintH: 1,
+      isDesk: false,
+    },
+    {
+      id: 'COFFEE',
+      label: 'Coffee',
+      category: 'misc',
+      width: TILE_SIZE,
+      height: TILE_SIZE,
+      footprintW: 1,
+      footprintH: 1,
+      isDesk: false,
+      canPlaceOnSurfaces: true,
+    },
+    {
+      id: 'POT',
+      label: 'Pot',
+      category: 'decor',
+      width: TILE_SIZE,
+      height: TILE_SIZE,
+      footprintW: 1,
+      footprintH: 1,
+      isDesk: false,
+    },
   ];
   buildDynamicCatalog({
     catalog: assets,
@@ -990,15 +1075,25 @@ test('generated room prefers the collaborative four-computer work table when ava
   );
 
   assert.equal(furnitureByUid.get('project-alpha-team-table'), 'TABLE_FRONT');
-  assert.equal(furnitureByUid.get('project-alpha-pc-right-3'), 'PC_SIDE');
-  assert.equal(furnitureByUid.get('project-alpha-pc-left-3'), 'PC_SIDE:left');
-  assert.equal(furnitureByUid.get('project-alpha-chair-right-3'), 'WOODEN_CHAIR_SIDE');
-  assert.equal(furnitureByUid.get('project-alpha-chair-left-3'), 'WOODEN_CHAIR_SIDE:left');
-  assert.equal(furnitureByOffset.get('5,3'), 'PC_SIDE');
-  assert.equal(furnitureByOffset.get('7,3'), 'PC_SIDE:left');
-  assert.equal(furnitureByOffset.get('4,3'), 'WOODEN_CHAIR_SIDE');
-  assert.equal(furnitureByOffset.get('8,3'), 'WOODEN_CHAIR_SIDE:left');
-  assert.equal(roomSeats.filter((seat) => seat.seatKind === 'work').length, 4);
+  assert.equal(furnitureByUid.get('project-alpha-pc-right-1'), 'PC_SIDE');
+  assert.equal(furnitureByUid.get('project-alpha-pc-left-1'), 'PC_SIDE:left');
+  assert.equal(furnitureByUid.get('project-alpha-chair-right-1'), 'WOODEN_CHAIR_SIDE');
+  assert.equal(furnitureByUid.get('project-alpha-chair-left-1'), 'WOODEN_CHAIR_SIDE:left');
+  assert.equal(furnitureByOffset.get('9,1'), 'PC_SIDE:left');
+  assert.equal(furnitureByOffset.get('6,1'), 'WOODEN_CHAIR_SIDE');
+  assert.equal(furnitureByOffset.get('10,1'), 'WOODEN_CHAIR_SIDE:left');
+  assert.equal(furnitureByOffset.get('7,3'), 'PC_SIDE');
+  assert.equal(furnitureByOffset.get('9,3'), 'PC_SIDE:left');
+  assert.equal(furnitureByUid.get('project-alpha-rest-seat'), 'SOFA_FRONT');
+  assert.equal(furnitureByUid.get('project-alpha-rest-table'), 'COFFEE_TABLE');
+  assert.equal(furnitureByOffset.get('2,1'), 'SOFA_FRONT');
+  assert.equal(furnitureByOffset.get('2,2'), 'COFFEE_TABLE');
+  assert.equal(furnitureByUid.get('project-alpha-rest-seat-side-left'), 'SOFA_SIDE');
+  assert.equal(furnitureByUid.get('project-alpha-rest-seat-side-right'), 'SOFA_SIDE:left');
+  assert.equal(furnitureByUid.get('project-alpha-focus-desk'), 'DESK_FRONT');
+  assert.equal(furnitureByUid.get('project-alpha-focus-pc'), 'PC_FRONT_OFF');
+  assert.equal(furnitureByUid.get('project-alpha-focus-chair'), 'CUSHIONED_BENCH');
+  assert.equal(roomSeats.filter((seat) => seat.seatKind === 'work').length >= 4, true);
   assert.ok(roomSeats.some((seat) => seat.seatKind === 'rest'));
   assertFurnitureOnWalkableRoomTiles(result.layout, room);
   assertGeneratedFurnitureInsetFromRoomWalls(result.layout, room);

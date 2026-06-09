@@ -235,16 +235,33 @@ export const PROJECT_ROOM_STANDARD_REST_SEAT_OFFSET_ROW = 7;
 export const PROJECT_ROOM_AUTO_PROVISION_DEBOUNCE_MS = 120;
 export const PROJECT_ROOM_COLLAB_TEMPLATE_MIN_WIDTH = 12;
 export const PROJECT_ROOM_COLLAB_TEMPLATE_MIN_HEIGHT = 10;
-export const PROJECT_ROOM_COLLAB_TABLE_OFFSET_COL = 5;
-export const PROJECT_ROOM_COLLAB_TABLE_OFFSET_ROW = 3;
-export const PROJECT_ROOM_COLLAB_LEFT_CHAIR_OFFSET_COL = 4;
-export const PROJECT_ROOM_COLLAB_RIGHT_CHAIR_OFFSET_COL = 8;
-export const PROJECT_ROOM_COLLAB_LEFT_PC_OFFSET_COL = 5;
-export const PROJECT_ROOM_COLLAB_RIGHT_PC_OFFSET_COL = 7;
-export const PROJECT_ROOM_COLLAB_TOP_ROW_OFFSET = 3;
-export const PROJECT_ROOM_COLLAB_BOTTOM_ROW_OFFSET = 5;
-export const PROJECT_ROOM_COLLAB_REST_SEAT_OFFSET_COL = 1;
-export const PROJECT_ROOM_COLLAB_REST_SEAT_OFFSET_ROW = 7;
+export const PROJECT_ROOM_COLLAB_TABLE_OFFSET_COL = 7;
+export const PROJECT_ROOM_COLLAB_TABLE_OFFSET_ROW = 1;
+export const PROJECT_ROOM_COLLAB_LEFT_CHAIR_OFFSET_COL = 6;
+export const PROJECT_ROOM_COLLAB_RIGHT_CHAIR_OFFSET_COL = 10;
+export const PROJECT_ROOM_COLLAB_LEFT_PC_OFFSET_COL = 7;
+export const PROJECT_ROOM_COLLAB_RIGHT_PC_OFFSET_COL = 9;
+export const PROJECT_ROOM_COLLAB_TOP_ROW_OFFSET = 1;
+export const PROJECT_ROOM_COLLAB_BOTTOM_ROW_OFFSET = 3;
+export const PROJECT_ROOM_COLLAB_REST_SEAT_OFFSET_COL = 2;
+export const PROJECT_ROOM_COLLAB_REST_SEAT_OFFSET_ROW = 1;
+export const PROJECT_ROOM_STUDIO_TEMPLATE_ACCENTS = [
+  { uidSuffix: 'rest-seat-side-left', type: 'SOFA_SIDE', colOffset: 1, rowOffset: 2 },
+  { uidSuffix: 'rest-seat-side-right', type: 'SOFA_SIDE:left', colOffset: 4, rowOffset: 2 },
+  { uidSuffix: 'decor-plant-nw', type: 'PLANT_2', colOffset: 1, rowOffset: 0 },
+  { uidSuffix: 'decor-bin', type: 'BIN', colOffset: 5, rowOffset: 1 },
+  { uidSuffix: 'team-table-coffee', type: 'COFFEE', colOffset: 8, rowOffset: 2 },
+  { uidSuffix: 'decor-pot-left', type: 'POT', colOffset: 1, rowOffset: 4 },
+  { uidSuffix: 'focus-desk', type: 'DESK_FRONT', colOffset: 7, rowOffset: 5 },
+  { uidSuffix: 'focus-pc', type: 'PC_FRONT_OFF', colOffset: 8, rowOffset: 5 },
+  { uidSuffix: 'focus-chair', type: 'CUSHIONED_BENCH', colOffset: 8, rowOffset: 7 },
+  { uidSuffix: 'lounge-seat-lower-left', type: 'SOFA_SIDE', colOffset: 1, rowOffset: 5 },
+  { uidSuffix: 'lounge-table-lower', type: 'COFFEE_TABLE', colOffset: 2, rowOffset: 5 },
+  { uidSuffix: 'lounge-seat-lower-right', type: 'SOFA_SIDE:left', colOffset: 4, rowOffset: 5 },
+  { uidSuffix: 'lounge-seat-bottom-left', type: 'SOFA_SIDE', colOffset: 1, rowOffset: 7 },
+  { uidSuffix: 'lounge-table-bottom', type: 'COFFEE_TABLE', colOffset: 2, rowOffset: 7 },
+  { uidSuffix: 'lounge-seat-bottom-right', type: 'SOFA_SIDE:left', colOffset: 4, rowOffset: 7 },
+] as const;
 export const PROJECT_ROOM_PROJECT_COLOR = 'rgba(109, 111, 255, 0.16)';
 export const PROJECT_ROOM_PROJECT_BORDER = 'rgba(183, 184, 255, 0.78)';
 export const PROJECT_ROOM_PUBLIC_COLOR = 'rgba(107, 214, 173, 0.12)';
