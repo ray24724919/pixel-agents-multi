@@ -760,6 +760,8 @@ export function useExtensionMessages(
           if (projectName !== undefined) ch.projectName = projectName;
           if (agentName !== undefined) ch.agentName = agentName;
           if (providerId !== undefined) ch.providerId = providerId;
+          os.repairSeatingAssignments(ch.isActive ? 'active' : 'idle');
+          saveAgentSeats(os);
         }
         setAgentRuntimeMetadata((prev) => ({
           ...prev,
@@ -809,6 +811,7 @@ export function useExtensionMessages(
         });
         // Buffer agents — they'll be added in layoutLoaded after seats are built
         let restoredImmediately = false;
+        let refreshedExistingMetadata = false;
         for (const id of incoming) {
           const m = meta[id];
           const ch = os.characters.get(id);
@@ -818,6 +821,7 @@ export function useExtensionMessages(
             if (projectNames[id] !== undefined) ch.projectName = projectNames[id];
             if (agentNames[id] !== undefined) ch.agentName = agentNames[id];
             if (providerIds[id] !== undefined) ch.providerId = providerIds[id];
+            refreshedExistingMetadata = true;
           }
           const restoredAgent: PendingAgent = {
             id,
@@ -839,7 +843,10 @@ export function useExtensionMessages(
             queuePendingAgent(restoredAgent);
           }
         }
-        if (restoredImmediately) {
+        if (refreshedExistingMetadata) {
+          os.repairSeatingAssignments('idle');
+        }
+        if (restoredImmediately || refreshedExistingMetadata) {
           saveAgentSeats(os);
         }
         setAgents((prev) => {
