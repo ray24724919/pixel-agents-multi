@@ -20,21 +20,29 @@ import type {
   UsageHistoryState,
 } from '../hooks/useExtensionMessages.js';
 import type { OfficeState } from '../office/engine/officeState.js';
-import type { TokenRateLimitSnapshot, TokenUsageDetails, ToolActivity } from '../office/types.js';
-import {
-  type AgentZone,
-  type AgentZoneSource,
-  inferAgentZone,
-  zoneSourceLabel,
-} from '../office/zoneUtils.js';
+import type { TokenRateLimitSnapshot, ToolActivity } from '../office/types.js';
+import { inferAgentZone, zoneSourceLabel } from '../office/zoneUtils.js';
 import { vscode } from '../vscodeApi.js';
+import type {
+  AgentStateCounts,
+  AgentSummary,
+  HandoffOpenStatus,
+  HandoffStatusUpdateStatus,
+  HandoffWriteStatus,
+  ProjectFilter,
+  ProjectSummary,
+  ProviderFilter,
+  StatusFilter,
+  TeamFilter,
+  TeamSummary,
+  TimelineItem,
+  UsagePane,
+} from './agentCenter/types.js';
 import { isAgentVisibleWithHiddenToggle } from './agentCenterFilters.js';
 import {
   AGENT_LIST_SORT_OPTIONS,
-  type AgentListItem,
   type AgentListSortKey,
   agentListSortLabel,
-  type AgentListStatusFilter,
   type AgentListStatusGroup,
   filterAndSortAgentList,
 } from './agentCenterListModel.js';
@@ -162,15 +170,6 @@ import {
   type UsageOverviewTrendBucket,
 } from './usageOverviewDashboardModel.js';
 
-type ProviderFilter = 'all' | 'codex' | 'claude';
-type StatusFilter = AgentListStatusFilter;
-type ProjectFilter = 'all' | string;
-type TeamFilter = 'all' | string;
-type UsagePane = 'overview' | 'live' | 'history';
-type HandoffWriteStatus = 'idle' | 'writing' | 'written' | 'failed';
-type HandoffOpenStatus = 'idle' | 'opening' | 'opened' | 'failed';
-type HandoffStatusUpdateStatus = 'idle' | 'updating' | 'updated' | 'failed';
-
 interface AgentCenterSurfaceProps {
   activePage: AgentCenterPage;
   isActive: boolean;
@@ -193,59 +192,6 @@ interface AgentCenterSurfaceProps {
   onResumeAgent: (id: number) => void;
   usageHistory: UsageHistoryState;
   timelineHistory: TimelineHistoryState;
-}
-
-interface AgentSummary extends AgentListItem {
-  id: number;
-  name: string;
-  project: string;
-  providerId: string;
-  status: string;
-  statusGroup: AgentListStatusGroup;
-  activity: string;
-  detail?: string;
-  tokens: number;
-  updatedAt?: number;
-  inputTokens: number;
-  outputTokens: number;
-  artifactOutputTokens: number;
-  tokenUsageEstimated: boolean;
-  tokenUsageDetails?: TokenUsageDetails;
-  codexRateLimit?: TokenRateLimitSnapshot;
-  delegation?: DelegationSummary;
-  zone: AgentZone;
-  zoneSource: AgentZoneSource;
-  projectDir?: string;
-  transcriptPath?: string;
-  teamName?: string;
-  roleName?: string;
-  isTeamLead?: boolean;
-  leadAgentId?: number;
-  isPaused: boolean;
-  hidden: boolean;
-}
-
-interface ProjectSummary {
-  project: string;
-  projectDir?: string;
-  agentCount: number;
-  activeCount: number;
-  waitingCount: number;
-  needsMeCount: number;
-  errorCount: number;
-  tokens: number;
-}
-
-interface TeamSummary {
-  teamName: string;
-  memberCount: number;
-  leadAgentId?: number;
-  leadName?: string;
-  activeCount: number;
-  needsMeCount: number;
-  errorCount: number;
-  tokens: number;
-  projects: string[];
 }
 
 export function AgentCenterSurface({
@@ -4713,17 +4659,6 @@ function SegmentedButtons<T extends string>({
   );
 }
 
-interface AgentStateCounts {
-  total: number;
-  active: number;
-  delegating: number;
-  paused: number;
-  waiting: number;
-  needsMe: number;
-  error: number;
-  hidden: number;
-}
-
 function AgentStateSummary({
   counts,
   shownCount,
@@ -5505,14 +5440,6 @@ function applyDelegationSummary(
     updatedAt: Math.max(agent.updatedAt ?? 0, delegation.updatedAt),
     delegation,
   };
-}
-
-interface TimelineItem {
-  id: string;
-  timestamp: number;
-  title: string;
-  summary?: string;
-  severity?: 'info' | 'success' | 'warning' | 'error';
 }
 
 function buildAgentTimeline(
