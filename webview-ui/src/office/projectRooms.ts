@@ -303,3 +303,25 @@ export function seatPriorityForAgent(
 ): number {
   return seatPriorityForProjectKey(layout, deriveAgentProjectKey(ch), seat, mode);
 }
+
+/**
+ * True when a seat sits inside a DIFFERENT project's room while the agent has a project room of its
+ * own. Such seats must be rejected outright (not merely deprioritized): an agent should rather stay
+ * seatless in its own room than occupy another project's room. Agents without a matching own room are
+ * never blocked, so unassigned/neutral fallbacks still work.
+ */
+export function seatIsForeignProjectRoomForAgent(
+  layout: OfficeLayout,
+  ch: Pick<Character, 'folderName' | 'projectDir' | 'projectName'>,
+  seat: Pick<Seat, 'seatCol' | 'seatRow'>,
+): boolean {
+  const projectKey = deriveAgentProjectKey(ch);
+  if (!projectKey) return false;
+  const rooms = normalizeProjectRooms(layout);
+  if (!hasMatchingProjectRoom(rooms, projectKey)) return false;
+  const containingRooms = roomsForSeat({ ...layout, projectRooms: rooms }, seat);
+  return (
+    seatIsInOtherProjectRoom(containingRooms, projectKey) &&
+    !seatIsInOwnProjectRoom(containingRooms, projectKey)
+  );
+}

@@ -464,6 +464,43 @@ test('two projects with capacity do not claim each other room-local work seats',
   assert.equal(state.characters.get(2)?.seatId, 'a-beta-chair');
 });
 
+test('a layout repair walks an idle agent to its rest seat instead of teleporting it', () => {
+  const state = new OfficeState(makeLayout(loungeFurnitureAt('sofa', 7, 4), 12, 8));
+  addAgent(state, 1, false);
+  const ch = state.characters.get(1)!;
+  // Park the idle agent far from any rest seat, then force a layout-reason repair (the snap path).
+  ch.seatId = null;
+  ch.restSeatId = null;
+  ch.tileCol = 1;
+  ch.tileRow = 1;
+  ch.x = 1 * TILE_SIZE + TILE_SIZE / 2;
+  ch.y = 1 * TILE_SIZE + TILE_SIZE / 2;
+  state.repairSeatingAssignments('layout');
+  const seat = ch.seatId ? state.seats.get(ch.seatId) : undefined;
+  assert.ok(seat, 'idle agent is assigned a rest seat');
+  assert.equal(seat?.seatKind, 'rest');
+  // It must NOT have been snapped onto the seat — it walks there, so it stays put for now.
+  assert.equal(
+    ch.tileCol === seat?.seatCol && ch.tileRow === seat?.seatRow,
+    false,
+    'idle agent must walk to the rest seat, not teleport (flash) onto it',
+  );
+});
+
+test('an agent with its own project room never sits in another project room', () => {
+  // Only BETA has a workstation; ALPHA's agent has its own (work-seatless) room.
+  const layout = makeLayout(workstationFurniture('beta-chair', 6), 14, 8);
+  layout.projectRooms = [
+    projectRoom('room-alpha', 'alpha', 0, 0, 6, 8),
+    projectRoom('room-beta', 'beta', 6, 0, 8, 8),
+  ];
+  const state = new OfficeState(layout);
+  addAgent(state, 1, true, undefined, 'Alpha');
+  const ch = state.characters.get(1)!;
+  // ALPHA has its own room (with no work seat) — it must stay seatless rather than borrow BETA's seat.
+  assert.notEqual(seatRoom(layout, ch.seatId)?.id, 'room-beta');
+});
+
 test('idle agents prefer rest seats inside their own project room', () => {
   const layout = makeLayout(
     [...loungeFurnitureAt('a-beta-sofa', 2, 5), ...loungeFurnitureAt('z-alpha-sofa', 8, 5)],

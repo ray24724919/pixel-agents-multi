@@ -26,6 +26,7 @@ import { findPath, getWalkableTiles, isWalkable } from '../layout/tileMap.js';
 import {
   deriveAgentProjectKey,
   normalizeProjectRoomsInLayout,
+  seatIsForeignProjectRoomForAgent,
   seatPriorityForAgent,
   seatPriorityForProjectKey,
 } from '../projectRooms.js';
@@ -222,6 +223,9 @@ export class OfficeState {
       return false;
     }
     if (seat.assigned && ch.seatId !== seat.uid) return false;
+    // An agent with its own project room must never occupy a different project's room — rather stay
+    // seatless at home than sit in another team's room.
+    if (seatIsForeignProjectRoomForAgent(this.layout, ch, seat)) return false;
     return this.isSeatReachableForCharacter(ch, seat);
   }
 
@@ -414,9 +418,12 @@ export class OfficeState {
         seat.assigned = true;
         if (mode === 'work') ch.workSeatId = ch.seatId;
         if (mode === 'rest') ch.restSeatId = ch.seatId;
-        if (snap) {
+        // Snap only ACTIVE agents onto their work seat so they look seated immediately on a layout
+        // load. Idle agents are never teleported — they walk to a rest seat — otherwise a routine
+        // re-provision snaps them mid-walk and they appear to flash from a sofa back to the lobby.
+        if (snap && ch.isActive) {
           this.snapCharacterToSeat(ch, seat);
-          ch.state = mode === 'work' && ch.isActive ? CharacterState.TYPE : CharacterState.IDLE;
+          ch.state = CharacterState.TYPE;
         }
         continue;
       }
@@ -443,7 +450,8 @@ export class OfficeState {
         if (ch.seatId) continue;
         const restSeatId = this.chooseSeatForAgent(ch, 'rest');
         if (restSeatId) {
-          this.assignSeatToCharacter(ch, restSeatId, 'rest', snap);
+          // Idle agents always walk to a rest seat — never snap — so they can't teleport to the lobby.
+          this.assignSeatToCharacter(ch, restSeatId, 'rest', false);
         } else if (!this.isCharacterOnWalkableTile(ch)) {
           this.relocateCharacterToWalkable(ch);
         }
