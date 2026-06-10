@@ -255,15 +255,26 @@ export const PROJECT_ROOM_STUDIO_TEMPLATE_ACCENTS = [
   { uidSuffix: 'decor-bin', type: 'BIN', colOffset: 5, rowOffset: 1 },
   { uidSuffix: 'team-table-coffee', type: 'COFFEE', colOffset: 8, rowOffset: 2 },
   { uidSuffix: 'decor-pot-left', type: 'POT', colOffset: 1, rowOffset: 4 },
-  { uidSuffix: 'focus-desk', type: 'DESK_FRONT', colOffset: 7, rowOffset: 5 },
-  { uidSuffix: 'focus-pc', type: 'PC_FRONT_OFF', colOffset: 8, rowOffset: 5 },
-  { uidSuffix: 'focus-chair', type: 'CUSHIONED_BENCH', colOffset: 8, rowOffset: 7 },
+  { uidSuffix: 'focus-desk', type: 'DESK_FRONT', colOffset: 4, rowOffset: 6 },
+  { uidSuffix: 'focus-pc', type: 'PC_FRONT_OFF', colOffset: 5, rowOffset: 6 },
+  { uidSuffix: 'focus-chair', type: 'CUSHIONED_BENCH', colOffset: 5, rowOffset: 8 },
+  { uidSuffix: 'desk-plant', type: 'HANGING_PLANT', colOffset: 4, rowOffset: 2 },
   { uidSuffix: 'lounge-seat-lower-left', type: 'SOFA_SIDE', colOffset: 1, rowOffset: 5 },
   { uidSuffix: 'lounge-table-lower', type: 'COFFEE_TABLE', colOffset: 2, rowOffset: 5 },
   { uidSuffix: 'lounge-seat-lower-right', type: 'SOFA_SIDE:left', colOffset: 4, rowOffset: 5 },
   { uidSuffix: 'lounge-seat-bottom-left', type: 'SOFA_SIDE', colOffset: 1, rowOffset: 7 },
   { uidSuffix: 'lounge-table-bottom', type: 'COFFEE_TABLE', colOffset: 2, rowOffset: 7 },
   { uidSuffix: 'lounge-seat-bottom-right', type: 'SOFA_SIDE:left', colOffset: 4, rowOffset: 7 },
+] as const;
+// Wall-mounted back-wall decor along the room's top wall (bottom footprint row on the wall tile).
+// Columns are spaced to leave the center clear for a bottom-row room's doorway gap.
+export const PROJECT_ROOM_STUDIO_WALL_DECOR = [
+  { uidSuffix: 'wall-bookshelf-l', type: 'DOUBLE_BOOKSHELF', colOffset: 1 },
+  { uidSuffix: 'wall-painting-l', type: 'SMALL_PAINTING', colOffset: 3 },
+  { uidSuffix: 'wall-clock', type: 'CLOCK', colOffset: 4 },
+  { uidSuffix: 'wall-painting-r', type: 'SMALL_PAINTING_2', colOffset: 7 },
+  { uidSuffix: 'wall-bookshelf-r', type: 'DOUBLE_BOOKSHELF', colOffset: 8 },
+  { uidSuffix: 'wall-plant', type: 'HANGING_PLANT', colOffset: 10 },
 ] as const;
 export const PROJECT_ROOM_PROJECT_COLOR = 'rgba(109, 111, 255, 0.16)';
 export const PROJECT_ROOM_PROJECT_BORDER = 'rgba(183, 184, 255, 0.78)';

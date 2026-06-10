@@ -44,6 +44,7 @@ import {
   PROJECT_ROOM_STANDARD_WORK_CHAIR_OFFSET_COL,
   PROJECT_ROOM_STANDARD_WORK_CHAIR_OFFSET_ROW,
   PROJECT_ROOM_STUDIO_TEMPLATE_ACCENTS,
+  PROJECT_ROOM_STUDIO_WALL_DECOR,
   PROJECT_ROOM_WORK_CORRIDOR_HEIGHT,
   PROJECT_ROOM_WORK_CORRIDOR_LOUNGE_LEFT_TABLE_COL_OFFSET,
   PROJECT_ROOM_WORK_CORRIDOR_LOUNGE_RIGHT_TABLE_MARGIN,
@@ -2269,6 +2270,10 @@ function buildGeneratedProjectRoomFurniture(
     }
   }
 
+  for (const decor of buildStudioWallDecor(layout, room, [...baseFurniture, ...planned])) {
+    planned.push(decor);
+  }
+
   return planned;
 }
 
@@ -2289,6 +2294,66 @@ function buildStudioAccentFurniture(room: ProjectRoom): PlacedFurniture[] {
     col: room.bounds.col + placement.colOffset,
     row: room.bounds.row + placement.rowOffset,
   }));
+}
+
+/**
+ * Wall-mounted back-wall decor (bookshelves, paintings, clock) along the room's top wall, matching
+ * the hand-designed studio. Wall items hang on the wall: their bottom footprint row sits on the wall
+ * tile and upper rows extend above it. Any column that isn't a solid wall (e.g. the doorway gap of a
+ * bottom-row room) is skipped, so decor never blocks the entrance.
+ */
+function buildStudioWallDecor(
+  layout: OfficeLayout,
+  room: ProjectRoom,
+  furniture: PlacedFurniture[],
+): PlacedFurniture[] {
+  if (room.bounds.width < PROJECT_ROOM_COLLAB_TEMPLATE_MIN_WIDTH) return [];
+  const placed: PlacedFurniture[] = [];
+  for (const decor of PROJECT_ROOM_STUDIO_WALL_DECOR) {
+    const entry = getAllCatalogEntries().find((candidate) => candidate.type === decor.type);
+    if (!entry?.canPlaceOnWalls) continue;
+    const col = room.bounds.col + decor.colOffset;
+    const bottomRow = room.bounds.row; // the top (back) wall row
+    const item: PlacedFurniture = {
+      uid: `${room.id}-${decor.uidSuffix}`,
+      type: decor.type,
+      col,
+      row: bottomRow - (entry.footprintH - 1),
+    };
+    if (canPlaceWallDecor(layout, room, item, entry, [...furniture, ...placed])) {
+      placed.push(item);
+    }
+  }
+  return placed;
+}
+
+function canPlaceWallDecor(
+  layout: OfficeLayout,
+  room: ProjectRoom,
+  item: PlacedFurniture,
+  entry: FurnitureCatalogEntry,
+  furniture: PlacedFurniture[],
+): boolean {
+  const bottomRow = item.row + entry.footprintH - 1;
+  if (
+    item.col < room.bounds.col ||
+    item.col + entry.footprintW > room.bounds.col + room.bounds.width
+  )
+    return false;
+  if (bottomRow < 0 || bottomRow >= layout.rows) return false;
+  // The bottom row must sit on solid wall tiles (this skips the doorway gap automatically).
+  for (let dc = 0; dc < entry.footprintW; dc++) {
+    if (layout.tiles[bottomRow * layout.cols + (item.col + dc)] !== TileType.WALL) return false;
+  }
+  const bounds = placedFurnitureBounds(item, entry);
+  for (const existing of furniture) {
+    const existingEntry = getAllCatalogEntries().find(
+      (candidate) => candidate.type === existing.type,
+    );
+    if (!existingEntry) continue;
+    if (rectsOverlap(bounds, placedFurnitureBounds(existing, existingEntry))) return false;
+  }
+  return true;
 }
 
 function roomSeats(layout: OfficeLayout, room: ProjectRoom) {
