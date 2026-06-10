@@ -7,12 +7,14 @@ import { buildDynamicCatalog } from '../src/office/layout/furnitureCatalog.ts';
 import { layoutToSeats } from '../src/office/layout/layoutSerializer.ts';
 import { ensureProjectRoomsForAgents } from '../src/office/projectRoomGeneration.ts';
 import {
+  type Character,
   CharacterState,
   Direction,
   type FurnitureCatalogEntry,
   type OfficeLayout,
   type PlacedFurniture,
   type ProjectRoom,
+  type Seat,
   TILE_SIZE,
   TileType,
 } from '../src/office/types.ts';
@@ -255,6 +257,39 @@ test('idle agent releases a work seat and prefers a rest seat', () => {
   assert.equal(workSeat.assigned, false);
   assert.notEqual(ch.seatId, workSeatId);
   assert.equal(currentSeat?.seatKind ?? 'rest', 'rest');
+});
+
+test('idle agent can rest in both its own project room and the public lobby lounge', () => {
+  const projRoom = projectRoom('proj-alpha', 'alpha', 1, 1, 4, 4);
+  const lobby = room('public', 'lobby', 6, 1, 4, 4);
+  const layout = makeLayout(
+    [...loungeFurnitureAt('proj-sofa', 2, 2), ...loungeFurnitureAt('lobby-sofa', 7, 2)],
+    12,
+    8,
+  );
+  layout.projectRooms = [projRoom, lobby];
+  const state = new OfficeState(layout);
+
+  // Idle agent belonging to project "alpha" (which owns proj-alpha room).
+  addAgent(state, 1, false, undefined, 'alpha');
+  const ch = state.characters.get(1)!;
+
+  // getUpdateSeatsForCharacter governs which rest seats an idle agent may claim while wandering.
+  const allowedSeats = (
+    state as unknown as {
+      getUpdateSeatsForCharacter(c: Character): Map<string, Seat>;
+    }
+  ).getUpdateSeatsForCharacter(ch);
+
+  const allowedRoomIds = new Set([...allowedSeats.keys()].map((id) => seatRoom(layout, id)?.id));
+  assert.ok(
+    allowedRoomIds.has('proj-alpha'),
+    'idle agent must be able to rest in its own project room',
+  );
+  assert.ok(
+    allowedRoomIds.has('lobby'),
+    'idle agent must also be able to rest in the public lobby lounge',
+  );
 });
 
 test('layout import repairs a stale work seat that became rest', () => {

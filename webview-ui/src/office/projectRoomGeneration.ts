@@ -95,6 +95,9 @@ interface RoomTemplateAssets {
   restSeat: FurnitureCatalogEntry;
   loungeTable?: FurnitureCatalogEntry;
   loungeDecor?: FurnitureCatalogEntry;
+  /** Distinct floor greenery for the public lobby lounge, so it reads as a varied lounge rather
+   *  than a row of identical plants. Index 0 stays the primary plant for placement stability. */
+  lobbyDecorVariety?: FurnitureCatalogEntry[];
   collaboration?: CollaborationTemplateAssets;
 }
 
@@ -229,6 +232,12 @@ export function ensureProjectRoomsForAgents(
   current = loungeResult.layout;
   loungeFurnitureAddedCount = loungeResult.addedCount;
 
+  // Retrofit any pre-existing rooms that still have a front (south) wall so the whole campus
+  // follows the open-front rule, not just freshly created rooms.
+  const frontResult = openProjectRoomFronts(current);
+  current = frontResult.layout;
+  suiteFurnitureAddedCount += frontResult.changedCount;
+
   return {
     layout: current,
     createdRooms,
@@ -327,6 +336,7 @@ function pickRoomTemplateAssets(): RoomTemplateAssets | null {
   const restSeat = pickRestSeat(entries, workChair) ?? workChair;
   const loungeTable = pickLoungeTable(entries);
   const loungeDecor = pickLoungeDecor(entries);
+  const lobbyDecorVariety = pickLobbyDecorVariety(entries);
   return {
     desk,
     electronics,
@@ -334,8 +344,43 @@ function pickRoomTemplateAssets(): RoomTemplateAssets | null {
     restSeat,
     ...(loungeTable ? { loungeTable } : {}),
     ...(loungeDecor ? { loungeDecor } : {}),
+    ...(lobbyDecorVariety.length > 0 ? { lobbyDecorVariety } : {}),
     ...(pickCollaborationTemplateAssets(entries) ?? {}),
   };
+}
+
+/**
+ * Curated palette of distinct floor greenery for the public lobby lounge. The primary plant (the
+ * same one pickLoungeDecor would choose) stays first so existing placements/uids are stable; the
+ * rest add variety (a second plant, a large plant, a cactus, a pot) for a lusher lounge.
+ */
+function pickLobbyDecorVariety(entries: FurnitureCatalogEntry[]): FurnitureCatalogEntry[] {
+  const floorDecor = entries.filter(
+    (entry) => entry.category === 'decor' && !entry.canPlaceOnWalls,
+  );
+  if (floorDecor.length === 0) return [];
+  const ordered: FurnitureCatalogEntry[] = [];
+  const seenTypes = new Set<string>();
+  const push = (entry: FurnitureCatalogEntry | undefined): void => {
+    if (!entry || seenTypes.has(entry.type)) return;
+    seenTypes.add(entry.type);
+    ordered.push(entry);
+  };
+  push(pickLoungeDecor(entries));
+  const scored = floorDecor
+    .map((entry) => ({ entry, score: lobbyDecorVarietyScore(entry) }))
+    .sort((a, b) => b.score - a.score);
+  for (const { entry } of scored) push(entry);
+  return ordered;
+}
+
+function lobbyDecorVarietyScore(entry: FurnitureCatalogEntry): number {
+  const text = `${entry.type} ${entry.label}`;
+  if (/large\s*plant/i.test(text)) return 90;
+  if (/plant/i.test(text)) return 80;
+  if (/cactus/i.test(text)) return 60;
+  if (/pot/i.test(text)) return 40;
+  return 20;
 }
 
 function pickRestSeat(
@@ -1032,14 +1077,21 @@ function paintRoomShell(
   room: ProjectRoom['bounds'],
   doorway: RoomDoorway,
 ): void {
+  // The front (south) wall is intentionally never painted, so the camera can always see into the
+  // studio — matching the hand-designed default office. This holds regardless of the room's row:
+  // a top-row room's open front doubles as its corridor-facing entrance, and a bottom-row room
+  // keeps its furniture fixed with the entrance as a doorway in its (north) corridor-facing wall
+  // while its front still stays open.
+  const southWallRow = room.row + room.height - PROJECT_ROOM_GENERATED_SHELL_THICKNESS;
   for (let row = room.row; row < room.row + room.height; row++) {
     for (let col = room.col; col < room.col + room.width; col++) {
       const onPerimeter =
         row === room.row ||
-        row === room.row + room.height - PROJECT_ROOM_GENERATED_SHELL_THICKNESS ||
+        row === southWallRow ||
         col === room.col ||
         col === room.col + room.width - PROJECT_ROOM_GENERATED_SHELL_THICKNESS;
       if (!onPerimeter) continue;
+      if (row >= southWallRow) continue; // front wall always open
       if (isDoorwayTile(col, row, doorway)) continue;
       paintWallTile(layout, tiles, tileColors, zones, col, row);
     }
@@ -1204,6 +1256,42 @@ function paintWallTile(
   tiles[idx] = TileType.WALL;
   tileColors[idx] = { ...PROJECT_ROOM_GENERATED_WALL_COLOR };
   zones[idx] = null;
+}
+
+/**
+ * Retrofit existing generated project rooms to the open-front rule: convert any remaining south
+ * (front) perimeter wall back to floor. New rooms are already created without a south wall, so this
+ * is a no-op for them; it only migrates rooms created before the open-front change so the whole
+ * campus stays consistent without needing a full layout reset.
+ */
+export function openProjectRoomFronts(layout: OfficeLayout): {
+  layout: OfficeLayout;
+  changedCount: number;
+} {
+  const rooms = normalizeProjectRooms(layout).filter(
+    (room) => room.kind === ProjectRoomKind.PROJECT,
+  );
+  if (rooms.length === 0) return { layout, changedCount: 0 };
+  const tiles = [...layout.tiles];
+  const tileColors = [...(layout.tileColors ?? new Array(layout.tiles.length).fill(null))];
+  const zones = [...(layout.zones ?? new Array(layout.tiles.length).fill(null))];
+  let changedCount = 0;
+  for (const room of rooms) {
+    const southRow = room.bounds.row + room.bounds.height - PROJECT_ROOM_GENERATED_SHELL_THICKNESS;
+    if (southRow < 0 || southRow >= layout.rows) continue;
+    for (let col = room.bounds.col; col < room.bounds.col + room.bounds.width; col++) {
+      if (col < 0 || col >= layout.cols) continue;
+      const idx = southRow * layout.cols + col;
+      if (tiles[idx] !== TileType.WALL) continue;
+      tiles[idx] = PROJECT_ROOM_GENERATED_FLOOR_TILE;
+      tileColors[idx] = { ...PROJECT_ROOM_GENERATED_FLOOR_COLOR };
+      zones[idx] = null;
+      changedCount++;
+    }
+  }
+  return changedCount > 0
+    ? { layout: { ...layout, tiles, tileColors, zones }, changedCount }
+    : { layout, changedCount: 0 };
 }
 
 function clampInt(value: number, min: number, max: number): number {
@@ -1588,19 +1676,26 @@ function buildWorkCorridorLobbyLoungeFurniture(
     }
   }
 
-  if (template.loungeDecor) {
+  const decorPalette =
+    template.lobbyDecorVariety && template.lobbyDecorVariety.length > 0
+      ? template.lobbyDecorVariety
+      : template.loungeDecor
+        ? [template.loungeDecor]
+        : [];
+  if (decorPalette.length > 0) {
     const targetDecor = targetLobbyLoungeDecorCount(room);
     for (let decorIndex = 0; decorIndex < targetDecor; decorIndex++) {
+      const decorEntry = decorPalette[decorIndex % decorPalette.length]!;
       const uid =
         decorIndex === 0 ? `${room.id}-lounge-decor` : `${room.id}-lounge-decor-${decorIndex + 1}`;
       const decor = tryPlanLobbyFurniture(
         layout,
         room,
-        template.loungeDecor,
+        decorEntry,
         uid,
         baseFurniture,
         planned,
-        buildCorridorLobbyDecorPreferredPositions(room, template.loungeDecor, decorIndex),
+        buildCorridorLobbyDecorPreferredPositions(room, decorEntry, decorIndex),
       );
       if (decor) planned.push(decor);
     }

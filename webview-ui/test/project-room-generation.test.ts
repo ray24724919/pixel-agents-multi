@@ -18,7 +18,10 @@ import {
   serializeLayout,
 } from '../src/office/layout/layoutSerializer.ts';
 import { findPath } from '../src/office/layout/tileMap.ts';
-import { ensureProjectRoomsForAgents } from '../src/office/projectRoomGeneration.ts';
+import {
+  ensureProjectRoomsForAgents,
+  openProjectRoomFronts,
+} from '../src/office/projectRoomGeneration.ts';
 import type {
   FurnitureCatalogEntry,
   OfficeLayout,
@@ -672,6 +675,61 @@ test('generated room shell leaves a walkable doorway and corridor to the lobby',
     PROJECT_ROOM_GENERATED_FLOOR_TILE,
   );
   assert.ok(hasWalkablePath(result.layout, interiorStart, doorway));
+});
+
+test('generated room front (south) wall is always open, including bottom-row rooms', () => {
+  const result = ensureProjectRoomsForAgents(makeLayout(), [
+    { folderName: 'Alpha', isSubagent: false },
+    { folderName: 'Beta', isSubagent: false },
+    { folderName: 'Delta', isSubagent: false },
+    { folderName: 'Epsilon', isSubagent: false },
+  ]);
+  const lobby = publicRooms(result.layout)[0]!;
+  assert.ok(result.createdRooms.length >= 4);
+
+  let sawBottomRow = false;
+  for (const room of result.createdRooms) {
+    const southRow = room.bounds.row + room.bounds.height - 1;
+    // The whole front (south) edge must be open — never wall, never void — so the camera sees in.
+    for (let col = room.bounds.col; col < room.bounds.col + room.bounds.width; col++) {
+      const tile = tileAt(result.layout, col, southRow);
+      assert.notEqual(tile, TileType.WALL, `front wall tile at ${col},${southRow} must be open`);
+      assert.notEqual(tile, TileType.VOID, `front tile at ${col},${southRow} must be walkable`);
+    }
+    // The back (north) wall corners stay solid, proving we only opened the front, not the room.
+    assert.equal(tileAt(result.layout, room.bounds.col, room.bounds.row), TileType.WALL);
+    assert.equal(
+      tileAt(result.layout, room.bounds.col + room.bounds.width - 1, room.bounds.row),
+      TileType.WALL,
+    );
+    if (room.bounds.row >= lobby.bounds.row + lobby.bounds.height) sawBottomRow = true;
+  }
+  // A bottom-row room keeps its furniture fixed with the entrance on the (north) corridor side,
+  // and its front (south) wall still open — the case the user called out.
+  assert.ok(sawBottomRow, 'expected at least one bottom-row room');
+});
+
+test('openProjectRoomFronts retrofits an existing room south wall to open floor', () => {
+  const cols = 12;
+  const rows = 12;
+  const layout = makeLayout(cols, rows);
+  const room = projectRoom('proj-a', 'alpha', 1, 1); // 9x7 room at (1,1)
+  layout.projectRooms = [room];
+  // Simulate a pre-open-front room: paint its south (front) perimeter row as wall.
+  const southRow = room.bounds.row + room.bounds.height - 1;
+  for (let col = room.bounds.col; col < room.bounds.col + room.bounds.width; col++) {
+    layout.tiles[southRow * cols + col] = TileType.WALL;
+  }
+  assert.equal(tileAt(layout, room.bounds.col, southRow), TileType.WALL);
+
+  const result = openProjectRoomFronts(layout);
+
+  assert.equal(result.changedCount, room.bounds.width);
+  for (let col = room.bounds.col; col < room.bounds.col + room.bounds.width; col++) {
+    assert.notEqual(tileAt(result.layout, col, southRow), TileType.WALL);
+  }
+  // Idempotent: a room that is already open is left untouched.
+  assert.equal(openProjectRoomFronts(result.layout).changedCount, 0);
 });
 
 test('generated room does not overlap existing rooms or existing furniture', () => {
