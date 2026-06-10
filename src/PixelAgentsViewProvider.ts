@@ -2078,6 +2078,11 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
   private removeStaleCodexAgents(topLevelThreadIds: Set<string>): void {
     for (const [id, agent] of [...this.agents]) {
       if (agent.providerId !== 'codex' || !agent.jsonlFile) continue;
+      // A live, terminal-bound agent is genuinely running — it is just idle between prompts. Codex
+      // rotates to a new thread per prompt, so its previously-bound thread can briefly become
+      // unfindable right after a turn; the same-cwd follow-on poll rebinds it. Never stale-remove a
+      // live agent in that window, or it vanishes mid-session while its terminal is still open.
+      if (agent.terminalRef && agent.terminalRef.exitStatus === undefined) continue;
       const isTopLevelExternal = agent.isExternal && agent.leadAgentId === undefined;
       if (
         fs.existsSync(agent.jsonlFile) &&
