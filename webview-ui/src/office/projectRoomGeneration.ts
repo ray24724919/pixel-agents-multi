@@ -2400,6 +2400,33 @@ function buildFallbackRestSeatCandidates(
   return candidates;
 }
 
+/**
+ * Tiles that must stay clear so the room's corridor-facing doorway is never blocked by furniture.
+ * The doorway is the floor gap in an otherwise-walled perimeter side: for a bottom-row room that's a
+ * gap in the top (north) wall; for a side room a gap in the east/west wall. The open south front is
+ * NOT treated as a doorway — it is the intentional camera-facing opening where lounge seating sits.
+ * Includes the gap tile and the tile one step inside it (the entry path).
+ */
+export function roomDoorwayKeepClearTiles(layout: OfficeLayout, room: ProjectRoom): Set<string> {
+  const clear = new Set<string>();
+  const { col, row, width, height } = room.bounds;
+  const within = (c: number, r: number): boolean =>
+    c >= col && c < col + width && r >= row && r < row + height;
+  const markGap = (c: number, r: number, insideC: number, insideR: number): void => {
+    if (c < 0 || c >= layout.cols || r < 0 || r >= layout.rows) return;
+    const tile = layout.tiles[r * layout.cols + c];
+    if (tile === TileType.WALL || tile === TileType.VOID || tile === undefined) return;
+    clear.add(`${c},${r}`);
+    if (within(insideC, insideR)) clear.add(`${insideC},${insideR}`);
+  };
+  for (let c = col; c < col + width; c++) markGap(c, row, c, row + 1);
+  for (let r = row + 1; r < row + height - 1; r++) {
+    markGap(col, r, col + 1, r);
+    markGap(col + width - 1, r, col + width - 2, r);
+  }
+  return clear;
+}
+
 function canPlaceSuiteFurniture(
   layout: OfficeLayout,
   room: ProjectRoom,
@@ -2415,6 +2442,14 @@ function canPlaceSuiteFurniture(
     for (let col = bounds.col; col < bounds.col + bounds.width; col++) {
       const tile = layout.tiles[row * layout.cols + col];
       if (tile === TileType.WALL || tile === TileType.VOID || tile === undefined) return false;
+    }
+  }
+  const keepClear = roomDoorwayKeepClearTiles(layout, room);
+  if (keepClear.size > 0) {
+    for (let row = bounds.row; row < bounds.row + bounds.height; row++) {
+      for (let col = bounds.col; col < bounds.col + bounds.width; col++) {
+        if (keepClear.has(`${col},${row}`)) return false;
+      }
     }
   }
   for (const existing of furniture) {

@@ -21,6 +21,7 @@ import { findPath } from '../src/office/layout/tileMap.ts';
 import {
   ensureProjectRoomsForAgents,
   openProjectRoomFronts,
+  roomDoorwayKeepClearTiles,
 } from '../src/office/projectRoomGeneration.ts';
 import type {
   FurnitureCatalogEntry,
@@ -707,6 +708,34 @@ test('generated room front (south) wall is always open, including bottom-row roo
   // A bottom-row room keeps its furniture fixed with the entrance on the (north) corridor side,
   // and its front (south) wall still open — the case the user called out.
   assert.ok(sawBottomRow, 'expected at least one bottom-row room');
+});
+
+test('roomDoorwayKeepClearTiles protects a north-wall doorway gap, not solid walls', () => {
+  const cols = 12;
+  const rows = 12;
+  const layout = makeLayout(cols, rows);
+  const room = projectRoom('proj-a', 'alpha', 1, 1); // 9x7 room at (1,1)
+  const { col, row, width, height } = room.bounds;
+  // Wall the north + east + west perimeter (south stays open), with a 1-tile north doorway gap.
+  for (let c = col; c < col + width; c++) layout.tiles[row * cols + c] = TileType.WALL;
+  for (let r = row + 1; r < row + height - 1; r++) {
+    layout.tiles[r * cols + col] = TileType.WALL;
+    layout.tiles[r * cols + (col + width - 1)] = TileType.WALL;
+  }
+  const gapCol = col + Math.floor(width / 2);
+  layout.tiles[row * cols + gapCol] = TileType.FLOOR_1;
+
+  const clear = roomDoorwayKeepClearTiles(layout, room);
+  assert.ok(clear.has(`${gapCol},${row}`), 'the doorway gap tile must be kept clear');
+  assert.ok(
+    clear.has(`${gapCol},${row + 1}`),
+    'the tile just inside the doorway must be kept clear',
+  );
+  assert.ok(!clear.has(`${col + 1},${row}`), 'solid wall tiles are not doorways');
+
+  // Sealing the gap leaves nothing to protect (e.g. a top-row room with a solid back wall).
+  layout.tiles[row * cols + gapCol] = TileType.WALL;
+  assert.equal(roomDoorwayKeepClearTiles(layout, room).size, 0);
 });
 
 test('openProjectRoomFronts retrofits an existing room south wall to open floor', () => {
