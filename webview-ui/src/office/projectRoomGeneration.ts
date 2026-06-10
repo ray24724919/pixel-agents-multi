@@ -232,6 +232,12 @@ export function ensureProjectRoomsForAgents(
   current = loungeResult.layout;
   loungeFurnitureAddedCount = loungeResult.addedCount;
 
+  // Retrofit any pre-existing rooms that still have a front (south) wall so the whole campus
+  // follows the open-front rule, not just freshly created rooms.
+  const frontResult = openProjectRoomFronts(current);
+  current = frontResult.layout;
+  suiteFurnitureAddedCount += frontResult.changedCount;
+
   return {
     layout: current,
     createdRooms,
@@ -1250,6 +1256,42 @@ function paintWallTile(
   tiles[idx] = TileType.WALL;
   tileColors[idx] = { ...PROJECT_ROOM_GENERATED_WALL_COLOR };
   zones[idx] = null;
+}
+
+/**
+ * Retrofit existing generated project rooms to the open-front rule: convert any remaining south
+ * (front) perimeter wall back to floor. New rooms are already created without a south wall, so this
+ * is a no-op for them; it only migrates rooms created before the open-front change so the whole
+ * campus stays consistent without needing a full layout reset.
+ */
+export function openProjectRoomFronts(layout: OfficeLayout): {
+  layout: OfficeLayout;
+  changedCount: number;
+} {
+  const rooms = normalizeProjectRooms(layout).filter(
+    (room) => room.kind === ProjectRoomKind.PROJECT,
+  );
+  if (rooms.length === 0) return { layout, changedCount: 0 };
+  const tiles = [...layout.tiles];
+  const tileColors = [...(layout.tileColors ?? new Array(layout.tiles.length).fill(null))];
+  const zones = [...(layout.zones ?? new Array(layout.tiles.length).fill(null))];
+  let changedCount = 0;
+  for (const room of rooms) {
+    const southRow = room.bounds.row + room.bounds.height - PROJECT_ROOM_GENERATED_SHELL_THICKNESS;
+    if (southRow < 0 || southRow >= layout.rows) continue;
+    for (let col = room.bounds.col; col < room.bounds.col + room.bounds.width; col++) {
+      if (col < 0 || col >= layout.cols) continue;
+      const idx = southRow * layout.cols + col;
+      if (tiles[idx] !== TileType.WALL) continue;
+      tiles[idx] = PROJECT_ROOM_GENERATED_FLOOR_TILE;
+      tileColors[idx] = { ...PROJECT_ROOM_GENERATED_FLOOR_COLOR };
+      zones[idx] = null;
+      changedCount++;
+    }
+  }
+  return changedCount > 0
+    ? { layout: { ...layout, tiles, tileColors, zones }, changedCount }
+    : { layout, changedCount: 0 };
 }
 
 function clampInt(value: number, min: number, max: number): number {
