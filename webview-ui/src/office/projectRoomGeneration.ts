@@ -2160,11 +2160,6 @@ function isRestSeatFurniture(entry: FurnitureCatalogEntry): boolean {
   );
 }
 
-function isPreferredRestSeatFurniture(entry: FurnitureCatalogEntry): boolean {
-  const text = `${entry.type} ${entry.label}`;
-  return isRestSeatFurniture(entry) && (entry.footprintW >= 2 || /sofa|couch/i.test(text));
-}
-
 function ensureProjectSuiteFurniture(
   layout: OfficeLayout,
   template: RoomTemplateAssets,
@@ -2180,14 +2175,12 @@ function ensureProjectSuiteFurniture(
     );
     const missingRest = !seats.some((seat) => seat.seatKind === 'rest');
 
-    let nextFurniture = [...furniture];
+    const nextFurniture = [...furniture];
     let roomAdded = 0;
-    const reflowResult = reflowGeneratedProjectRoomFurniture(layout, room, template, nextFurniture);
-    if (reflowResult.changedCount > 0) {
-      furniture = reflowResult.furniture;
-      addedCount += reflowResult.changedCount;
-      continue;
-    }
+    // Additive-only: auto-provision may ADD furniture a room is missing, but must never reposition
+    // or remove what is already there. Repositioning (the old reflow) and rest-seat "upgrades" could
+    // not tell a user's manual edit from stale generated furniture, so they clobbered hand edits —
+    // "a desk jumps, accessories vanish on exit". Existing furniture is now left untouched.
 
     if (missingWork) {
       const workCandidates = buildRoomFurnitureCandidates(room, template)
@@ -2207,23 +2200,10 @@ function ensureProjectSuiteFurniture(
         roomAdded += workCandidates.length;
       }
     }
-    const layoutWithWork = { ...layout, furniture: nextFurniture };
-    const needsRestUpgrade =
-      !missingRest &&
-      isPreferredRestSeatFurniture(template.restSeat) &&
-      !roomHasFurniture(layoutWithWork, room, isPreferredRestSeatFurniture);
-    if (missingRest || needsRestUpgrade) {
-      const generatedRestSeat = nextFurniture.find((item) => item.uid === `${room.id}-rest-seat`);
-      const generatedEntry = generatedRestSeat
-        ? getAllCatalogEntries().find((candidate) => candidate.type === generatedRestSeat.type)
-        : undefined;
-      const baseFurniture =
-        needsRestUpgrade && generatedEntry && !isPreferredRestSeatFurniture(generatedEntry)
-          ? nextFurniture.filter((item) => item.uid !== generatedRestSeat?.uid)
-          : nextFurniture;
-      const restSeat = findRestSeatPlacement(layout, room, template.restSeat, baseFurniture);
+    if (missingRest) {
+      const restSeat = findRestSeatPlacement(layout, room, template.restSeat, nextFurniture);
       if (restSeat) {
-        nextFurniture = [...baseFurniture, restSeat];
+        nextFurniture.push(restSeat);
         roomAdded++;
       }
     }
@@ -2248,34 +2228,6 @@ function ensureProjectSuiteFurniture(
     }
   }
   return addedCount > 0 ? { layout: { ...layout, furniture }, addedCount } : { layout, addedCount };
-}
-
-function reflowGeneratedProjectRoomFurniture(
-  layout: OfficeLayout,
-  room: ProjectRoom,
-  template: RoomTemplateAssets,
-  furniture: PlacedFurniture[],
-): { furniture: PlacedFurniture[]; changedCount: number } {
-  const generatedFurniture = furniture.filter((item) =>
-    isGeneratedProjectRoomFurniture(room, item),
-  );
-  if (generatedFurniture.length === 0) return { furniture, changedCount: 0 };
-
-  const baseFurniture = furniture.filter((item) => !isGeneratedProjectRoomFurniture(room, item));
-  const plannedFurniture = buildGeneratedProjectRoomFurniture(
-    layout,
-    room,
-    template,
-    baseFurniture,
-  );
-  if (plannedFurniture.length === 0 || sameFurnitureSet(generatedFurniture, plannedFurniture)) {
-    return { furniture, changedCount: 0 };
-  }
-
-  return {
-    furniture: [...baseFurniture, ...plannedFurniture],
-    changedCount: generatedFurniture.length + plannedFurniture.length,
-  };
 }
 
 function buildGeneratedProjectRoomFurniture(
@@ -2311,10 +2263,6 @@ function buildGeneratedProjectRoomFurniture(
   }
 
   return planned;
-}
-
-function isGeneratedProjectRoomFurniture(room: ProjectRoom, item: PlacedFurniture): boolean {
-  return item.uid.startsWith(`${room.id}-`);
 }
 
 /**
