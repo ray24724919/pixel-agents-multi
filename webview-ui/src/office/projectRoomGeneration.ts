@@ -226,6 +226,13 @@ export function ensureProjectRoomsForAgents(
     existingKeys.add(project.key);
   }
 
+  // Re-stamp any pre-existing project room that predates the template so the whole campus matches the
+  // user-designed room. One-time per room: once stamped (-tpl- uids) it is recognised and left alone,
+  // so later manual edits to a room survive.
+  const templateMigration = migrateExistingRoomsToTemplate(current);
+  current = templateMigration.layout;
+  suiteFurnitureAddedCount += templateMigration.changedCount;
+
   const suiteResult = ensureProjectSuiteFurniture(current, template);
   current = suiteResult.layout;
   suiteFurnitureAddedCount += suiteResult.addedCount;
@@ -2254,6 +2261,40 @@ function stampRoomTemplate(room: ProjectRoom): PlacedFurniture[] | null {
 /** A room has been stamped from the user template when it carries any `-tpl-` furniture. */
 function roomHasTemplateStamp(layout: OfficeLayout, room: ProjectRoom): boolean {
   return layout.furniture.some((item) => item.uid.startsWith(`${room.id}-tpl-`));
+}
+
+/**
+ * One-time migration: re-stamp every project room that predates the template (no `-tpl-` furniture)
+ * so the whole campus matches the user-designed room. Clears the room's interior — including its
+ * wall-decor row above — and lays down the template verbatim. Idempotent: once a room carries a
+ * `-tpl-` stamp it is skipped, so a later manual edit to that room is never clobbered. No-op when the
+ * template cannot be stamped (incomplete catalog), so minimal test catalogs are unaffected.
+ */
+function migrateExistingRoomsToTemplate(layout: OfficeLayout): {
+  layout: OfficeLayout;
+  changedCount: number;
+} {
+  let furniture = layout.furniture;
+  let changedCount = 0;
+  for (const room of normalizeProjectRooms(layout).filter(
+    (candidate) => candidate.kind === ProjectRoomKind.PROJECT,
+  )) {
+    if (roomHasTemplateStamp({ ...layout, furniture }, room)) continue;
+    const stamped = stampRoomTemplate(room);
+    if (!stamped) continue;
+    const b = room.bounds;
+    // Clear furniture whose origin sits in the room interior or its wall-decor row (2 rows above).
+    const inRoomRegion = (item: PlacedFurniture) =>
+      item.col >= b.col &&
+      item.col < b.col + b.width &&
+      item.row >= b.row - 2 &&
+      item.row < b.row + b.height;
+    furniture = [...furniture.filter((item) => !inRoomRegion(item)), ...stamped];
+    changedCount += stamped.length;
+  }
+  return changedCount > 0
+    ? { layout: { ...layout, furniture }, changedCount }
+    : { layout, changedCount };
 }
 
 function buildGeneratedProjectRoomFurniture(
