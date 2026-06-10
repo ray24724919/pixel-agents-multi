@@ -8,6 +8,7 @@ import {
   PROJECT_ROOM_GENERATED_FLOOR_COLOR,
   PROJECT_ROOM_GENERATED_FLOOR_TILE,
   PROJECT_ROOM_GENERATED_WALL_COLOR,
+  PROJECT_ROOM_TEMPLATE,
 } from '../src/constants.ts';
 import { buildDynamicCatalog, getCatalogEntry } from '../src/office/layout/furnitureCatalog.ts';
 import {
@@ -1188,8 +1189,8 @@ test('generated room prefers the collaborative four-computer work table when ava
   assertGeneratedFurnitureInsetFromRoomWalls(result.layout, room);
 });
 
-test('studio decor is retrofitted onto an existing room that predates it', () => {
-  // Full studio catalog including back-wall decor (canPlaceOnWalls) types.
+test('new project rooms are stamped verbatim from the user template', () => {
+  // Full catalog containing every PROJECT_ROOM_TEMPLATE type, so the generator stamps the template.
   const assets: TestCatalogAsset[] = [
     {
       id: 'DESK_FRONT',
@@ -1443,66 +1444,46 @@ test('studio decor is retrofitted onto an existing room that predates it', () =>
     sprites: Object.fromEntries(assets.map((asset) => [asset.id, sprite])),
   });
 
-  // A freshly generated room already carries the full studio interior.
+  // A new project room is a verbatim stamp of the user-authored template.
   const fresh = ensureProjectRoomsForAgents(makeLayout(), [
     { folderName: 'Alpha', isSubagent: false },
   ]);
-  const isWallDecor = (item: PlacedFurniture) =>
-    getCatalogEntry(item.type)?.canPlaceOnWalls === true;
-  assert.ok(fresh.layout.furniture.some(isWallDecor), 'fresh room should already have wall decor');
-
-  // Simulate an OLDER persisted room: strip the wall decor, focus desk set and desk plant
-  // (pieces that older code never produced), keeping everything else.
-  const strippedFurniture = fresh.layout.furniture.filter((item) => {
-    if (isWallDecor(item)) return false;
-    if (/-(focus-desk|focus-pc|focus-chair|desk-plant)$/.test(item.uid)) return false;
-    if (/-(decor-plant-nw|decor-pot-left)$/.test(item.uid)) return false;
-    return true;
-  });
-  const strippedLayout: OfficeLayout = { ...fresh.layout, furniture: strippedFurniture };
+  const room = fresh.createdRooms[0]!;
+  const stamped = fresh.layout.furniture.filter((item) => item.uid.startsWith(`${room.id}-tpl-`));
   assert.equal(
-    strippedLayout.furniture.some(isWallDecor),
-    false,
-    'sanity: stripped room has no wall decor',
+    stamped.length,
+    PROJECT_ROOM_TEMPLATE.furniture.length,
+    'every template piece is stamped',
+  );
+  for (const item of PROJECT_ROOM_TEMPLATE.furniture) {
+    const present = stamped.some(
+      (f) =>
+        f.type === item.type &&
+        f.col === room.bounds.col + item.colOffset &&
+        f.row === room.bounds.row + item.rowOffset,
+    );
+    assert.ok(present, `template ${item.type} at ${item.colOffset},${item.rowOffset} is stamped`);
+  }
+
+  // The stamp IS the complete interior — no heuristic accents or wall decor are added alongside it.
+  const nonTemplateRoomFurniture = fresh.layout.furniture.filter(
+    (f) => f.uid.startsWith(`${room.id}-`) && !f.uid.startsWith(`${room.id}-tpl-`),
+  );
+  assert.equal(
+    nonTemplateRoomFurniture.length,
+    0,
+    'a stamped room gets no heuristic furniture added on top',
   );
 
-  // Re-provisioning the same project must retrofit the missing studio interior in place.
-  const retrofit = ensureProjectRoomsForAgents(strippedLayout, [
+  // Re-provisioning the same project is idempotent — no new room, no duplicate furniture.
+  const again = ensureProjectRoomsForAgents(fresh.layout, [
     { folderName: 'Alpha', isSubagent: false },
   ]);
-  assert.equal(retrofit.createdRooms.length, 0, 'no new room is created for the existing project');
-  assert.ok(
-    retrofit.suiteFurnitureAddedCount > 0,
-    'retrofit reports furniture additions so it persists',
-  );
-
-  const byUid = new Map(retrofit.layout.furniture.map((item) => [item.uid, item.type]));
-  const isDecor = (item: PlacedFurniture) => getCatalogEntry(item.type)?.category === 'decor';
-  // The stripped room must converge back to the fresh room's interior — same wall decor and
-  // desk-plant/decor counts — and the focus desk set (the user's bottom-right workstation) restored.
-  assert.equal(
-    retrofit.layout.furniture.filter(isWallDecor).length,
-    fresh.layout.furniture.filter(isWallDecor).length,
-    'all back-wall decor restored to fresh parity',
-  );
-  assert.equal(
-    retrofit.layout.furniture.filter(isDecor).length,
-    fresh.layout.furniture.filter(isDecor).length,
-    'desk plants/decor restored to fresh parity',
-  );
-  assert.equal(byUid.get('project-alpha-focus-desk'), 'DESK_FRONT', 'focus desk restored');
-  assert.equal(byUid.get('project-alpha-focus-pc'), 'PC_FRONT_OFF', 'focus pc restored');
-  assert.equal(byUid.get('project-alpha-focus-chair'), 'CUSHIONED_BENCH', 'focus chair restored');
-
-  // Idempotent: a second pass adds nothing (no churn / no duplicates).
-  const again = ensureProjectRoomsForAgents(retrofit.layout, [
-    { folderName: 'Alpha', isSubagent: false },
-  ]);
-  assert.equal(again.suiteFurnitureAddedCount, 0, 'retrofit is idempotent');
+  assert.equal(again.createdRooms.length, 0, 'no new room for the existing project');
   assert.equal(
     again.layout.furniture.length,
-    retrofit.layout.furniture.length,
-    'no duplicate furniture',
+    fresh.layout.furniture.length,
+    'no duplicate furniture on re-provision',
   );
 });
 

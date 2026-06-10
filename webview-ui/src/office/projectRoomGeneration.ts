@@ -45,6 +45,7 @@ import {
   PROJECT_ROOM_STANDARD_WORK_CHAIR_OFFSET_ROW,
   PROJECT_ROOM_STUDIO_TEMPLATE_ACCENTS,
   PROJECT_ROOM_STUDIO_WALL_DECOR,
+  PROJECT_ROOM_TEMPLATE,
   PROJECT_ROOM_WORK_CORRIDOR_HEIGHT,
   PROJECT_ROOM_WORK_CORRIDOR_LOUNGE_LEFT_TABLE_COL_OFFSET,
   PROJECT_ROOM_WORK_CORRIDOR_LOUNGE_RIGHT_TABLE_MARGIN,
@@ -2169,6 +2170,8 @@ function ensureProjectSuiteFurniture(
   for (const room of normalizeProjectRooms(layout).filter(
     (candidate) => candidate.kind === ProjectRoomKind.PROJECT,
   )) {
+    // A template-stamped room is already the complete designed interior — leave it untouched.
+    if (roomHasTemplateStamp({ ...layout, furniture }, room)) continue;
     const seats = roomSeats({ ...layout, furniture }, room);
     const missingWork = !seats.some(
       (seat) => seat.seatKind === 'work' && seat.zoneSource === 'workstation',
@@ -2230,12 +2233,39 @@ function ensureProjectSuiteFurniture(
   return addedCount > 0 ? { layout: { ...layout, furniture }, addedCount } : { layout, addedCount };
 }
 
+/**
+ * Stamp the user-authored room template (PROJECT_ROOM_TEMPLATE) verbatim for this room, offsetting
+ * each piece by the room's top-left bounds. Returns null when any template type is absent from the
+ * loaded catalog (e.g. minimal test catalogs) so the caller falls back to heuristic generation.
+ * Placed verbatim — the saved design is authoritative, including intentional surface overlaps.
+ */
+function stampRoomTemplate(room: ProjectRoom): PlacedFurniture[] | null {
+  const entries = getAllCatalogEntries();
+  const known = new Set(entries.map((entry) => entry.type));
+  if (!PROJECT_ROOM_TEMPLATE.furniture.every((item) => known.has(item.type))) return null;
+  return PROJECT_ROOM_TEMPLATE.furniture.map((item, index) => ({
+    uid: `${room.id}-tpl-${index}`,
+    type: item.type,
+    col: room.bounds.col + item.colOffset,
+    row: room.bounds.row + item.rowOffset,
+  }));
+}
+
+/** A room has been stamped from the user template when it carries any `-tpl-` furniture. */
+function roomHasTemplateStamp(layout: OfficeLayout, room: ProjectRoom): boolean {
+  return layout.furniture.some((item) => item.uid.startsWith(`${room.id}-tpl-`));
+}
+
 function buildGeneratedProjectRoomFurniture(
   layout: OfficeLayout,
   room: ProjectRoom,
   template: RoomTemplateAssets,
   baseFurniture: PlacedFurniture[],
 ): PlacedFurniture[] {
+  // Prefer the user-authored template: a new room becomes a verbatim copy of the designed room.
+  const stamped = stampRoomTemplate(room);
+  if (stamped) return stamped;
+
   const planned: PlacedFurniture[] = [];
   for (const candidate of buildRoomFurnitureCandidates(room, template).map((item) => item.item)) {
     if (!canPlaceSuiteFurniture(layout, room, candidate, [...baseFurniture, ...planned])) {
@@ -2285,6 +2315,8 @@ function ensureProjectRoomStudioDecor(layout: OfficeLayout): {
   for (const room of normalizeProjectRooms(layout).filter(
     (candidate) => candidate.kind === ProjectRoomKind.PROJECT,
   )) {
+    // Template-stamped rooms already carry the full designed decor — don't add the heuristic accents.
+    if (roomHasTemplateStamp({ ...layout, furniture }, room)) continue;
     const existingUids = new Set(furniture.map((item) => item.uid));
     const additions: PlacedFurniture[] = [];
 

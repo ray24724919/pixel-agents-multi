@@ -276,6 +276,58 @@ export const PROJECT_ROOM_STUDIO_WALL_DECOR = [
   { uidSuffix: 'wall-bookshelf-r', type: 'DOUBLE_BOOKSHELF', colOffset: 8 },
   { uidSuffix: 'wall-plant', type: 'HANGING_PLANT', colOffset: 10 },
 ] as const;
+// User-authored project-room template. Captured from ray's hand-designed pixel-agents-multi room
+// (extracted from the saved layout). When every type below exists in the loaded catalog, the
+// generator STAMPS this exact arrangement for each new project room instead of placing furniture
+// heuristically — so every generated room reproduces the designed room verbatim. Offsets are
+// relative to the room's top-left bounds; rowOffset -1 hangs wall decor on the top wall.
+// To re-tune: edit a project room in the layout editor, Save, and re-extract this list.
+export const PROJECT_ROOM_TEMPLATE = {
+  width: 12,
+  height: 10,
+  furniture: [
+    { type: 'DOUBLE_BOOKSHELF', colOffset: 1, rowOffset: -1 },
+    { type: 'SMALL_PAINTING', colOffset: 3, rowOffset: -1 },
+    { type: 'CLOCK', colOffset: 4, rowOffset: -1 },
+    { type: 'SMALL_PAINTING_2', colOffset: 7, rowOffset: -1 },
+    { type: 'DOUBLE_BOOKSHELF', colOffset: 8, rowOffset: -1 },
+    { type: 'HANGING_PLANT', colOffset: 10, rowOffset: -1 },
+    { type: 'SOFA_FRONT', colOffset: 2, rowOffset: 1 },
+    { type: 'BIN', colOffset: 5, rowOffset: 1 },
+    { type: 'WOODEN_CHAIR_SIDE', colOffset: 6, rowOffset: 1 },
+    { type: 'PC_SIDE', colOffset: 7, rowOffset: 1 },
+    { type: 'TABLE_FRONT', colOffset: 7, rowOffset: 1 },
+    { type: 'PC_SIDE:left', colOffset: 9, rowOffset: 1 },
+    { type: 'WOODEN_CHAIR_SIDE:left', colOffset: 10, rowOffset: 1 },
+    { type: 'SOFA_SIDE', colOffset: 1, rowOffset: 2 },
+    { type: 'COFFEE_TABLE', colOffset: 2, rowOffset: 2 },
+    { type: 'SOFA_SIDE:left', colOffset: 4, rowOffset: 2 },
+    { type: 'COFFEE', colOffset: 8, rowOffset: 2 },
+    { type: 'COFFEE', colOffset: 2, rowOffset: 3 },
+    { type: 'WOODEN_CHAIR_SIDE', colOffset: 6, rowOffset: 3 },
+    { type: 'PC_SIDE', colOffset: 7, rowOffset: 3 },
+    { type: 'PC_SIDE:left', colOffset: 9, rowOffset: 3 },
+    { type: 'WOODEN_CHAIR_SIDE:left', colOffset: 10, rowOffset: 3 },
+    { type: 'POT', colOffset: 1, rowOffset: 4 },
+    { type: 'SOFA_SIDE', colOffset: 1, rowOffset: 5 },
+    { type: 'COFFEE_TABLE', colOffset: 2, rowOffset: 5 },
+    { type: 'SOFA_SIDE:left', colOffset: 4, rowOffset: 5 },
+    { type: 'DESK_FRONT', colOffset: 7, rowOffset: 5 },
+    { type: 'PC_FRONT_OFF', colOffset: 8, rowOffset: 5 },
+    { type: 'PC_FRONT_OFF', colOffset: 5, rowOffset: 6 },
+    { type: 'SOFA_SIDE', colOffset: 1, rowOffset: 7 },
+    { type: 'COFFEE_TABLE', colOffset: 2, rowOffset: 7 },
+    { type: 'SOFA_SIDE:left', colOffset: 4, rowOffset: 7 },
+    { type: 'DESK_FRONT', colOffset: 7, rowOffset: 7 },
+    { type: 'CUSHIONED_BENCH', colOffset: 8, rowOffset: 7 },
+    { type: 'PC_FRONT_OFF', colOffset: 8, rowOffset: 7 },
+    { type: 'PLANT_2', colOffset: 0, rowOffset: 8 },
+    { type: 'COFFEE', colOffset: 2, rowOffset: 8 },
+    { type: 'CUSHIONED_BENCH', colOffset: 5, rowOffset: 8 },
+    { type: 'PLANT_2', colOffset: 11, rowOffset: 8 },
+    { type: 'CUSHIONED_BENCH', colOffset: 8, rowOffset: 9 },
+  ],
+} as const;
 export const PROJECT_ROOM_PROJECT_COLOR = 'rgba(109, 111, 255, 0.16)';
 export const PROJECT_ROOM_PROJECT_BORDER = 'rgba(183, 184, 255, 0.78)';
 export const PROJECT_ROOM_PUBLIC_COLOR = 'rgba(107, 214, 173, 0.12)';
