@@ -730,6 +730,27 @@ test('sofa and coffee table seats remain rest even in the default work split', (
   assert.deepEqual(new Set([...seats.values()].map((seat) => seat.seatKind)), new Set(['rest']));
 });
 
+test('forced relocation nudges a character to the nearest walkable tile, not across the office', () => {
+  // A lone chair tile is blocked; everything else is floor. A character forced
+  // off the blocked tile must step onto an adjacent floor tile — never flash
+  // across the office to a random global tile (the sofa→lobby teleport bug).
+  const state = new OfficeState(
+    makeLayout([{ uid: 'corner-chair', type: 'CHAIR_UP', col: 1, row: 1 }], 14, 10),
+  );
+  addAgent(state, 1, false);
+  const ch = state.characters.get(1)!;
+  ch.seatId = null;
+  ch.tileCol = 1;
+  ch.tileRow = 1;
+
+  (
+    state as unknown as { relocateCharacterToWalkable(c: Character): void }
+  ).relocateCharacterToWalkable(ch);
+
+  const distance = Math.abs(ch.tileCol - 1) + Math.abs(ch.tileRow - 1);
+  assert.equal(distance, 1, 'relocation must land on a tile adjacent to the origin');
+});
+
 test('sub-agent behavior remains near parent and is not forced into a work seat', () => {
   const state = new OfficeState(makeLayout(workstationFurniture()));
   addAgent(state, 1, true);
