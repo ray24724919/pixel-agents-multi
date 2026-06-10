@@ -29,7 +29,13 @@ import {
   formatProxyUsd,
   formatRelative,
   formatUsageOverviewMetricValue,
+  severityDot,
+  timelineSeverityClass,
+  usageAccuracyClass,
+  usageAccuracyShort,
   usageBarPercent,
+  usageInsightClass,
+  usageInsightDotClass,
 } from './agentCenter/formatters.js';
 import type {
   AgentStateCounts,
@@ -5649,46 +5655,6 @@ function StatusBadge({ status }: { status: string }) {
       <span className="truncate">{status}</span>
     </span>
   );
-}
-
-function severityDot(severity?: 'info' | 'success' | 'warning' | 'error'): string {
-  if (severity === 'error') return 'bg-status-error';
-  if (severity === 'warning') return 'bg-status-permission';
-  if (severity === 'success') return 'bg-status-success';
-  return 'bg-status-active';
-}
-
-function timelineSeverityClass(severity: TimelineSeverity): string {
-  if (severity === 'error') return 'border-status-error bg-bg text-status-error';
-  if (severity === 'warning') return 'border-status-permission bg-bg text-status-permission';
-  if (severity === 'success') return 'border-status-success bg-bg text-status-success';
-  return 'border-status-active bg-bg text-status-active';
-}
-
-function usageInsightClass(severity: UsageInsight['severity']): string {
-  if (severity === 'error') return 'bg-bg border-l-4 border-l-status-error';
-  if (severity === 'warning') return 'bg-bg border-l-4 border-l-status-permission';
-  return 'bg-bg';
-}
-
-function usageInsightDotClass(severity: UsageInsight['severity']): string {
-  if (severity === 'error') return 'bg-status-error';
-  if (severity === 'warning') return 'bg-status-permission';
-  return 'bg-status-active';
-}
-
-function usageAccuracyShort(accuracy: UsageAccuracy): string {
-  if (accuracy === 'exact') return 'Exact';
-  if (accuracy === 'estimated') return 'Estimated';
-  if (accuracy === 'mixed') return 'Mixed';
-  return 'None';
-}
-
-function usageAccuracyClass(accuracy: UsageAccuracy): string {
-  if (accuracy === 'exact') return 'border-status-success bg-btn-bg text-text';
-  if (accuracy === 'estimated') return 'border-status-permission bg-btn-bg text-text';
-  if (accuracy === 'mixed') return 'border-status-active bg-btn-bg text-text';
-  return 'border-border bg-btn-bg text-text-muted';
 }
 
 function formatRateLimit(limit: TokenRateLimitSnapshot): string {
