@@ -320,7 +320,11 @@ function App() {
       data-visible-agent-names={visibleAgentNames}
       data-visible-agent-providers={visibleAgentProviders}
     >
-      <AgentCenterNavigation activePage={activePage} onPageChange={setActivePage} />
+      {/* The page nav sits top-center with z-30 — the same spot as the edit Save bar (z-10). Hide it
+          while editing the layout so the Undo/Redo/Save/Reset bar is visible and clickable. */}
+      {!editor.isEditMode && (
+        <AgentCenterNavigation activePage={activePage} onPageChange={setActivePage} />
+      )}
 
       {isOfficePage && (
         <>
