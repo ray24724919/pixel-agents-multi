@@ -233,6 +233,12 @@ export function ensureProjectRoomsForAgents(
   current = loungeResult.layout;
   loungeFurnitureAddedCount = loungeResult.addedCount;
 
+  // Retrofit the studio interior (back-wall decor, focus desk set, desk plants) onto every project
+  // room, including pre-existing rooms persisted by older code that never received these pieces.
+  const decorResult = ensureProjectRoomStudioDecor(current);
+  current = decorResult.layout;
+  suiteFurnitureAddedCount += decorResult.addedCount;
+
   // Retrofit any pre-existing rooms that still have a front (south) wall so the whole campus
   // follows the open-front rule, not just freshly created rooms.
   const frontResult = openProjectRoomFronts(current);
@@ -2279,6 +2285,55 @@ function buildGeneratedProjectRoomFurniture(
 
 function isGeneratedProjectRoomFurniture(room: ProjectRoom, item: PlacedFurniture): boolean {
   return item.uid.startsWith(`${room.id}-`);
+}
+
+/**
+ * Idempotently retrofit the signature studio interior (wall decor, focus desk set, desk plants and
+ * other accents) onto EVERY project room — not just freshly created ones. Older rooms persisted to
+ * layout.json predate these pieces, and the all-or-nothing reflow path silently bails whenever a
+ * single candidate cannot be placed, leaving existing rooms without back-wall decor or a focus desk.
+ *
+ * This pass is additive and per-item: each studio piece has a deterministic uid, so a piece already
+ * present is skipped, and a piece that does not fit (collision with the room's existing furniture) is
+ * skipped too. Re-running it never duplicates or churns furniture — it only fills in what is missing,
+ * converging existing rooms onto the same look as a brand-new room.
+ */
+function ensureProjectRoomStudioDecor(layout: OfficeLayout): {
+  layout: OfficeLayout;
+  addedCount: number;
+} {
+  let furniture = layout.furniture;
+  let addedCount = 0;
+  for (const room of normalizeProjectRooms(layout).filter(
+    (candidate) => candidate.kind === ProjectRoomKind.PROJECT,
+  )) {
+    const existingUids = new Set(furniture.map((item) => item.uid));
+    const additions: PlacedFurniture[] = [];
+
+    // Interior accents (focus desk set, desk plant, pots, bin, lounge seats) sit fully inside the
+    // room, so they use the standard suite placement check.
+    for (const accent of buildStudioAccentFurniture(room)) {
+      if (existingUids.has(accent.uid)) continue;
+      if (canPlaceSuiteFurniture(layout, room, accent, [...furniture, ...additions])) {
+        additions.push(accent);
+        existingUids.add(accent.uid);
+      }
+    }
+
+    // Back-wall decor hangs above the room interior; buildStudioWallDecor already returns only the
+    // pieces that fit on solid wall tiles without overlapping existing furniture.
+    for (const decor of buildStudioWallDecor(layout, room, [...furniture, ...additions])) {
+      if (existingUids.has(decor.uid)) continue;
+      additions.push(decor);
+      existingUids.add(decor.uid);
+    }
+
+    if (additions.length > 0) {
+      furniture = [...furniture, ...additions];
+      addedCount += additions.length;
+    }
+  }
+  return addedCount > 0 ? { layout: { ...layout, furniture }, addedCount } : { layout, addedCount };
 }
 
 function buildStudioAccentFurniture(room: ProjectRoom): PlacedFurniture[] {

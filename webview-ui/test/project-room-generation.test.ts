@@ -1186,6 +1186,324 @@ test('generated room prefers the collaborative four-computer work table when ava
   assertGeneratedFurnitureInsetFromRoomWalls(result.layout, room);
 });
 
+test('studio decor is retrofitted onto an existing room that predates it', () => {
+  // Full studio catalog including back-wall decor (canPlaceOnWalls) types.
+  const assets: TestCatalogAsset[] = [
+    {
+      id: 'DESK_FRONT',
+      label: 'Desk Front',
+      category: 'desks',
+      width: TILE_SIZE * 3,
+      height: TILE_SIZE * 2,
+      footprintW: 3,
+      footprintH: 2,
+      isDesk: true,
+      backgroundTiles: 1,
+      orientation: 'front',
+    },
+    {
+      id: 'TABLE_FRONT',
+      label: 'Table',
+      category: 'desks',
+      width: TILE_SIZE * 3,
+      height: TILE_SIZE * 4,
+      footprintW: 3,
+      footprintH: 4,
+      isDesk: true,
+      backgroundTiles: 1,
+    },
+    {
+      id: 'PC_FRONT_OFF',
+      label: 'PC Front Off',
+      category: 'electronics',
+      width: TILE_SIZE,
+      height: TILE_SIZE * 2,
+      footprintW: 1,
+      footprintH: 2,
+      isDesk: false,
+      canPlaceOnSurfaces: true,
+      orientation: 'front',
+    },
+    {
+      id: 'PC_SIDE',
+      label: 'PC Side',
+      category: 'electronics',
+      width: TILE_SIZE,
+      height: TILE_SIZE * 2,
+      footprintW: 1,
+      footprintH: 2,
+      isDesk: false,
+      canPlaceOnSurfaces: true,
+      orientation: 'side',
+    },
+    {
+      id: 'PC_SIDE:left',
+      label: 'PC Side Left',
+      category: 'electronics',
+      width: TILE_SIZE,
+      height: TILE_SIZE * 2,
+      footprintW: 1,
+      footprintH: 2,
+      isDesk: false,
+      canPlaceOnSurfaces: true,
+      orientation: 'left',
+    },
+    {
+      id: 'CHAIR_UP',
+      label: 'Chair Up',
+      category: 'chairs',
+      width: TILE_SIZE,
+      height: TILE_SIZE,
+      footprintW: 1,
+      footprintH: 1,
+      isDesk: false,
+      orientation: 'back',
+    },
+    {
+      id: 'WOODEN_CHAIR_SIDE',
+      label: 'Wooden Chair Side',
+      category: 'chairs',
+      width: TILE_SIZE,
+      height: TILE_SIZE * 2,
+      footprintW: 1,
+      footprintH: 2,
+      isDesk: false,
+      backgroundTiles: 1,
+      orientation: 'side',
+    },
+    {
+      id: 'WOODEN_CHAIR_SIDE:left',
+      label: 'Wooden Chair Side Left',
+      category: 'chairs',
+      width: TILE_SIZE,
+      height: TILE_SIZE * 2,
+      footprintW: 1,
+      footprintH: 2,
+      isDesk: false,
+      backgroundTiles: 1,
+      orientation: 'left',
+    },
+    {
+      id: 'CUSHIONED_BENCH',
+      label: 'Cushioned Bench',
+      category: 'chairs',
+      width: TILE_SIZE,
+      height: TILE_SIZE,
+      footprintW: 1,
+      footprintH: 1,
+      isDesk: false,
+    },
+    {
+      id: 'SOFA_FRONT',
+      label: 'Sofa Front',
+      category: 'chairs',
+      width: TILE_SIZE * 2,
+      height: TILE_SIZE,
+      footprintW: 2,
+      footprintH: 1,
+      isDesk: false,
+      orientation: 'front',
+    },
+    {
+      id: 'SOFA_SIDE',
+      label: 'Sofa Side',
+      category: 'chairs',
+      width: TILE_SIZE,
+      height: TILE_SIZE * 2,
+      footprintW: 1,
+      footprintH: 2,
+      isDesk: false,
+      orientation: 'side',
+    },
+    {
+      id: 'SOFA_SIDE:left',
+      label: 'Sofa Side Left',
+      category: 'chairs',
+      width: TILE_SIZE,
+      height: TILE_SIZE * 2,
+      footprintW: 1,
+      footprintH: 2,
+      isDesk: false,
+      orientation: 'left',
+    },
+    {
+      id: 'COFFEE_TABLE',
+      label: 'Coffee Table',
+      category: 'desks',
+      width: TILE_SIZE * 2,
+      height: TILE_SIZE * 2,
+      footprintW: 2,
+      footprintH: 2,
+      isDesk: false,
+    },
+    {
+      id: 'PLANT_2',
+      label: 'Plant 2',
+      category: 'decor',
+      width: TILE_SIZE,
+      height: TILE_SIZE * 2,
+      footprintW: 1,
+      footprintH: 2,
+      isDesk: false,
+      backgroundTiles: 1,
+    },
+    {
+      id: 'BIN',
+      label: 'Bin',
+      category: 'misc',
+      width: TILE_SIZE,
+      height: TILE_SIZE,
+      footprintW: 1,
+      footprintH: 1,
+      isDesk: false,
+    },
+    {
+      id: 'COFFEE',
+      label: 'Coffee',
+      category: 'misc',
+      width: TILE_SIZE,
+      height: TILE_SIZE,
+      footprintW: 1,
+      footprintH: 1,
+      isDesk: false,
+      canPlaceOnSurfaces: true,
+    },
+    {
+      id: 'POT',
+      label: 'Pot',
+      category: 'decor',
+      width: TILE_SIZE,
+      height: TILE_SIZE,
+      footprintW: 1,
+      footprintH: 1,
+      isDesk: false,
+    },
+    // Back-wall decor.
+    {
+      id: 'DOUBLE_BOOKSHELF',
+      label: 'Bookshelf',
+      category: 'wall',
+      width: TILE_SIZE * 2,
+      height: TILE_SIZE * 2,
+      footprintW: 2,
+      footprintH: 2,
+      isDesk: false,
+      canPlaceOnWalls: true,
+    },
+    {
+      id: 'SMALL_PAINTING',
+      label: 'Painting',
+      category: 'wall',
+      width: TILE_SIZE,
+      height: TILE_SIZE * 2,
+      footprintW: 1,
+      footprintH: 2,
+      isDesk: false,
+      canPlaceOnWalls: true,
+    },
+    {
+      id: 'SMALL_PAINTING_2',
+      label: 'Painting 2',
+      category: 'wall',
+      width: TILE_SIZE,
+      height: TILE_SIZE * 2,
+      footprintW: 1,
+      footprintH: 2,
+      isDesk: false,
+      canPlaceOnWalls: true,
+    },
+    {
+      id: 'CLOCK',
+      label: 'Clock',
+      category: 'wall',
+      width: TILE_SIZE,
+      height: TILE_SIZE * 2,
+      footprintW: 1,
+      footprintH: 2,
+      isDesk: false,
+      canPlaceOnWalls: true,
+    },
+    {
+      id: 'HANGING_PLANT',
+      label: 'Hanging Plant',
+      category: 'wall',
+      width: TILE_SIZE,
+      height: TILE_SIZE * 2,
+      footprintW: 1,
+      footprintH: 2,
+      isDesk: false,
+      canPlaceOnWalls: true,
+      canPlaceOnSurfaces: true,
+    },
+  ];
+  buildDynamicCatalog({
+    catalog: assets,
+    sprites: Object.fromEntries(assets.map((asset) => [asset.id, sprite])),
+  });
+
+  // A freshly generated room already carries the full studio interior.
+  const fresh = ensureProjectRoomsForAgents(makeLayout(), [
+    { folderName: 'Alpha', isSubagent: false },
+  ]);
+  const isWallDecor = (item: PlacedFurniture) =>
+    getCatalogEntry(item.type)?.canPlaceOnWalls === true;
+  assert.ok(fresh.layout.furniture.some(isWallDecor), 'fresh room should already have wall decor');
+
+  // Simulate an OLDER persisted room: strip the wall decor, focus desk set and desk plant
+  // (pieces that older code never produced), keeping everything else.
+  const strippedFurniture = fresh.layout.furniture.filter((item) => {
+    if (isWallDecor(item)) return false;
+    if (/-(focus-desk|focus-pc|focus-chair|desk-plant)$/.test(item.uid)) return false;
+    if (/-(decor-plant-nw|decor-pot-left)$/.test(item.uid)) return false;
+    return true;
+  });
+  const strippedLayout: OfficeLayout = { ...fresh.layout, furniture: strippedFurniture };
+  assert.equal(
+    strippedLayout.furniture.some(isWallDecor),
+    false,
+    'sanity: stripped room has no wall decor',
+  );
+
+  // Re-provisioning the same project must retrofit the missing studio interior in place.
+  const retrofit = ensureProjectRoomsForAgents(strippedLayout, [
+    { folderName: 'Alpha', isSubagent: false },
+  ]);
+  assert.equal(retrofit.createdRooms.length, 0, 'no new room is created for the existing project');
+  assert.ok(
+    retrofit.suiteFurnitureAddedCount > 0,
+    'retrofit reports furniture additions so it persists',
+  );
+
+  const byUid = new Map(retrofit.layout.furniture.map((item) => [item.uid, item.type]));
+  const isDecor = (item: PlacedFurniture) => getCatalogEntry(item.type)?.category === 'decor';
+  // The stripped room must converge back to the fresh room's interior — same wall decor and
+  // desk-plant/decor counts — and the focus desk set (the user's bottom-right workstation) restored.
+  assert.equal(
+    retrofit.layout.furniture.filter(isWallDecor).length,
+    fresh.layout.furniture.filter(isWallDecor).length,
+    'all back-wall decor restored to fresh parity',
+  );
+  assert.equal(
+    retrofit.layout.furniture.filter(isDecor).length,
+    fresh.layout.furniture.filter(isDecor).length,
+    'desk plants/decor restored to fresh parity',
+  );
+  assert.equal(byUid.get('project-alpha-focus-desk'), 'DESK_FRONT', 'focus desk restored');
+  assert.equal(byUid.get('project-alpha-focus-pc'), 'PC_FRONT_OFF', 'focus pc restored');
+  assert.equal(byUid.get('project-alpha-focus-chair'), 'CUSHIONED_BENCH', 'focus chair restored');
+
+  // Idempotent: a second pass adds nothing (no churn / no duplicates).
+  const again = ensureProjectRoomsForAgents(retrofit.layout, [
+    { folderName: 'Alpha', isSubagent: false },
+  ]);
+  assert.equal(again.suiteFurnitureAddedCount, 0, 'retrofit is idempotent');
+  assert.equal(
+    again.layout.furniture.length,
+    retrofit.layout.furniture.length,
+    'no duplicate furniture',
+  );
+});
+
 test('repeated generation does not duplicate rooms and keeps stable ids', () => {
   const first = ensureProjectRoomsForAgents(makeLayout(), [
     { folderName: 'Alpha', isSubagent: false },
