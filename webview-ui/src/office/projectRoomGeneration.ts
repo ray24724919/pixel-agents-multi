@@ -2178,7 +2178,7 @@ function ensureProjectSuiteFurniture(
     (candidate) => candidate.kind === ProjectRoomKind.PROJECT,
   )) {
     // A template-stamped room is already the complete designed interior — leave it untouched.
-    if (roomHasTemplateStamp({ ...layout, furniture }, room)) continue;
+    if (roomHasCurrentTemplateStamp({ ...layout, furniture }, room)) continue;
     const seats = roomSeats({ ...layout, furniture }, room);
     const missingWork = !seats.some(
       (seat) => seat.seatKind === 'work' && seat.zoneSource === 'workstation',
@@ -2246,29 +2246,40 @@ function ensureProjectSuiteFurniture(
  * loaded catalog (e.g. minimal test catalogs) so the caller falls back to heuristic generation.
  * Placed verbatim — the saved design is authoritative, including intentional surface overlaps.
  */
+function templateStampPrefix(room: ProjectRoom): string {
+  return `${room.id}-tpl-r${PROJECT_ROOM_TEMPLATE.rev}-`;
+}
+
 function stampRoomTemplate(room: ProjectRoom): PlacedFurniture[] | null {
   const entries = getAllCatalogEntries();
   const known = new Set(entries.map((entry) => entry.type));
   if (!PROJECT_ROOM_TEMPLATE.furniture.every((item) => known.has(item.type))) return null;
+  const prefix = templateStampPrefix(room);
   return PROJECT_ROOM_TEMPLATE.furniture.map((item, index) => ({
-    uid: `${room.id}-tpl-${index}`,
+    uid: `${prefix}${index}`,
     type: item.type,
     col: room.bounds.col + item.colOffset,
     row: room.bounds.row + item.rowOffset,
   }));
 }
 
-/** A room has been stamped from the user template when it carries any `-tpl-` furniture. */
-function roomHasTemplateStamp(layout: OfficeLayout, room: ProjectRoom): boolean {
-  return layout.furniture.some((item) => item.uid.startsWith(`${room.id}-tpl-`));
+/**
+ * A room carries the CURRENT template stamp (matching `PROJECT_ROOM_TEMPLATE.rev`). Rooms stamped by
+ * an older template rev return false, so the migration re-stamps them — that is how template edits
+ * propagate to every room. Within the same rev a stamped room is left alone, so manual edits survive.
+ */
+function roomHasCurrentTemplateStamp(layout: OfficeLayout, room: ProjectRoom): boolean {
+  const prefix = templateStampPrefix(room);
+  return layout.furniture.some((item) => item.uid.startsWith(prefix));
 }
 
 /**
- * One-time migration: re-stamp every project room that predates the template (no `-tpl-` furniture)
- * so the whole campus matches the user-designed room. Clears the room's interior — including its
- * wall-decor row above — and lays down the template verbatim. Idempotent: once a room carries a
- * `-tpl-` stamp it is skipped, so a later manual edit to that room is never clobbered. No-op when the
- * template cannot be stamped (incomplete catalog), so minimal test catalogs are unaffected.
+ * Re-stamp every project room whose stamp is not the CURRENT template rev (older rev, or never
+ * stamped) so the whole campus matches the user-designed room and template edits propagate. Clears
+ * the room's interior — including its wall-decor row above and any stale older-rev stamp — and lays
+ * down the current template verbatim. Idempotent within a rev: a room already on the current rev is
+ * skipped, so manual edits made between template revisions survive. No-op when the template cannot be
+ * stamped (incomplete catalog), so minimal test catalogs are unaffected.
  */
 function migrateExistingRoomsToTemplate(layout: OfficeLayout): {
   layout: OfficeLayout;
@@ -2279,7 +2290,7 @@ function migrateExistingRoomsToTemplate(layout: OfficeLayout): {
   for (const room of normalizeProjectRooms(layout).filter(
     (candidate) => candidate.kind === ProjectRoomKind.PROJECT,
   )) {
-    if (roomHasTemplateStamp({ ...layout, furniture }, room)) continue;
+    if (roomHasCurrentTemplateStamp({ ...layout, furniture }, room)) continue;
     const stamped = stampRoomTemplate(room);
     if (!stamped) continue;
     const b = room.bounds;
@@ -2357,7 +2368,7 @@ function ensureProjectRoomStudioDecor(layout: OfficeLayout): {
     (candidate) => candidate.kind === ProjectRoomKind.PROJECT,
   )) {
     // Template-stamped rooms already carry the full designed decor — don't add the heuristic accents.
-    if (roomHasTemplateStamp({ ...layout, furniture }, room)) continue;
+    if (roomHasCurrentTemplateStamp({ ...layout, furniture }, room)) continue;
     const existingUids = new Set(furniture.map((item) => item.uid));
     const additions: PlacedFurniture[] = [];
 

@@ -283,6 +283,9 @@ export const PROJECT_ROOM_STUDIO_WALL_DECOR = [
 // relative to the room's top-left bounds; rowOffset -1 hangs wall decor on the top wall.
 // To re-tune: edit a project room in the layout editor, Save, and re-extract this list.
 export const PROJECT_ROOM_TEMPLATE = {
+  // Bump `rev` whenever the furniture list changes: every existing room whose stamp is an older rev
+  // is re-stamped to the current template on the next provision, so template edits propagate.
+  rev: 2,
   width: 12,
   height: 10,
   furniture: [
@@ -314,7 +317,6 @@ export const PROJECT_ROOM_TEMPLATE = {
     { type: 'SOFA_SIDE:left', colOffset: 4, rowOffset: 5 },
     { type: 'DESK_FRONT', colOffset: 7, rowOffset: 5 },
     { type: 'PC_FRONT_OFF', colOffset: 8, rowOffset: 5 },
-    { type: 'PC_FRONT_OFF', colOffset: 5, rowOffset: 6 },
     { type: 'SOFA_SIDE', colOffset: 1, rowOffset: 7 },
     { type: 'COFFEE_TABLE', colOffset: 2, rowOffset: 7 },
     { type: 'SOFA_SIDE:left', colOffset: 4, rowOffset: 7 },

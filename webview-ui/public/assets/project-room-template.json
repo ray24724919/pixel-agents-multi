@@ -144,11 +144,6 @@
       "rowOffset": 5
     },
     {
-      "type": "PC_FRONT_OFF",
-      "colOffset": 5,
-      "rowOffset": 6
-    },
-    {
       "type": "SOFA_SIDE",
       "colOffset": 1,
       "rowOffset": 7
@@ -203,5 +198,6 @@
       "colOffset": 8,
       "rowOffset": 9
     }
-  ]
+  ],
+  "rev": 2
 }
