@@ -114,11 +114,7 @@ function App() {
   const [pendingCloseAgentId, setPendingCloseAgentId] = useState<number | null>(null);
   const [pendingKillConfirm, setPendingKillConfirm] = useState(false);
   const [showHiddenAgents, setShowHiddenAgents] = useState(false);
-  const {
-    handleAutoProvisionProjectRooms,
-    isDirty: editorIsDirty,
-    isEditMode: editorIsEditMode,
-  } = editor;
+  const { handleAutoProvisionProjectRooms, isEditMode: editorIsEditMode } = editor;
   const activeAgentCenterPage: AgentCenterPage = isAgentCenterPage(activePage)
     ? activePage
     : 'agents';
@@ -229,7 +225,11 @@ function App() {
   useEffect(() => {
     if (!autoCreateProjectRooms) return;
     if (!layoutReady || !loadedAssets || agents.length === 0) return;
-    if (editorIsEditMode && editorIsDirty) return;
+    // Never auto-provision while the layout editor is open. Provisioning calls rebuildFromLayout and
+    // resets the dirty flag; if it fires before the first edit registers as dirty, the Save button
+    // (gated on isDirty) never appears and the edit is discarded. Pausing for the whole edit session
+    // lets the user arrange and Save in peace; provisioning resumes once they exit edit mode.
+    if (editorIsEditMode) return;
     const timer = window.setTimeout(() => {
       handleAutoProvisionProjectRooms({
         agentIds: agents,
@@ -243,7 +243,6 @@ function App() {
     agents,
     autoCreateProjectRooms,
     autoProvisionIdentityKey,
-    editorIsDirty,
     editorIsEditMode,
     handleAutoProvisionProjectRooms,
     hiddenAgents,
@@ -321,7 +320,11 @@ function App() {
       data-visible-agent-names={visibleAgentNames}
       data-visible-agent-providers={visibleAgentProviders}
     >
-      <AgentCenterNavigation activePage={activePage} onPageChange={setActivePage} />
+      {/* The page nav sits top-center with z-30 — the same spot as the edit Save bar (z-10). Hide it
+          while editing the layout so the Undo/Redo/Save/Reset bar is visible and clickable. */}
+      {!editor.isEditMode && (
+        <AgentCenterNavigation activePage={activePage} onPageChange={setActivePage} />
+      )}
 
       {isOfficePage && (
         <>

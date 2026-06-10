@@ -8,6 +8,7 @@ import {
   PROJECT_ROOM_GENERATED_FLOOR_COLOR,
   PROJECT_ROOM_GENERATED_FLOOR_TILE,
   PROJECT_ROOM_GENERATED_WALL_COLOR,
+  PROJECT_ROOM_TEMPLATE,
 } from '../src/constants.ts';
 import { buildDynamicCatalog, getCatalogEntry } from '../src/office/layout/furnitureCatalog.ts';
 import {
@@ -21,6 +22,7 @@ import { findPath } from '../src/office/layout/tileMap.ts';
 import {
   ensureProjectRoomsForAgents,
   openProjectRoomFronts,
+  roomDoorwayKeepClearTiles,
 } from '../src/office/projectRoomGeneration.ts';
 import type {
   FurnitureCatalogEntry,
@@ -365,25 +367,27 @@ test('existing public lobby is rebuilt as a horizontal work corridor lounge', ()
   layout.projectRooms[1]!.bounds = { col: 10, row: 0, width: 9, height: 7 };
   layout.cols = 19;
   layout.tiles = Array.from({ length: layout.cols * layout.rows }, () => TileType.FLOOR_1);
+  // Stale GENERATED lobby furniture (project-room-lobby-* uids) is what gets rebuilt away. Hand-placed
+  // furniture (f-* / arbitrary uids) is never destroyed — see the dedicated non-destructive test.
   layout.furniture = [
-    { uid: 'old-lobby-desk', type: 'DESK', col: 1, row: 1 },
-    { uid: 'old-lobby-pc', type: 'PC', col: 2, row: 1 },
-    { uid: 'old-lobby-chair', type: 'CHAIR_UP', col: 2, row: 3 },
-    { uid: 'old-lobby-sofa', type: 'SOFA', col: 6, row: 2 },
-    { uid: 'old-lobby-table', type: 'COFFEE_TABLE', col: 6, row: 3 },
-    { uid: 'old-lobby-plant', type: 'PLANT', col: 8, row: 5 },
+    { uid: 'project-room-lobby-stale-desk', type: 'DESK', col: 1, row: 1 },
+    { uid: 'project-room-lobby-stale-pc', type: 'PC', col: 2, row: 1 },
+    { uid: 'project-room-lobby-stale-chair', type: 'CHAIR_UP', col: 2, row: 3 },
+    { uid: 'project-room-lobby-stale-sofa', type: 'SOFA', col: 6, row: 2 },
+    { uid: 'project-room-lobby-stale-table', type: 'COFFEE_TABLE', col: 6, row: 3 },
+    { uid: 'project-room-lobby-stale-plant', type: 'PLANT', col: 8, row: 5 },
   ];
 
   const result = ensureProjectRoomsForAgents(layout, [{ folderName: 'Alpha', isSubagent: false }]);
   const furnitureByUid = new Map(result.layout.furniture.map((item) => [item.uid, item.type]));
 
   assert.ok(result.loungeFurnitureAddedCount >= 3);
-  assert.equal(furnitureByUid.has('old-lobby-desk'), false);
-  assert.equal(furnitureByUid.has('old-lobby-pc'), false);
-  assert.equal(furnitureByUid.has('old-lobby-chair'), false);
-  assert.equal(furnitureByUid.has('old-lobby-sofa'), false);
-  assert.equal(furnitureByUid.has('old-lobby-table'), false);
-  assert.equal(furnitureByUid.has('old-lobby-plant'), false);
+  assert.equal(furnitureByUid.has('project-room-lobby-stale-desk'), false);
+  assert.equal(furnitureByUid.has('project-room-lobby-stale-pc'), false);
+  assert.equal(furnitureByUid.has('project-room-lobby-stale-chair'), false);
+  assert.equal(furnitureByUid.has('project-room-lobby-stale-sofa'), false);
+  assert.equal(furnitureByUid.has('project-room-lobby-stale-table'), false);
+  assert.equal(furnitureByUid.has('project-room-lobby-stale-plant'), false);
   assert.deepEqual(publicRooms(result.layout)[0]?.bounds, {
     col: 0,
     row: 11,
@@ -707,6 +711,34 @@ test('generated room front (south) wall is always open, including bottom-row roo
   // A bottom-row room keeps its furniture fixed with the entrance on the (north) corridor side,
   // and its front (south) wall still open — the case the user called out.
   assert.ok(sawBottomRow, 'expected at least one bottom-row room');
+});
+
+test('roomDoorwayKeepClearTiles protects a north-wall doorway gap, not solid walls', () => {
+  const cols = 12;
+  const rows = 12;
+  const layout = makeLayout(cols, rows);
+  const room = projectRoom('proj-a', 'alpha', 1, 1); // 9x7 room at (1,1)
+  const { col, row, width, height } = room.bounds;
+  // Wall the north + east + west perimeter (south stays open), with a 1-tile north doorway gap.
+  for (let c = col; c < col + width; c++) layout.tiles[row * cols + c] = TileType.WALL;
+  for (let r = row + 1; r < row + height - 1; r++) {
+    layout.tiles[r * cols + col] = TileType.WALL;
+    layout.tiles[r * cols + (col + width - 1)] = TileType.WALL;
+  }
+  const gapCol = col + Math.floor(width / 2);
+  layout.tiles[row * cols + gapCol] = TileType.FLOOR_1;
+
+  const clear = roomDoorwayKeepClearTiles(layout, room);
+  assert.ok(clear.has(`${gapCol},${row}`), 'the doorway gap tile must be kept clear');
+  assert.ok(
+    clear.has(`${gapCol},${row + 1}`),
+    'the tile just inside the doorway must be kept clear',
+  );
+  assert.ok(!clear.has(`${col + 1},${row}`), 'solid wall tiles are not doorways');
+
+  // Sealing the gap leaves nothing to protect (e.g. a top-row room with a solid back wall).
+  layout.tiles[row * cols + gapCol] = TileType.WALL;
+  assert.equal(roomDoorwayKeepClearTiles(layout, room).size, 0);
 });
 
 test('openProjectRoomFronts retrofits an existing room south wall to open floor', () => {
@@ -1155,6 +1187,373 @@ test('generated room prefers the collaborative four-computer work table when ava
   assert.ok(roomSeats.some((seat) => seat.seatKind === 'rest'));
   assertFurnitureOnWalkableRoomTiles(result.layout, room);
   assertGeneratedFurnitureInsetFromRoomWalls(result.layout, room);
+});
+
+test('new project rooms are stamped verbatim from the user template', () => {
+  // Full catalog containing every PROJECT_ROOM_TEMPLATE type, so the generator stamps the template.
+  const assets: TestCatalogAsset[] = [
+    {
+      id: 'DESK_FRONT',
+      label: 'Desk Front',
+      category: 'desks',
+      width: TILE_SIZE * 3,
+      height: TILE_SIZE * 2,
+      footprintW: 3,
+      footprintH: 2,
+      isDesk: true,
+      backgroundTiles: 1,
+      orientation: 'front',
+    },
+    {
+      id: 'TABLE_FRONT',
+      label: 'Table',
+      category: 'desks',
+      width: TILE_SIZE * 3,
+      height: TILE_SIZE * 4,
+      footprintW: 3,
+      footprintH: 4,
+      isDesk: true,
+      backgroundTiles: 1,
+    },
+    {
+      id: 'PC_FRONT_OFF',
+      label: 'PC Front Off',
+      category: 'electronics',
+      width: TILE_SIZE,
+      height: TILE_SIZE * 2,
+      footprintW: 1,
+      footprintH: 2,
+      isDesk: false,
+      canPlaceOnSurfaces: true,
+      orientation: 'front',
+    },
+    {
+      id: 'PC_SIDE',
+      label: 'PC Side',
+      category: 'electronics',
+      width: TILE_SIZE,
+      height: TILE_SIZE * 2,
+      footprintW: 1,
+      footprintH: 2,
+      isDesk: false,
+      canPlaceOnSurfaces: true,
+      orientation: 'side',
+    },
+    {
+      id: 'PC_SIDE:left',
+      label: 'PC Side Left',
+      category: 'electronics',
+      width: TILE_SIZE,
+      height: TILE_SIZE * 2,
+      footprintW: 1,
+      footprintH: 2,
+      isDesk: false,
+      canPlaceOnSurfaces: true,
+      orientation: 'left',
+    },
+    {
+      id: 'CHAIR_UP',
+      label: 'Chair Up',
+      category: 'chairs',
+      width: TILE_SIZE,
+      height: TILE_SIZE,
+      footprintW: 1,
+      footprintH: 1,
+      isDesk: false,
+      orientation: 'back',
+    },
+    {
+      id: 'WOODEN_CHAIR_SIDE',
+      label: 'Wooden Chair Side',
+      category: 'chairs',
+      width: TILE_SIZE,
+      height: TILE_SIZE * 2,
+      footprintW: 1,
+      footprintH: 2,
+      isDesk: false,
+      backgroundTiles: 1,
+      orientation: 'side',
+    },
+    {
+      id: 'WOODEN_CHAIR_SIDE:left',
+      label: 'Wooden Chair Side Left',
+      category: 'chairs',
+      width: TILE_SIZE,
+      height: TILE_SIZE * 2,
+      footprintW: 1,
+      footprintH: 2,
+      isDesk: false,
+      backgroundTiles: 1,
+      orientation: 'left',
+    },
+    {
+      id: 'CUSHIONED_BENCH',
+      label: 'Cushioned Bench',
+      category: 'chairs',
+      width: TILE_SIZE,
+      height: TILE_SIZE,
+      footprintW: 1,
+      footprintH: 1,
+      isDesk: false,
+    },
+    {
+      id: 'SOFA_FRONT',
+      label: 'Sofa Front',
+      category: 'chairs',
+      width: TILE_SIZE * 2,
+      height: TILE_SIZE,
+      footprintW: 2,
+      footprintH: 1,
+      isDesk: false,
+      orientation: 'front',
+    },
+    {
+      id: 'SOFA_SIDE',
+      label: 'Sofa Side',
+      category: 'chairs',
+      width: TILE_SIZE,
+      height: TILE_SIZE * 2,
+      footprintW: 1,
+      footprintH: 2,
+      isDesk: false,
+      orientation: 'side',
+    },
+    {
+      id: 'SOFA_SIDE:left',
+      label: 'Sofa Side Left',
+      category: 'chairs',
+      width: TILE_SIZE,
+      height: TILE_SIZE * 2,
+      footprintW: 1,
+      footprintH: 2,
+      isDesk: false,
+      orientation: 'left',
+    },
+    {
+      id: 'COFFEE_TABLE',
+      label: 'Coffee Table',
+      category: 'desks',
+      width: TILE_SIZE * 2,
+      height: TILE_SIZE * 2,
+      footprintW: 2,
+      footprintH: 2,
+      isDesk: false,
+    },
+    {
+      id: 'PLANT_2',
+      label: 'Plant 2',
+      category: 'decor',
+      width: TILE_SIZE,
+      height: TILE_SIZE * 2,
+      footprintW: 1,
+      footprintH: 2,
+      isDesk: false,
+      backgroundTiles: 1,
+    },
+    {
+      id: 'BIN',
+      label: 'Bin',
+      category: 'misc',
+      width: TILE_SIZE,
+      height: TILE_SIZE,
+      footprintW: 1,
+      footprintH: 1,
+      isDesk: false,
+    },
+    {
+      id: 'COFFEE',
+      label: 'Coffee',
+      category: 'misc',
+      width: TILE_SIZE,
+      height: TILE_SIZE,
+      footprintW: 1,
+      footprintH: 1,
+      isDesk: false,
+      canPlaceOnSurfaces: true,
+    },
+    {
+      id: 'POT',
+      label: 'Pot',
+      category: 'decor',
+      width: TILE_SIZE,
+      height: TILE_SIZE,
+      footprintW: 1,
+      footprintH: 1,
+      isDesk: false,
+    },
+    // Back-wall decor.
+    {
+      id: 'DOUBLE_BOOKSHELF',
+      label: 'Bookshelf',
+      category: 'wall',
+      width: TILE_SIZE * 2,
+      height: TILE_SIZE * 2,
+      footprintW: 2,
+      footprintH: 2,
+      isDesk: false,
+      canPlaceOnWalls: true,
+    },
+    {
+      id: 'SMALL_PAINTING',
+      label: 'Painting',
+      category: 'wall',
+      width: TILE_SIZE,
+      height: TILE_SIZE * 2,
+      footprintW: 1,
+      footprintH: 2,
+      isDesk: false,
+      canPlaceOnWalls: true,
+    },
+    {
+      id: 'SMALL_PAINTING_2',
+      label: 'Painting 2',
+      category: 'wall',
+      width: TILE_SIZE,
+      height: TILE_SIZE * 2,
+      footprintW: 1,
+      footprintH: 2,
+      isDesk: false,
+      canPlaceOnWalls: true,
+    },
+    {
+      id: 'CLOCK',
+      label: 'Clock',
+      category: 'wall',
+      width: TILE_SIZE,
+      height: TILE_SIZE * 2,
+      footprintW: 1,
+      footprintH: 2,
+      isDesk: false,
+      canPlaceOnWalls: true,
+    },
+    {
+      id: 'HANGING_PLANT',
+      label: 'Hanging Plant',
+      category: 'wall',
+      width: TILE_SIZE,
+      height: TILE_SIZE * 2,
+      footprintW: 1,
+      footprintH: 2,
+      isDesk: false,
+      canPlaceOnWalls: true,
+      canPlaceOnSurfaces: true,
+    },
+  ];
+  buildDynamicCatalog({
+    catalog: assets,
+    sprites: Object.fromEntries(assets.map((asset) => [asset.id, sprite])),
+  });
+
+  // A new project room is a verbatim stamp of the user-authored template.
+  const fresh = ensureProjectRoomsForAgents(makeLayout(), [
+    { folderName: 'Alpha', isSubagent: false },
+  ]);
+  const room = fresh.createdRooms[0]!;
+  const stamped = fresh.layout.furniture.filter((item) => item.uid.startsWith(`${room.id}-tpl-`));
+  assert.equal(
+    stamped.length,
+    PROJECT_ROOM_TEMPLATE.furniture.length,
+    'every template piece is stamped',
+  );
+  for (const item of PROJECT_ROOM_TEMPLATE.furniture) {
+    const present = stamped.some(
+      (f) =>
+        f.type === item.type &&
+        f.col === room.bounds.col + item.colOffset &&
+        f.row === room.bounds.row + item.rowOffset,
+    );
+    assert.ok(present, `template ${item.type} at ${item.colOffset},${item.rowOffset} is stamped`);
+  }
+
+  // The stamp IS the complete interior — no heuristic accents or wall decor are added alongside it.
+  const nonTemplateRoomFurniture = fresh.layout.furniture.filter(
+    (f) => f.uid.startsWith(`${room.id}-`) && !f.uid.startsWith(`${room.id}-tpl-`),
+  );
+  assert.equal(
+    nonTemplateRoomFurniture.length,
+    0,
+    'a stamped room gets no heuristic furniture added on top',
+  );
+
+  // Re-provisioning the same project is idempotent — no new room, no duplicate furniture.
+  const again = ensureProjectRoomsForAgents(fresh.layout, [
+    { folderName: 'Alpha', isSubagent: false },
+  ]);
+  assert.equal(again.createdRooms.length, 0, 'no new room for the existing project');
+  assert.equal(
+    again.layout.furniture.length,
+    fresh.layout.furniture.length,
+    'no duplicate furniture on re-provision',
+  );
+});
+
+test('auto-generation never destroys the user hand-designed layout', () => {
+  // A hand-designed studio: editor furniture uses f-<timestamp> uids. The room generator must add
+  // project rooms WITHOUT deleting any hand-placed furniture, overlapping it, or voiding its floor.
+  const layout = makeLayout(14, 10);
+  layout.furniture = [
+    { uid: 'f-1000-a', type: 'DESK', col: 1, row: 1 },
+    { uid: 'f-1000-b', type: 'PC', col: 2, row: 1 },
+    { uid: 'f-1000-c', type: 'CHAIR_UP', col: 2, row: 3 },
+    { uid: 'f-1000-d', type: 'SOFA', col: 6, row: 2 },
+    { uid: 'f-1000-e', type: 'COFFEE_TABLE', col: 6, row: 4 },
+    { uid: 'f-1000-f', type: 'PLANT', col: 10, row: 6 },
+    { uid: 'f-1000-g', type: 'CUSHIONED_BENCH', col: 11, row: 7 },
+  ];
+  const before = new Map(layout.furniture.map((item) => [item.uid, { ...item }]));
+
+  const result = ensureProjectRoomsForAgents(layout, [
+    { folderName: 'Alpha', isSubagent: false },
+    { folderName: 'Beta', isSubagent: false },
+  ]);
+
+  const isHand = (uid: string) => uid.startsWith('f-');
+  const after = new Map(result.layout.furniture.map((item) => [item.uid, item]));
+
+  // 1. Every hand-placed item survives, unmoved.
+  assert.equal(result.createdRooms.length, 2, 'rooms were generated');
+  for (const [uid, original] of before) {
+    const survivor = after.get(uid);
+    assert.ok(survivor, `hand-placed ${uid} must survive generation`);
+    assert.equal(survivor.col, original.col, `${uid} must not move (col)`);
+    assert.equal(survivor.row, original.row, `${uid} must not move (row)`);
+  }
+
+  // 2. No generated room overlaps any hand-placed furniture footprint.
+  const fpBounds = (item: PlacedFurniture) => {
+    const entry = getCatalogEntry(item.type);
+    return {
+      col: item.col,
+      row: item.row,
+      width: entry?.footprintW ?? 1,
+      height: entry?.footprintH ?? 1,
+    };
+  };
+  for (const room of result.layout.projectRooms ?? []) {
+    for (const item of result.layout.furniture) {
+      if (!isHand(item.uid)) continue;
+      assert.equal(
+        rectsOverlap(room.bounds, fpBounds(item)),
+        false,
+        `room ${room.id} must not overlap hand-placed ${item.uid}`,
+      );
+    }
+  }
+
+  // 3. No hand-placed furniture tile is voided by generation.
+  for (const item of result.layout.furniture) {
+    if (!isHand(item.uid)) continue;
+    const b = fpBounds(item);
+    for (let row = b.row; row < b.row + b.height; row++) {
+      for (let col = b.col; col < b.col + b.width; col++) {
+        assert.notEqual(
+          tileAt(result.layout, col, row),
+          TileType.VOID,
+          `hand-placed ${item.uid} must not sit on a voided tile at ${col},${row}`,
+        );
+      }
+    }
+  }
 });
 
 test('repeated generation does not duplicate rooms and keeps stable ids', () => {

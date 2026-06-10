@@ -116,10 +116,23 @@ export class OfficeState {
     this.repairSeatingAssignments('layout');
   }
 
-  /** Move a character to a random walkable tile */
+  /**
+   * Move a character off an unwalkable tile to the NEAREST walkable tile.
+   * Relocating to the nearest tile (rather than a random global one) keeps a
+   * forced relocation a tiny local nudge — e.g. stepping off a sofa onto the
+   * adjacent floor — instead of flashing the character across the office to
+   * the lobby.
+   */
   private relocateCharacterToWalkable(ch: Character): void {
     if (this.walkableTiles.length === 0) return;
-    const spawn = this.walkableTiles[Math.floor(Math.random() * this.walkableTiles.length)];
+    let spawn = this.walkableTiles[0];
+    let bestDistance = Number.POSITIVE_INFINITY;
+    for (const tile of this.walkableTiles) {
+      const distance = Math.abs(tile.col - ch.tileCol) + Math.abs(tile.row - ch.tileRow);
+      if (distance >= bestDistance) continue;
+      spawn = tile;
+      bestDistance = distance;
+    }
     ch.tileCol = spawn.col;
     ch.tileRow = spawn.row;
     ch.x = spawn.col * TILE_SIZE + TILE_SIZE / 2;

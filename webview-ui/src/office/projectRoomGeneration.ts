@@ -44,6 +44,8 @@ import {
   PROJECT_ROOM_STANDARD_WORK_CHAIR_OFFSET_COL,
   PROJECT_ROOM_STANDARD_WORK_CHAIR_OFFSET_ROW,
   PROJECT_ROOM_STUDIO_TEMPLATE_ACCENTS,
+  PROJECT_ROOM_STUDIO_WALL_DECOR,
+  PROJECT_ROOM_TEMPLATE,
   PROJECT_ROOM_WORK_CORRIDOR_HEIGHT,
   PROJECT_ROOM_WORK_CORRIDOR_LOUNGE_LEFT_TABLE_COL_OFFSET,
   PROJECT_ROOM_WORK_CORRIDOR_LOUNGE_RIGHT_TABLE_MARGIN,
@@ -224,6 +226,13 @@ export function ensureProjectRoomsForAgents(
     existingKeys.add(project.key);
   }
 
+  // Re-stamp any pre-existing project room that predates the template so the whole campus matches the
+  // user-designed room. One-time per room: once stamped (-tpl- uids) it is recognised and left alone,
+  // so later manual edits to a room survive.
+  const templateMigration = migrateExistingRoomsToTemplate(current);
+  current = templateMigration.layout;
+  suiteFurnitureAddedCount += templateMigration.changedCount;
+
   const suiteResult = ensureProjectSuiteFurniture(current, template);
   current = suiteResult.layout;
   suiteFurnitureAddedCount += suiteResult.addedCount;
@@ -232,11 +241,22 @@ export function ensureProjectRoomsForAgents(
   current = loungeResult.layout;
   loungeFurnitureAddedCount = loungeResult.addedCount;
 
+  // Retrofit the studio interior (back-wall decor, focus desk set, desk plants) onto every project
+  // room, including pre-existing rooms persisted by older code that never received these pieces.
+  const decorResult = ensureProjectRoomStudioDecor(current);
+  current = decorResult.layout;
+  suiteFurnitureAddedCount += decorResult.addedCount;
+
   // Retrofit any pre-existing rooms that still have a front (south) wall so the whole campus
   // follows the open-front rule, not just freshly created rooms.
   const frontResult = openProjectRoomFronts(current);
   current = frontResult.layout;
   suiteFurnitureAddedCount += frontResult.changedCount;
+
+  // Widen any room whose corridor-facing doorway is narrower than the current width.
+  const doorwayResult = ensureRoomDoorwayWidth(current);
+  current = doorwayResult.layout;
+  suiteFurnitureAddedCount += doorwayResult.changedCount;
 
   return {
     layout: current,
@@ -766,11 +786,24 @@ function compareProjectRoomsForCampus(a: ProjectRoom, b: ProjectRoom): number {
   return aLabel.localeCompare(bLabel);
 }
 
+/**
+ * A furniture item is "generated" if the room generator created it — its uid is prefixed with a
+ * room id, and every generated room id starts with `project-` (lobby = `project-room-lobby`,
+ * projects = `project-<slug>`). Anything else is the user's own content (the editor places hand
+ * furniture with `f-<timestamp>` uids) and must never be deleted or overlapped by generation.
+ */
+function isGeneratedFurnitureUid(uid: string): boolean {
+  return uid.startsWith('project-');
+}
+
 function shouldRemoveGeneratedCampusFurniture(
   item: PlacedFurniture,
   oldCampusBounds: ProjectRoom['bounds'][],
   roomIds: Set<string>,
 ): boolean {
+  // Never remove the user's hand-placed furniture, even when it overlaps an old campus rectangle —
+  // the campus is anchored clear of the hand-design, and protected content is sacrosanct.
+  if (!isGeneratedFurnitureUid(item.uid)) return false;
   if ([...roomIds].some((roomId) => item.uid.startsWith(`${roomId}-`))) return true;
   const entry = getAllCatalogEntries().find((candidate) => candidate.type === item.type);
   if (!entry) return false;
@@ -779,6 +812,21 @@ function shouldRemoveGeneratedCampusFurniture(
 
 function clearCampusTiles(layout: OfficeLayout, boundsList: ProjectRoom['bounds'][]): OfficeLayout {
   if (boundsList.length === 0) return layout;
+  // Tiles occupied by the user's hand-placed furniture are protected: clearing the floor under them
+  // would strand the furniture on a non-walkable VOID tile. (The campus is anchored clear of the
+  // hand-design, so this only ever matters as a safety net.)
+  const protectedTiles = new Set<string>();
+  for (const item of layout.furniture) {
+    if (isGeneratedFurnitureUid(item.uid)) continue;
+    const entry = getAllCatalogEntries().find((candidate) => candidate.type === item.type);
+    const width = entry?.footprintW ?? 1;
+    const height = entry?.footprintH ?? 1;
+    for (let row = item.row; row < item.row + height; row++) {
+      for (let col = item.col; col < item.col + width; col++) {
+        protectedTiles.add(`${col},${row}`);
+      }
+    }
+  }
   const tiles = [...layout.tiles];
   const tileColors = [...(layout.tileColors ?? new Array(layout.tiles.length).fill(null))];
   const zones = [...(layout.zones ?? new Array(layout.tiles.length).fill(null))];
@@ -786,6 +834,7 @@ function clearCampusTiles(layout: OfficeLayout, boundsList: ProjectRoom['bounds'
     for (let row = bounds.row; row < bounds.row + bounds.height; row++) {
       for (let col = bounds.col; col < bounds.col + bounds.width; col++) {
         if (col < 0 || col >= layout.cols || row < 0 || row >= layout.rows) continue;
+        if (protectedTiles.has(`${col},${row}`)) continue;
         const idx = row * layout.cols + col;
         tiles[idx] = TileType.VOID;
         tileColors[idx] = null;
@@ -999,6 +1048,45 @@ function paintRoomFloor(
   return { ...layout, tiles, tileColors, zones };
 }
 
+/** True when every tile of the room's doorway opening is already walkable (current doorway width). */
+function roomDoorwayMatchesWidth(
+  layout: OfficeLayout,
+  room: ProjectRoom,
+  lobbyCore: ProjectRoom['bounds'],
+): boolean {
+  const doorway = deriveRoomDoorway(room.bounds, lobbyCore);
+  const horizontal = doorway.side === 'top' || doorway.side === 'bottom';
+  for (const d of doorwaySpanOffsets()) {
+    const c = horizontal ? doorway.col + d : doorway.col;
+    const r = horizontal ? doorway.row : doorway.row + d;
+    const tile = layout.tiles[r * layout.cols + c];
+    if (tile === TileType.WALL || tile === TileType.VOID || tile === undefined) return false;
+  }
+  return true;
+}
+
+/**
+ * Retrofit existing project rooms to the current doorway width: a room whose corridor-facing wall
+ * gap is narrower than PROJECT_ROOM_GENERATED_DOORWAY_WIDTH gets its shell + corridor repainted (the
+ * stamped furniture is untouched). Guarded so a room already at the right width is skipped — no churn.
+ */
+function ensureRoomDoorwayWidth(layout: OfficeLayout): {
+  layout: OfficeLayout;
+  changedCount: number;
+} {
+  const rooms = normalizeProjectRooms(layout);
+  const lobby = rooms.find((room) => room.kind === ProjectRoomKind.PUBLIC);
+  if (!lobby) return { layout, changedCount: 0 };
+  let current = layout;
+  let changedCount = 0;
+  for (const room of rooms.filter((room) => room.kind === ProjectRoomKind.PROJECT)) {
+    if (roomDoorwayMatchesWidth(current, room, lobby.bounds)) continue;
+    current = paintRoomFloor(current, room, lobby.bounds);
+    changedCount++;
+  }
+  return { layout: current, changedCount };
+}
+
 function paintLobbyVoidFloor(layout: OfficeLayout, room: ProjectRoom): OfficeLayout {
   const tiles = [...layout.tiles];
   const tileColors = [...(layout.tileColors ?? new Array(layout.tiles.length).fill(null))];
@@ -1098,15 +1186,45 @@ function paintRoomShell(
   }
 }
 
-function isDoorwayTile(col: number, row: number, doorway: RoomDoorway): boolean {
-  const halfWidth = Math.floor(PROJECT_ROOM_GENERATED_DOORWAY_WIDTH / 2);
-  if (doorway.side === 'top' || doorway.side === 'bottom') {
-    return row === doorway.row && Math.abs(col - doorway.col) <= halfWidth;
-  }
-  return col === doorway.col && Math.abs(row - doorway.row) <= halfWidth;
+/**
+ * Offsets that the doorway opening spans, biased center-left for even widths (e.g. width 2 → {-1, 0})
+ * so a 2-tile doorway lands on the room's center-left columns and clears the back-wall decor.
+ */
+function doorwaySpanOffsets(): number[] {
+  const width = Math.max(1, PROJECT_ROOM_GENERATED_DOORWAY_WIDTH);
+  const lo = Math.floor(width / 2);
+  const offsets: number[] = [];
+  for (let d = -lo; d <= width - 1 - lo; d++) offsets.push(d);
+  return offsets;
 }
 
+function isDoorwayTile(col: number, row: number, doorway: RoomDoorway): boolean {
+  const offsets = doorwaySpanOffsets();
+  if (doorway.side === 'top' || doorway.side === 'bottom') {
+    return row === doorway.row && offsets.includes(col - doorway.col);
+  }
+  return col === doorway.col && offsets.includes(row - doorway.row);
+}
+
+/** Paint the corridor as wide as the doorway by laying one segment per doorway-span offset. */
 function paintCorridorToLobby(
+  layout: OfficeLayout,
+  tiles: TileTypeVal[],
+  tileColors: Array<ColorValue | null>,
+  zones: Array<ZoneType | null>,
+  lobbyCore: ProjectRoom['bounds'],
+  doorway: RoomDoorway,
+): void {
+  const horizontalOpening = doorway.side === 'top' || doorway.side === 'bottom';
+  for (const d of doorwaySpanOffsets()) {
+    const shifted: RoomDoorway = horizontalOpening
+      ? { ...doorway, col: doorway.col + d, outsideCol: doorway.outsideCol + d }
+      : { ...doorway, row: doorway.row + d, outsideRow: doorway.outsideRow + d };
+    paintCorridorSegment(layout, tiles, tileColors, zones, lobbyCore, shifted);
+  }
+}
+
+function paintCorridorSegment(
   layout: OfficeLayout,
   tiles: TileTypeVal[],
   tileColors: Array<ColorValue | null>,
@@ -1445,6 +1563,7 @@ function ensureLobbyLoungeFurniture(
   )) {
     let roomAdded = 0;
     const cleanedFurniture = furniture.filter((item) => {
+      if (!isGeneratedFurnitureUid(item.uid)) return true; // never remove hand-placed furniture
       const entry = getAllCatalogEntries().find((candidate) => candidate.type === item.type);
       if (!entry || !rectsOverlap(room.bounds, placedFurnitureBounds(item, entry))) return true;
       if (!isLobbyWorkFurniture(entry)) return true;
@@ -2123,11 +2242,6 @@ function isRestSeatFurniture(entry: FurnitureCatalogEntry): boolean {
   );
 }
 
-function isPreferredRestSeatFurniture(entry: FurnitureCatalogEntry): boolean {
-  const text = `${entry.type} ${entry.label}`;
-  return isRestSeatFurniture(entry) && (entry.footprintW >= 2 || /sofa|couch/i.test(text));
-}
-
 function ensureProjectSuiteFurniture(
   layout: OfficeLayout,
   template: RoomTemplateAssets,
@@ -2137,20 +2251,20 @@ function ensureProjectSuiteFurniture(
   for (const room of normalizeProjectRooms(layout).filter(
     (candidate) => candidate.kind === ProjectRoomKind.PROJECT,
   )) {
+    // A template-stamped room is already the complete designed interior — leave it untouched.
+    if (roomHasCurrentTemplateStamp({ ...layout, furniture }, room)) continue;
     const seats = roomSeats({ ...layout, furniture }, room);
     const missingWork = !seats.some(
       (seat) => seat.seatKind === 'work' && seat.zoneSource === 'workstation',
     );
     const missingRest = !seats.some((seat) => seat.seatKind === 'rest');
 
-    let nextFurniture = [...furniture];
+    const nextFurniture = [...furniture];
     let roomAdded = 0;
-    const reflowResult = reflowGeneratedProjectRoomFurniture(layout, room, template, nextFurniture);
-    if (reflowResult.changedCount > 0) {
-      furniture = reflowResult.furniture;
-      addedCount += reflowResult.changedCount;
-      continue;
-    }
+    // Additive-only: auto-provision may ADD furniture a room is missing, but must never reposition
+    // or remove what is already there. Repositioning (the old reflow) and rest-seat "upgrades" could
+    // not tell a user's manual edit from stale generated furniture, so they clobbered hand edits —
+    // "a desk jumps, accessories vanish on exit". Existing furniture is now left untouched.
 
     if (missingWork) {
       const workCandidates = buildRoomFurnitureCandidates(room, template)
@@ -2170,23 +2284,10 @@ function ensureProjectSuiteFurniture(
         roomAdded += workCandidates.length;
       }
     }
-    const layoutWithWork = { ...layout, furniture: nextFurniture };
-    const needsRestUpgrade =
-      !missingRest &&
-      isPreferredRestSeatFurniture(template.restSeat) &&
-      !roomHasFurniture(layoutWithWork, room, isPreferredRestSeatFurniture);
-    if (missingRest || needsRestUpgrade) {
-      const generatedRestSeat = nextFurniture.find((item) => item.uid === `${room.id}-rest-seat`);
-      const generatedEntry = generatedRestSeat
-        ? getAllCatalogEntries().find((candidate) => candidate.type === generatedRestSeat.type)
-        : undefined;
-      const baseFurniture =
-        needsRestUpgrade && generatedEntry && !isPreferredRestSeatFurniture(generatedEntry)
-          ? nextFurniture.filter((item) => item.uid !== generatedRestSeat?.uid)
-          : nextFurniture;
-      const restSeat = findRestSeatPlacement(layout, room, template.restSeat, baseFurniture);
+    if (missingRest) {
+      const restSeat = findRestSeatPlacement(layout, room, template.restSeat, nextFurniture);
       if (restSeat) {
-        nextFurniture = [...baseFurniture, restSeat];
+        nextFurniture.push(restSeat);
         roomAdded++;
       }
     }
@@ -2213,32 +2314,72 @@ function ensureProjectSuiteFurniture(
   return addedCount > 0 ? { layout: { ...layout, furniture }, addedCount } : { layout, addedCount };
 }
 
-function reflowGeneratedProjectRoomFurniture(
-  layout: OfficeLayout,
-  room: ProjectRoom,
-  template: RoomTemplateAssets,
-  furniture: PlacedFurniture[],
-): { furniture: PlacedFurniture[]; changedCount: number } {
-  const generatedFurniture = furniture.filter((item) =>
-    isGeneratedProjectRoomFurniture(room, item),
-  );
-  if (generatedFurniture.length === 0) return { furniture, changedCount: 0 };
+/**
+ * Stamp the user-authored room template (PROJECT_ROOM_TEMPLATE) verbatim for this room, offsetting
+ * each piece by the room's top-left bounds. Returns null when any template type is absent from the
+ * loaded catalog (e.g. minimal test catalogs) so the caller falls back to heuristic generation.
+ * Placed verbatim — the saved design is authoritative, including intentional surface overlaps.
+ */
+function templateStampPrefix(room: ProjectRoom): string {
+  return `${room.id}-tpl-r${PROJECT_ROOM_TEMPLATE.rev}-`;
+}
 
-  const baseFurniture = furniture.filter((item) => !isGeneratedProjectRoomFurniture(room, item));
-  const plannedFurniture = buildGeneratedProjectRoomFurniture(
-    layout,
-    room,
-    template,
-    baseFurniture,
-  );
-  if (plannedFurniture.length === 0 || sameFurnitureSet(generatedFurniture, plannedFurniture)) {
-    return { furniture, changedCount: 0 };
+function stampRoomTemplate(room: ProjectRoom): PlacedFurniture[] | null {
+  const entries = getAllCatalogEntries();
+  const known = new Set(entries.map((entry) => entry.type));
+  if (!PROJECT_ROOM_TEMPLATE.furniture.every((item) => known.has(item.type))) return null;
+  const prefix = templateStampPrefix(room);
+  return PROJECT_ROOM_TEMPLATE.furniture.map((item, index) => ({
+    uid: `${prefix}${index}`,
+    type: item.type,
+    col: room.bounds.col + item.colOffset,
+    row: room.bounds.row + item.rowOffset,
+  }));
+}
+
+/**
+ * A room carries the CURRENT template stamp (matching `PROJECT_ROOM_TEMPLATE.rev`). Rooms stamped by
+ * an older template rev return false, so the migration re-stamps them — that is how template edits
+ * propagate to every room. Within the same rev a stamped room is left alone, so manual edits survive.
+ */
+function roomHasCurrentTemplateStamp(layout: OfficeLayout, room: ProjectRoom): boolean {
+  const prefix = templateStampPrefix(room);
+  return layout.furniture.some((item) => item.uid.startsWith(prefix));
+}
+
+/**
+ * Re-stamp every project room whose stamp is not the CURRENT template rev (older rev, or never
+ * stamped) so the whole campus matches the user-designed room and template edits propagate. Clears
+ * the room's interior — including its wall-decor row above and any stale older-rev stamp — and lays
+ * down the current template verbatim. Idempotent within a rev: a room already on the current rev is
+ * skipped, so manual edits made between template revisions survive. No-op when the template cannot be
+ * stamped (incomplete catalog), so minimal test catalogs are unaffected.
+ */
+function migrateExistingRoomsToTemplate(layout: OfficeLayout): {
+  layout: OfficeLayout;
+  changedCount: number;
+} {
+  let furniture = layout.furniture;
+  let changedCount = 0;
+  for (const room of normalizeProjectRooms(layout).filter(
+    (candidate) => candidate.kind === ProjectRoomKind.PROJECT,
+  )) {
+    if (roomHasCurrentTemplateStamp({ ...layout, furniture }, room)) continue;
+    const stamped = stampRoomTemplate(room);
+    if (!stamped) continue;
+    const b = room.bounds;
+    // Clear furniture whose origin sits in the room interior or its wall-decor row (2 rows above).
+    const inRoomRegion = (item: PlacedFurniture) =>
+      item.col >= b.col &&
+      item.col < b.col + b.width &&
+      item.row >= b.row - 2 &&
+      item.row < b.row + b.height;
+    furniture = [...furniture.filter((item) => !inRoomRegion(item)), ...stamped];
+    changedCount += stamped.length;
   }
-
-  return {
-    furniture: [...baseFurniture, ...plannedFurniture],
-    changedCount: generatedFurniture.length + plannedFurniture.length,
-  };
+  return changedCount > 0
+    ? { layout: { ...layout, furniture }, changedCount }
+    : { layout, changedCount };
 }
 
 function buildGeneratedProjectRoomFurniture(
@@ -2247,6 +2388,10 @@ function buildGeneratedProjectRoomFurniture(
   template: RoomTemplateAssets,
   baseFurniture: PlacedFurniture[],
 ): PlacedFurniture[] {
+  // Prefer the user-authored template: a new room becomes a verbatim copy of the designed room.
+  const stamped = stampRoomTemplate(room);
+  if (stamped) return stamped;
+
   const planned: PlacedFurniture[] = [];
   for (const candidate of buildRoomFurnitureCandidates(room, template).map((item) => item.item)) {
     if (!canPlaceSuiteFurniture(layout, room, candidate, [...baseFurniture, ...planned])) {
@@ -2269,11 +2414,62 @@ function buildGeneratedProjectRoomFurniture(
     }
   }
 
+  for (const decor of buildStudioWallDecor(layout, room, [...baseFurniture, ...planned])) {
+    planned.push(decor);
+  }
+
   return planned;
 }
 
-function isGeneratedProjectRoomFurniture(room: ProjectRoom, item: PlacedFurniture): boolean {
-  return item.uid.startsWith(`${room.id}-`);
+/**
+ * Idempotently retrofit the signature studio interior (wall decor, focus desk set, desk plants and
+ * other accents) onto EVERY project room — not just freshly created ones. Older rooms persisted to
+ * layout.json predate these pieces, and the all-or-nothing reflow path silently bails whenever a
+ * single candidate cannot be placed, leaving existing rooms without back-wall decor or a focus desk.
+ *
+ * This pass is additive and per-item: each studio piece has a deterministic uid, so a piece already
+ * present is skipped, and a piece that does not fit (collision with the room's existing furniture) is
+ * skipped too. Re-running it never duplicates or churns furniture — it only fills in what is missing,
+ * converging existing rooms onto the same look as a brand-new room.
+ */
+function ensureProjectRoomStudioDecor(layout: OfficeLayout): {
+  layout: OfficeLayout;
+  addedCount: number;
+} {
+  let furniture = layout.furniture;
+  let addedCount = 0;
+  for (const room of normalizeProjectRooms(layout).filter(
+    (candidate) => candidate.kind === ProjectRoomKind.PROJECT,
+  )) {
+    // Template-stamped rooms already carry the full designed decor — don't add the heuristic accents.
+    if (roomHasCurrentTemplateStamp({ ...layout, furniture }, room)) continue;
+    const existingUids = new Set(furniture.map((item) => item.uid));
+    const additions: PlacedFurniture[] = [];
+
+    // Interior accents (focus desk set, desk plant, pots, bin, lounge seats) sit fully inside the
+    // room, so they use the standard suite placement check.
+    for (const accent of buildStudioAccentFurniture(room)) {
+      if (existingUids.has(accent.uid)) continue;
+      if (canPlaceSuiteFurniture(layout, room, accent, [...furniture, ...additions])) {
+        additions.push(accent);
+        existingUids.add(accent.uid);
+      }
+    }
+
+    // Back-wall decor hangs above the room interior; buildStudioWallDecor already returns only the
+    // pieces that fit on solid wall tiles without overlapping existing furniture.
+    for (const decor of buildStudioWallDecor(layout, room, [...furniture, ...additions])) {
+      if (existingUids.has(decor.uid)) continue;
+      additions.push(decor);
+      existingUids.add(decor.uid);
+    }
+
+    if (additions.length > 0) {
+      furniture = [...furniture, ...additions];
+      addedCount += additions.length;
+    }
+  }
+  return addedCount > 0 ? { layout: { ...layout, furniture }, addedCount } : { layout, addedCount };
 }
 
 function buildStudioAccentFurniture(room: ProjectRoom): PlacedFurniture[] {
@@ -2289,6 +2485,66 @@ function buildStudioAccentFurniture(room: ProjectRoom): PlacedFurniture[] {
     col: room.bounds.col + placement.colOffset,
     row: room.bounds.row + placement.rowOffset,
   }));
+}
+
+/**
+ * Wall-mounted back-wall decor (bookshelves, paintings, clock) along the room's top wall, matching
+ * the hand-designed studio. Wall items hang on the wall: their bottom footprint row sits on the wall
+ * tile and upper rows extend above it. Any column that isn't a solid wall (e.g. the doorway gap of a
+ * bottom-row room) is skipped, so decor never blocks the entrance.
+ */
+function buildStudioWallDecor(
+  layout: OfficeLayout,
+  room: ProjectRoom,
+  furniture: PlacedFurniture[],
+): PlacedFurniture[] {
+  if (room.bounds.width < PROJECT_ROOM_COLLAB_TEMPLATE_MIN_WIDTH) return [];
+  const placed: PlacedFurniture[] = [];
+  for (const decor of PROJECT_ROOM_STUDIO_WALL_DECOR) {
+    const entry = getAllCatalogEntries().find((candidate) => candidate.type === decor.type);
+    if (!entry?.canPlaceOnWalls) continue;
+    const col = room.bounds.col + decor.colOffset;
+    const bottomRow = room.bounds.row; // the top (back) wall row
+    const item: PlacedFurniture = {
+      uid: `${room.id}-${decor.uidSuffix}`,
+      type: decor.type,
+      col,
+      row: bottomRow - (entry.footprintH - 1),
+    };
+    if (canPlaceWallDecor(layout, room, item, entry, [...furniture, ...placed])) {
+      placed.push(item);
+    }
+  }
+  return placed;
+}
+
+function canPlaceWallDecor(
+  layout: OfficeLayout,
+  room: ProjectRoom,
+  item: PlacedFurniture,
+  entry: FurnitureCatalogEntry,
+  furniture: PlacedFurniture[],
+): boolean {
+  const bottomRow = item.row + entry.footprintH - 1;
+  if (
+    item.col < room.bounds.col ||
+    item.col + entry.footprintW > room.bounds.col + room.bounds.width
+  )
+    return false;
+  if (bottomRow < 0 || bottomRow >= layout.rows) return false;
+  // The bottom row must sit on solid wall tiles (this skips the doorway gap automatically).
+  for (let dc = 0; dc < entry.footprintW; dc++) {
+    if (layout.tiles[bottomRow * layout.cols + (item.col + dc)] !== TileType.WALL) return false;
+  }
+  const bounds = placedFurnitureBounds(item, entry);
+  for (const existing of furniture) {
+    const existingEntry = getAllCatalogEntries().find(
+      (candidate) => candidate.type === existing.type,
+    );
+    if (!existingEntry) continue;
+    if (rectsOverlap(bounds, placedFurnitureBounds(existing, existingEntry))) return false;
+  }
+  return true;
 }
 
 function roomSeats(layout: OfficeLayout, room: ProjectRoom) {
@@ -2400,6 +2656,33 @@ function buildFallbackRestSeatCandidates(
   return candidates;
 }
 
+/**
+ * Tiles that must stay clear so the room's corridor-facing doorway is never blocked by furniture.
+ * The doorway is the floor gap in an otherwise-walled perimeter side: for a bottom-row room that's a
+ * gap in the top (north) wall; for a side room a gap in the east/west wall. The open south front is
+ * NOT treated as a doorway — it is the intentional camera-facing opening where lounge seating sits.
+ * Includes the gap tile and the tile one step inside it (the entry path).
+ */
+export function roomDoorwayKeepClearTiles(layout: OfficeLayout, room: ProjectRoom): Set<string> {
+  const clear = new Set<string>();
+  const { col, row, width, height } = room.bounds;
+  const within = (c: number, r: number): boolean =>
+    c >= col && c < col + width && r >= row && r < row + height;
+  const markGap = (c: number, r: number, insideC: number, insideR: number): void => {
+    if (c < 0 || c >= layout.cols || r < 0 || r >= layout.rows) return;
+    const tile = layout.tiles[r * layout.cols + c];
+    if (tile === TileType.WALL || tile === TileType.VOID || tile === undefined) return;
+    clear.add(`${c},${r}`);
+    if (within(insideC, insideR)) clear.add(`${insideC},${insideR}`);
+  };
+  for (let c = col; c < col + width; c++) markGap(c, row, c, row + 1);
+  for (let r = row + 1; r < row + height - 1; r++) {
+    markGap(col, r, col + 1, r);
+    markGap(col + width - 1, r, col + width - 2, r);
+  }
+  return clear;
+}
+
 function canPlaceSuiteFurniture(
   layout: OfficeLayout,
   room: ProjectRoom,
@@ -2415,6 +2698,14 @@ function canPlaceSuiteFurniture(
     for (let col = bounds.col; col < bounds.col + bounds.width; col++) {
       const tile = layout.tiles[row * layout.cols + col];
       if (tile === TileType.WALL || tile === TileType.VOID || tile === undefined) return false;
+    }
+  }
+  const keepClear = roomDoorwayKeepClearTiles(layout, room);
+  if (keepClear.size > 0) {
+    for (let row = bounds.row; row < bounds.row + bounds.height; row++) {
+      for (let col = bounds.col; col < bounds.col + bounds.width; col++) {
+        if (keepClear.has(`${col},${row}`)) return false;
+      }
     }
   }
   for (const existing of furniture) {
@@ -2475,6 +2766,32 @@ function stableUniqueRoomId(base: string, rooms: ProjectRoom[]): string {
   return `${base}-${rooms.length + 1}`;
 }
 
+/**
+ * The lowest grid row the user's hand-design occupies, or -1 when there is nothing to protect (a
+ * blank or fully generated layout). The design extent is the union of hand-placed furniture
+ * footprints and any user-painted (non-VOID) tile that is not already inside a generated room. The
+ * campus is anchored below this row so generation never lands on top of the hand-design.
+ */
+function protectedDesignMaxRow(layout: OfficeLayout): number {
+  const handFurniture = layout.furniture.filter((item) => !isGeneratedFurnitureUid(item.uid));
+  if (handFurniture.length === 0) return -1;
+  let maxRow = -1;
+  for (const item of handFurniture) {
+    const entry = getAllCatalogEntries().find((candidate) => candidate.type === item.type);
+    maxRow = Math.max(maxRow, item.row + (entry?.footprintH ?? 1) - 1);
+  }
+  const rooms = normalizeProjectRooms(layout);
+  for (let row = 0; row < layout.rows; row++) {
+    for (let col = 0; col < layout.cols; col++) {
+      const tile = layout.tiles[row * layout.cols + col];
+      if (tile === TileType.VOID) continue;
+      if (rooms.some((room) => pointInBounds(col, row, room.bounds))) continue;
+      maxRow = Math.max(maxRow, row);
+    }
+  }
+  return maxRow;
+}
+
 function deriveWorkCorridorBounds(
   layout: OfficeLayout,
   projectRoomCount = normalizeProjectRooms(layout).filter(
@@ -2490,9 +2807,20 @@ function deriveWorkCorridorBounds(
     Math.max(PROJECT_ROOM_WORK_CORRIDOR_MIN_WIDTH, bayWidth, base.width),
   );
   const col = clampInt(base.col, 0, MAX_COLS - width);
-  const preferredRow =
-    base.row > 0 ? base.row : PROJECT_ROOM_DEFAULT_HEIGHT + PROJECT_ROOM_GENERATED_MARGIN;
   const minRow = PROJECT_ROOM_DEFAULT_HEIGHT + PROJECT_ROOM_GENERATED_MARGIN;
+  // Anchor the whole corridor (and the row of rooms above it) below the user's hand-design so
+  // generation never overlaps it. The rooms above the lobby sit at lobby.row - DEFAULT_HEIGHT -
+  // MARGIN, so the lobby must clear the design by that much plus one more margin.
+  const designMaxRow = protectedDesignMaxRow(layout);
+  const designFloorRow =
+    designMaxRow >= 0
+      ? designMaxRow +
+        1 +
+        PROJECT_ROOM_GENERATED_MARGIN +
+        PROJECT_ROOM_DEFAULT_HEIGHT +
+        PROJECT_ROOM_GENERATED_MARGIN
+      : -1;
+  const preferredRow = Math.max(base.row > 0 ? base.row : minRow, designFloorRow);
   const maxRow =
     MAX_ROWS -
     PROJECT_ROOM_DEFAULT_HEIGHT -

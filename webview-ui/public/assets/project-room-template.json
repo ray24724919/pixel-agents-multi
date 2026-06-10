@@ -1,0 +1,198 @@
+{
+  "version": 1,
+  "width": 12,
+  "height": 10,
+  "furniture": [
+    {
+      "type": "DOUBLE_BOOKSHELF",
+      "colOffset": 1,
+      "rowOffset": -1
+    },
+    {
+      "type": "SMALL_PAINTING",
+      "colOffset": 3,
+      "rowOffset": -1
+    },
+    {
+      "type": "CLOCK",
+      "colOffset": 4,
+      "rowOffset": -1
+    },
+    {
+      "type": "SMALL_PAINTING_2",
+      "colOffset": 7,
+      "rowOffset": -1
+    },
+    {
+      "type": "DOUBLE_BOOKSHELF",
+      "colOffset": 8,
+      "rowOffset": -1
+    },
+    {
+      "type": "HANGING_PLANT",
+      "colOffset": 10,
+      "rowOffset": -1
+    },
+    {
+      "type": "SOFA_FRONT",
+      "colOffset": 2,
+      "rowOffset": 1
+    },
+    {
+      "type": "BIN",
+      "colOffset": 5,
+      "rowOffset": 1
+    },
+    {
+      "type": "WOODEN_CHAIR_SIDE",
+      "colOffset": 6,
+      "rowOffset": 1
+    },
+    {
+      "type": "PC_SIDE",
+      "colOffset": 7,
+      "rowOffset": 1
+    },
+    {
+      "type": "TABLE_FRONT",
+      "colOffset": 7,
+      "rowOffset": 1
+    },
+    {
+      "type": "PC_SIDE:left",
+      "colOffset": 9,
+      "rowOffset": 1
+    },
+    {
+      "type": "WOODEN_CHAIR_SIDE:left",
+      "colOffset": 10,
+      "rowOffset": 1
+    },
+    {
+      "type": "SOFA_SIDE",
+      "colOffset": 1,
+      "rowOffset": 2
+    },
+    {
+      "type": "COFFEE_TABLE",
+      "colOffset": 2,
+      "rowOffset": 2
+    },
+    {
+      "type": "SOFA_SIDE:left",
+      "colOffset": 4,
+      "rowOffset": 2
+    },
+    {
+      "type": "COFFEE",
+      "colOffset": 8,
+      "rowOffset": 2
+    },
+    {
+      "type": "COFFEE",
+      "colOffset": 2,
+      "rowOffset": 3
+    },
+    {
+      "type": "WOODEN_CHAIR_SIDE",
+      "colOffset": 6,
+      "rowOffset": 3
+    },
+    {
+      "type": "PC_SIDE",
+      "colOffset": 7,
+      "rowOffset": 3
+    },
+    {
+      "type": "PC_SIDE:left",
+      "colOffset": 9,
+      "rowOffset": 3
+    },
+    {
+      "type": "WOODEN_CHAIR_SIDE:left",
+      "colOffset": 10,
+      "rowOffset": 3
+    },
+    {
+      "type": "POT",
+      "colOffset": 1,
+      "rowOffset": 4
+    },
+    {
+      "type": "SOFA_SIDE",
+      "colOffset": 1,
+      "rowOffset": 5
+    },
+    {
+      "type": "COFFEE_TABLE",
+      "colOffset": 2,
+      "rowOffset": 5
+    },
+    {
+      "type": "SOFA_SIDE:left",
+      "colOffset": 4,
+      "rowOffset": 5
+    },
+    {
+      "type": "DESK_FRONT",
+      "colOffset": 7,
+      "rowOffset": 5
+    },
+    {
+      "type": "PC_FRONT_OFF",
+      "colOffset": 8,
+      "rowOffset": 5
+    },
+    {
+      "type": "SOFA_SIDE",
+      "colOffset": 1,
+      "rowOffset": 7
+    },
+    {
+      "type": "COFFEE_TABLE",
+      "colOffset": 2,
+      "rowOffset": 7
+    },
+    {
+      "type": "SOFA_SIDE:left",
+      "colOffset": 4,
+      "rowOffset": 7
+    },
+    {
+      "type": "DESK_FRONT",
+      "colOffset": 7,
+      "rowOffset": 7
+    },
+    {
+      "type": "CUSHIONED_BENCH",
+      "colOffset": 8,
+      "rowOffset": 7
+    },
+    {
+      "type": "PC_FRONT_OFF",
+      "colOffset": 8,
+      "rowOffset": 7
+    },
+    {
+      "type": "PLANT_2",
+      "colOffset": 0,
+      "rowOffset": 8
+    },
+    {
+      "type": "COFFEE",
+      "colOffset": 2,
+      "rowOffset": 8
+    },
+    {
+      "type": "PLANT_2",
+      "colOffset": 11,
+      "rowOffset": 8
+    },
+    {
+      "type": "CUSHIONED_BENCH",
+      "colOffset": 8,
+      "rowOffset": 9
+    }
+  ],
+  "rev": 3
+}
