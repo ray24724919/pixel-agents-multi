@@ -366,25 +366,27 @@ test('existing public lobby is rebuilt as a horizontal work corridor lounge', ()
   layout.projectRooms[1]!.bounds = { col: 10, row: 0, width: 9, height: 7 };
   layout.cols = 19;
   layout.tiles = Array.from({ length: layout.cols * layout.rows }, () => TileType.FLOOR_1);
+  // Stale GENERATED lobby furniture (project-room-lobby-* uids) is what gets rebuilt away. Hand-placed
+  // furniture (f-* / arbitrary uids) is never destroyed — see the dedicated non-destructive test.
   layout.furniture = [
-    { uid: 'old-lobby-desk', type: 'DESK', col: 1, row: 1 },
-    { uid: 'old-lobby-pc', type: 'PC', col: 2, row: 1 },
-    { uid: 'old-lobby-chair', type: 'CHAIR_UP', col: 2, row: 3 },
-    { uid: 'old-lobby-sofa', type: 'SOFA', col: 6, row: 2 },
-    { uid: 'old-lobby-table', type: 'COFFEE_TABLE', col: 6, row: 3 },
-    { uid: 'old-lobby-plant', type: 'PLANT', col: 8, row: 5 },
+    { uid: 'project-room-lobby-stale-desk', type: 'DESK', col: 1, row: 1 },
+    { uid: 'project-room-lobby-stale-pc', type: 'PC', col: 2, row: 1 },
+    { uid: 'project-room-lobby-stale-chair', type: 'CHAIR_UP', col: 2, row: 3 },
+    { uid: 'project-room-lobby-stale-sofa', type: 'SOFA', col: 6, row: 2 },
+    { uid: 'project-room-lobby-stale-table', type: 'COFFEE_TABLE', col: 6, row: 3 },
+    { uid: 'project-room-lobby-stale-plant', type: 'PLANT', col: 8, row: 5 },
   ];
 
   const result = ensureProjectRoomsForAgents(layout, [{ folderName: 'Alpha', isSubagent: false }]);
   const furnitureByUid = new Map(result.layout.furniture.map((item) => [item.uid, item.type]));
 
   assert.ok(result.loungeFurnitureAddedCount >= 3);
-  assert.equal(furnitureByUid.has('old-lobby-desk'), false);
-  assert.equal(furnitureByUid.has('old-lobby-pc'), false);
-  assert.equal(furnitureByUid.has('old-lobby-chair'), false);
-  assert.equal(furnitureByUid.has('old-lobby-sofa'), false);
-  assert.equal(furnitureByUid.has('old-lobby-table'), false);
-  assert.equal(furnitureByUid.has('old-lobby-plant'), false);
+  assert.equal(furnitureByUid.has('project-room-lobby-stale-desk'), false);
+  assert.equal(furnitureByUid.has('project-room-lobby-stale-pc'), false);
+  assert.equal(furnitureByUid.has('project-room-lobby-stale-chair'), false);
+  assert.equal(furnitureByUid.has('project-room-lobby-stale-sofa'), false);
+  assert.equal(furnitureByUid.has('project-room-lobby-stale-table'), false);
+  assert.equal(furnitureByUid.has('project-room-lobby-stale-plant'), false);
   assert.deepEqual(publicRooms(result.layout)[0]?.bounds, {
     col: 0,
     row: 11,
@@ -1502,6 +1504,75 @@ test('studio decor is retrofitted onto an existing room that predates it', () =>
     retrofit.layout.furniture.length,
     'no duplicate furniture',
   );
+});
+
+test('auto-generation never destroys the user hand-designed layout', () => {
+  // A hand-designed studio: editor furniture uses f-<timestamp> uids. The room generator must add
+  // project rooms WITHOUT deleting any hand-placed furniture, overlapping it, or voiding its floor.
+  const layout = makeLayout(14, 10);
+  layout.furniture = [
+    { uid: 'f-1000-a', type: 'DESK', col: 1, row: 1 },
+    { uid: 'f-1000-b', type: 'PC', col: 2, row: 1 },
+    { uid: 'f-1000-c', type: 'CHAIR_UP', col: 2, row: 3 },
+    { uid: 'f-1000-d', type: 'SOFA', col: 6, row: 2 },
+    { uid: 'f-1000-e', type: 'COFFEE_TABLE', col: 6, row: 4 },
+    { uid: 'f-1000-f', type: 'PLANT', col: 10, row: 6 },
+    { uid: 'f-1000-g', type: 'CUSHIONED_BENCH', col: 11, row: 7 },
+  ];
+  const before = new Map(layout.furniture.map((item) => [item.uid, { ...item }]));
+
+  const result = ensureProjectRoomsForAgents(layout, [
+    { folderName: 'Alpha', isSubagent: false },
+    { folderName: 'Beta', isSubagent: false },
+  ]);
+
+  const isHand = (uid: string) => uid.startsWith('f-');
+  const after = new Map(result.layout.furniture.map((item) => [item.uid, item]));
+
+  // 1. Every hand-placed item survives, unmoved.
+  assert.equal(result.createdRooms.length, 2, 'rooms were generated');
+  for (const [uid, original] of before) {
+    const survivor = after.get(uid);
+    assert.ok(survivor, `hand-placed ${uid} must survive generation`);
+    assert.equal(survivor.col, original.col, `${uid} must not move (col)`);
+    assert.equal(survivor.row, original.row, `${uid} must not move (row)`);
+  }
+
+  // 2. No generated room overlaps any hand-placed furniture footprint.
+  const fpBounds = (item: PlacedFurniture) => {
+    const entry = getCatalogEntry(item.type);
+    return {
+      col: item.col,
+      row: item.row,
+      width: entry?.footprintW ?? 1,
+      height: entry?.footprintH ?? 1,
+    };
+  };
+  for (const room of result.layout.projectRooms ?? []) {
+    for (const item of result.layout.furniture) {
+      if (!isHand(item.uid)) continue;
+      assert.equal(
+        rectsOverlap(room.bounds, fpBounds(item)),
+        false,
+        `room ${room.id} must not overlap hand-placed ${item.uid}`,
+      );
+    }
+  }
+
+  // 3. No hand-placed furniture tile is voided by generation.
+  for (const item of result.layout.furniture) {
+    if (!isHand(item.uid)) continue;
+    const b = fpBounds(item);
+    for (let row = b.row; row < b.row + b.height; row++) {
+      for (let col = b.col; col < b.col + b.width; col++) {
+        assert.notEqual(
+          tileAt(result.layout, col, row),
+          TileType.VOID,
+          `hand-placed ${item.uid} must not sit on a voided tile at ${col},${row}`,
+        );
+      }
+    }
+  }
 });
 
 test('repeated generation does not duplicate rooms and keeps stable ids', () => {

@@ -773,11 +773,24 @@ function compareProjectRoomsForCampus(a: ProjectRoom, b: ProjectRoom): number {
   return aLabel.localeCompare(bLabel);
 }
 
+/**
+ * A furniture item is "generated" if the room generator created it — its uid is prefixed with a
+ * room id, and every generated room id starts with `project-` (lobby = `project-room-lobby`,
+ * projects = `project-<slug>`). Anything else is the user's own content (the editor places hand
+ * furniture with `f-<timestamp>` uids) and must never be deleted or overlapped by generation.
+ */
+function isGeneratedFurnitureUid(uid: string): boolean {
+  return uid.startsWith('project-');
+}
+
 function shouldRemoveGeneratedCampusFurniture(
   item: PlacedFurniture,
   oldCampusBounds: ProjectRoom['bounds'][],
   roomIds: Set<string>,
 ): boolean {
+  // Never remove the user's hand-placed furniture, even when it overlaps an old campus rectangle —
+  // the campus is anchored clear of the hand-design, and protected content is sacrosanct.
+  if (!isGeneratedFurnitureUid(item.uid)) return false;
   if ([...roomIds].some((roomId) => item.uid.startsWith(`${roomId}-`))) return true;
   const entry = getAllCatalogEntries().find((candidate) => candidate.type === item.type);
   if (!entry) return false;
@@ -786,6 +799,21 @@ function shouldRemoveGeneratedCampusFurniture(
 
 function clearCampusTiles(layout: OfficeLayout, boundsList: ProjectRoom['bounds'][]): OfficeLayout {
   if (boundsList.length === 0) return layout;
+  // Tiles occupied by the user's hand-placed furniture are protected: clearing the floor under them
+  // would strand the furniture on a non-walkable VOID tile. (The campus is anchored clear of the
+  // hand-design, so this only ever matters as a safety net.)
+  const protectedTiles = new Set<string>();
+  for (const item of layout.furniture) {
+    if (isGeneratedFurnitureUid(item.uid)) continue;
+    const entry = getAllCatalogEntries().find((candidate) => candidate.type === item.type);
+    const width = entry?.footprintW ?? 1;
+    const height = entry?.footprintH ?? 1;
+    for (let row = item.row; row < item.row + height; row++) {
+      for (let col = item.col; col < item.col + width; col++) {
+        protectedTiles.add(`${col},${row}`);
+      }
+    }
+  }
   const tiles = [...layout.tiles];
   const tileColors = [...(layout.tileColors ?? new Array(layout.tiles.length).fill(null))];
   const zones = [...(layout.zones ?? new Array(layout.tiles.length).fill(null))];
@@ -793,6 +821,7 @@ function clearCampusTiles(layout: OfficeLayout, boundsList: ProjectRoom['bounds'
     for (let row = bounds.row; row < bounds.row + bounds.height; row++) {
       for (let col = bounds.col; col < bounds.col + bounds.width; col++) {
         if (col < 0 || col >= layout.cols || row < 0 || row >= layout.rows) continue;
+        if (protectedTiles.has(`${col},${row}`)) continue;
         const idx = row * layout.cols + col;
         tiles[idx] = TileType.VOID;
         tileColors[idx] = null;
@@ -1452,6 +1481,7 @@ function ensureLobbyLoungeFurniture(
   )) {
     let roomAdded = 0;
     const cleanedFurniture = furniture.filter((item) => {
+      if (!isGeneratedFurnitureUid(item.uid)) return true; // never remove hand-placed furniture
       const entry = getAllCatalogEntries().find((candidate) => candidate.type === item.type);
       if (!entry || !rectsOverlap(room.bounds, placedFurnitureBounds(item, entry))) return true;
       if (!isLobbyWorkFurniture(entry)) return true;
@@ -2630,6 +2660,32 @@ function stableUniqueRoomId(base: string, rooms: ProjectRoom[]): string {
   return `${base}-${rooms.length + 1}`;
 }
 
+/**
+ * The lowest grid row the user's hand-design occupies, or -1 when there is nothing to protect (a
+ * blank or fully generated layout). The design extent is the union of hand-placed furniture
+ * footprints and any user-painted (non-VOID) tile that is not already inside a generated room. The
+ * campus is anchored below this row so generation never lands on top of the hand-design.
+ */
+function protectedDesignMaxRow(layout: OfficeLayout): number {
+  const handFurniture = layout.furniture.filter((item) => !isGeneratedFurnitureUid(item.uid));
+  if (handFurniture.length === 0) return -1;
+  let maxRow = -1;
+  for (const item of handFurniture) {
+    const entry = getAllCatalogEntries().find((candidate) => candidate.type === item.type);
+    maxRow = Math.max(maxRow, item.row + (entry?.footprintH ?? 1) - 1);
+  }
+  const rooms = normalizeProjectRooms(layout);
+  for (let row = 0; row < layout.rows; row++) {
+    for (let col = 0; col < layout.cols; col++) {
+      const tile = layout.tiles[row * layout.cols + col];
+      if (tile === TileType.VOID) continue;
+      if (rooms.some((room) => pointInBounds(col, row, room.bounds))) continue;
+      maxRow = Math.max(maxRow, row);
+    }
+  }
+  return maxRow;
+}
+
 function deriveWorkCorridorBounds(
   layout: OfficeLayout,
   projectRoomCount = normalizeProjectRooms(layout).filter(
@@ -2645,9 +2701,20 @@ function deriveWorkCorridorBounds(
     Math.max(PROJECT_ROOM_WORK_CORRIDOR_MIN_WIDTH, bayWidth, base.width),
   );
   const col = clampInt(base.col, 0, MAX_COLS - width);
-  const preferredRow =
-    base.row > 0 ? base.row : PROJECT_ROOM_DEFAULT_HEIGHT + PROJECT_ROOM_GENERATED_MARGIN;
   const minRow = PROJECT_ROOM_DEFAULT_HEIGHT + PROJECT_ROOM_GENERATED_MARGIN;
+  // Anchor the whole corridor (and the row of rooms above it) below the user's hand-design so
+  // generation never overlaps it. The rooms above the lobby sit at lobby.row - DEFAULT_HEIGHT -
+  // MARGIN, so the lobby must clear the design by that much plus one more margin.
+  const designMaxRow = protectedDesignMaxRow(layout);
+  const designFloorRow =
+    designMaxRow >= 0
+      ? designMaxRow +
+        1 +
+        PROJECT_ROOM_GENERATED_MARGIN +
+        PROJECT_ROOM_DEFAULT_HEIGHT +
+        PROJECT_ROOM_GENERATED_MARGIN
+      : -1;
+  const preferredRow = Math.max(base.row > 0 ? base.row : minRow, designFloorRow);
   const maxRow =
     MAX_ROWS -
     PROJECT_ROOM_DEFAULT_HEIGHT -
