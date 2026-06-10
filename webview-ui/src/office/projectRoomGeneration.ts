@@ -253,6 +253,11 @@ export function ensureProjectRoomsForAgents(
   current = frontResult.layout;
   suiteFurnitureAddedCount += frontResult.changedCount;
 
+  // Widen any room whose corridor-facing doorway is narrower than the current width.
+  const doorwayResult = ensureRoomDoorwayWidth(current);
+  current = doorwayResult.layout;
+  suiteFurnitureAddedCount += doorwayResult.changedCount;
+
   return {
     layout: current,
     createdRooms,
@@ -1043,6 +1048,45 @@ function paintRoomFloor(
   return { ...layout, tiles, tileColors, zones };
 }
 
+/** True when every tile of the room's doorway opening is already walkable (current doorway width). */
+function roomDoorwayMatchesWidth(
+  layout: OfficeLayout,
+  room: ProjectRoom,
+  lobbyCore: ProjectRoom['bounds'],
+): boolean {
+  const doorway = deriveRoomDoorway(room.bounds, lobbyCore);
+  const horizontal = doorway.side === 'top' || doorway.side === 'bottom';
+  for (const d of doorwaySpanOffsets()) {
+    const c = horizontal ? doorway.col + d : doorway.col;
+    const r = horizontal ? doorway.row : doorway.row + d;
+    const tile = layout.tiles[r * layout.cols + c];
+    if (tile === TileType.WALL || tile === TileType.VOID || tile === undefined) return false;
+  }
+  return true;
+}
+
+/**
+ * Retrofit existing project rooms to the current doorway width: a room whose corridor-facing wall
+ * gap is narrower than PROJECT_ROOM_GENERATED_DOORWAY_WIDTH gets its shell + corridor repainted (the
+ * stamped furniture is untouched). Guarded so a room already at the right width is skipped — no churn.
+ */
+function ensureRoomDoorwayWidth(layout: OfficeLayout): {
+  layout: OfficeLayout;
+  changedCount: number;
+} {
+  const rooms = normalizeProjectRooms(layout);
+  const lobby = rooms.find((room) => room.kind === ProjectRoomKind.PUBLIC);
+  if (!lobby) return { layout, changedCount: 0 };
+  let current = layout;
+  let changedCount = 0;
+  for (const room of rooms.filter((room) => room.kind === ProjectRoomKind.PROJECT)) {
+    if (roomDoorwayMatchesWidth(current, room, lobby.bounds)) continue;
+    current = paintRoomFloor(current, room, lobby.bounds);
+    changedCount++;
+  }
+  return { layout: current, changedCount };
+}
+
 function paintLobbyVoidFloor(layout: OfficeLayout, room: ProjectRoom): OfficeLayout {
   const tiles = [...layout.tiles];
   const tileColors = [...(layout.tileColors ?? new Array(layout.tiles.length).fill(null))];
@@ -1142,15 +1186,45 @@ function paintRoomShell(
   }
 }
 
-function isDoorwayTile(col: number, row: number, doorway: RoomDoorway): boolean {
-  const halfWidth = Math.floor(PROJECT_ROOM_GENERATED_DOORWAY_WIDTH / 2);
-  if (doorway.side === 'top' || doorway.side === 'bottom') {
-    return row === doorway.row && Math.abs(col - doorway.col) <= halfWidth;
-  }
-  return col === doorway.col && Math.abs(row - doorway.row) <= halfWidth;
+/**
+ * Offsets that the doorway opening spans, biased center-left for even widths (e.g. width 2 → {-1, 0})
+ * so a 2-tile doorway lands on the room's center-left columns and clears the back-wall decor.
+ */
+function doorwaySpanOffsets(): number[] {
+  const width = Math.max(1, PROJECT_ROOM_GENERATED_DOORWAY_WIDTH);
+  const lo = Math.floor(width / 2);
+  const offsets: number[] = [];
+  for (let d = -lo; d <= width - 1 - lo; d++) offsets.push(d);
+  return offsets;
 }
 
+function isDoorwayTile(col: number, row: number, doorway: RoomDoorway): boolean {
+  const offsets = doorwaySpanOffsets();
+  if (doorway.side === 'top' || doorway.side === 'bottom') {
+    return row === doorway.row && offsets.includes(col - doorway.col);
+  }
+  return col === doorway.col && offsets.includes(row - doorway.row);
+}
+
+/** Paint the corridor as wide as the doorway by laying one segment per doorway-span offset. */
 function paintCorridorToLobby(
+  layout: OfficeLayout,
+  tiles: TileTypeVal[],
+  tileColors: Array<ColorValue | null>,
+  zones: Array<ZoneType | null>,
+  lobbyCore: ProjectRoom['bounds'],
+  doorway: RoomDoorway,
+): void {
+  const horizontalOpening = doorway.side === 'top' || doorway.side === 'bottom';
+  for (const d of doorwaySpanOffsets()) {
+    const shifted: RoomDoorway = horizontalOpening
+      ? { ...doorway, col: doorway.col + d, outsideCol: doorway.outsideCol + d }
+      : { ...doorway, row: doorway.row + d, outsideRow: doorway.outsideRow + d };
+    paintCorridorSegment(layout, tiles, tileColors, zones, lobbyCore, shifted);
+  }
+}
+
+function paintCorridorSegment(
   layout: OfficeLayout,
   tiles: TileTypeVal[],
   tileColors: Array<ColorValue | null>,
