@@ -23,6 +23,14 @@ import type { OfficeState } from '../office/engine/officeState.js';
 import type { TokenRateLimitSnapshot, ToolActivity } from '../office/types.js';
 import { inferAgentZone, zoneSourceLabel } from '../office/zoneUtils.js';
 import { vscode } from '../vscodeApi.js';
+import {
+  compactNumber,
+  copyTextToClipboard,
+  formatProxyUsd,
+  formatRelative,
+  formatUsageOverviewMetricValue,
+  usageBarPercent,
+} from './agentCenter/formatters.js';
 import type {
   AgentStateCounts,
   AgentSummary,
@@ -4556,12 +4564,6 @@ function handoffStatusUpdateLabel(
   return 'Status actions update only local metadata; Markdown remains editable.';
 }
 
-function formatProxyUsd(value: number): string {
-  if (value <= 0) return '$0.0000';
-  if (value < 0.01) return `$${value.toFixed(4)}`;
-  return `$${value.toFixed(2)}`;
-}
-
 function formatUsageHistoryRateLimit(limit: UsageHistoryRateLimitSnapshot): string {
   const percent =
     limit.usedPercent !== undefined
@@ -4573,23 +4575,6 @@ function formatUsageHistoryRateLimit(limit: UsageHistoryRateLimitSnapshot): stri
   return reset
     ? `${limit.providerLabel} ${percent}; resets ${reset}.`
     : `${limit.providerLabel} ${percent}.`;
-}
-
-async function copyTextToClipboard(text: string): Promise<void> {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text);
-    return;
-  }
-  const textarea = document.createElement('textarea');
-  textarea.value = text;
-  textarea.style.position = 'fixed';
-  textarea.style.left = '-9999px';
-  document.body.append(textarea);
-  textarea.focus();
-  textarea.select();
-  const copied = document.execCommand('copy');
-  textarea.remove();
-  if (!copied) throw new Error('Clipboard copy failed');
 }
 
 function UsageBar({ label, value, total }: { label: string; value: number; total: number }) {
@@ -4606,10 +4591,6 @@ function UsageBar({ label, value, total }: { label: string; value: number; total
       </div>
     </div>
   );
-}
-
-function usageBarPercent(value: number, total: number): number {
-  return total > 0 ? Math.min(100, Math.max(value > 0 ? 2 : 0, (value / total) * 100)) : 0;
 }
 
 function LedgerValue({
@@ -5710,16 +5691,6 @@ function usageAccuracyClass(accuracy: UsageAccuracy): string {
   return 'border-border bg-btn-bg text-text-muted';
 }
 
-function formatUsageOverviewMetricValue(value: number | string): string {
-  return typeof value === 'number' ? compactNumber(value) : value;
-}
-
-function compactNumber(value: number): string {
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}m`;
-  if (value >= 1_000) return `${Math.round(value / 1_000)}k`;
-  return value.toLocaleString();
-}
-
 function formatRateLimit(limit: TokenRateLimitSnapshot): string {
   const percent =
     limit.usedPercent !== undefined
@@ -5742,12 +5713,4 @@ function rateLimitResetText(limit: TokenRateLimitSnapshot): string | undefined {
   if (seconds < 60) return `${Math.round(seconds)}s`;
   if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
   return `${Math.round(seconds / 3600)}h`;
-}
-
-function formatRelative(timestamp: number): string {
-  const seconds = Math.max(0, Math.round((Date.now() - timestamp) / 1000));
-  if (seconds < 2) return 'now';
-  if (seconds < 60) return `${seconds}s ago`;
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-  return `${Math.floor(seconds / 3600)}h ago`;
 }
