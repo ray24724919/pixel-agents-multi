@@ -184,11 +184,6 @@
       "rowOffset": 8
     },
     {
-      "type": "CUSHIONED_BENCH",
-      "colOffset": 5,
-      "rowOffset": 8
-    },
-    {
       "type": "PLANT_2",
       "colOffset": 11,
       "rowOffset": 8
@@ -199,5 +194,5 @@
       "rowOffset": 9
     }
   ],
-  "rev": 2
+  "rev": 3
 }

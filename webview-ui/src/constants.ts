@@ -285,7 +285,7 @@ export const PROJECT_ROOM_STUDIO_WALL_DECOR = [
 export const PROJECT_ROOM_TEMPLATE = {
   // Bump `rev` whenever the furniture list changes: every existing room whose stamp is an older rev
   // is re-stamped to the current template on the next provision, so template edits propagate.
-  rev: 2,
+  rev: 3,
   width: 12,
   height: 10,
   furniture: [
@@ -325,7 +325,6 @@ export const PROJECT_ROOM_TEMPLATE = {
     { type: 'PC_FRONT_OFF', colOffset: 8, rowOffset: 7 },
     { type: 'PLANT_2', colOffset: 0, rowOffset: 8 },
     { type: 'COFFEE', colOffset: 2, rowOffset: 8 },
-    { type: 'CUSHIONED_BENCH', colOffset: 5, rowOffset: 8 },
     { type: 'PLANT_2', colOffset: 11, rowOffset: 8 },
     { type: 'CUSHIONED_BENCH', colOffset: 8, rowOffset: 9 },
   ],
