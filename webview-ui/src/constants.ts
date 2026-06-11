@@ -38,6 +38,10 @@ export const MATRIX_TRAIL_DIM_THRESHOLD = 0.66;
 
 // ── Rendering ────────────────────────────────────────────────
 export const CHARACTER_SITTING_OFFSET_PX = 6;
+/** Deeper downward embed for an agent seated on a 2-tile-tall side sofa/chair (cushion sits lower). */
+export const CHARACTER_TALL_SIDE_SITTING_OFFSET_PX = 11;
+/** Horizontal lean (px) toward the seat back for a side-sofa occupant; sign derived from facing. */
+export const CHARACTER_TALL_SIDE_SITTING_EMBED_X_PX = 3;
 export const CHARACTER_Z_SORT_OFFSET = 0.5;
 export const OUTLINE_Z_SORT_OFFSET = 0.001;
 export const SELECTED_OUTLINE_ALPHA = 1.0;
@@ -52,6 +56,8 @@ export const BUTTON_LINE_WIDTH_MIN = 1.5;
 export const BUTTON_LINE_WIDTH_ZOOM_FACTOR = 0.5;
 export const BUBBLE_FADE_DURATION_SEC = 0.5;
 export const BUBBLE_SITTING_OFFSET_PX = 10;
+/** Bubble/marker downward offset for a tall-side-sofa occupant — follows the deeper character embed. */
+export const BUBBLE_TALL_SIDE_SITTING_OFFSET_PX = 15;
 export const BUBBLE_VERTICAL_OFFSET_PX = 24;
 export const DELEGATION_MARKER_OFFSET_X_PX = 9;
 export const DELEGATION_MARKER_VERTICAL_OFFSET_PX = 23;

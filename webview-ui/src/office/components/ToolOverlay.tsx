@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 
 import { Button } from '../../components/ui/Button.js';
 import {
-  CHARACTER_SITTING_OFFSET_PX,
   FUEL_COLOR_CRITICAL,
   FUEL_COLOR_DANGER,
   FUEL_COLOR_OK,
@@ -24,7 +23,7 @@ import type {
 } from '../../hooks/useExtensionMessages.js';
 import { vscode } from '../../vscodeApi.js';
 import { delegationVisualStatusLabel, delegationVisualWorkerLabel } from '../delegationVisual.js';
-import { isCharacterSeated } from '../engine/characters.js';
+import { seatedRenderOffset } from '../engine/characters.js';
 import type { OfficeState } from '../engine/officeState.js';
 import type { ToolActivity } from '../types.js';
 import { TILE_SIZE } from '../types.js';
@@ -137,11 +136,11 @@ export function ToolOverlay({
         // Only show for hovered or selected agents (unless always-show is on)
         if (!alwaysShowOverlay && !isSelected && !isHovered) return null;
 
-        // Position above character
-        const sittingOffset = isCharacterSeated(ch) ? CHARACTER_SITTING_OFFSET_PX : 0;
-        const screenX = (deviceOffsetX + ch.x * zoom) / dpr;
+        // Position above character — match the renderer's seated offset + lean
+        const seatOff = seatedRenderOffset(ch, officeState.seats);
+        const screenX = (deviceOffsetX + (ch.x + seatOff.dx) * zoom) / dpr;
         const screenY =
-          (deviceOffsetY + (ch.y + sittingOffset - TOOL_OVERLAY_VERTICAL_OFFSET) * zoom) / dpr;
+          (deviceOffsetY + (ch.y + seatOff.dyChar - TOOL_OVERLAY_VERTICAL_OFFSET) * zoom) / dpr;
 
         // Get activity text
         const subHasPermission = isSub && ch.bubbleType === 'permission';

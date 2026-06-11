@@ -59,6 +59,9 @@ export interface Seat {
   /** Why this seat was classified as work/rest. */
   zoneSource?: 'workstation' | 'computer-adjacent' | 'zone-paint' | 'default-split';
   assigned: boolean;
+  /** True for a 2-tile-tall side sofa/chair seat — its occupant needs a deeper sitting embed +
+   *  horizontal lean so the upright sprite reads as sitting on the cushion, not standing beside it. */
+  tallSide?: boolean;
 }
 
 export interface FurnitureInstance {
