@@ -27,10 +27,16 @@ interface WorkstationTile {
   row: number;
 }
 
-/** A 2-tile-tall side-facing seat (side sofa / tall side chair) whose seated occupant needs a deeper
- *  embed + front z-nudge so the cushion occludes the lower body. Excludes 1-tile side chairs/benches. */
-function isTallSideSeat(entry: { orientation?: string; footprintH: number }): boolean {
+/** A 2-tile-tall side SOFA whose seated occupant needs a deeper embed + front z-nudge so the cushion
+ *  occludes the lower body. Scoped to SOFAs ONLY: side DESK chairs (WOODEN_CHAIR_SIDE) are 2-tall too,
+ *  but the desk in front already hides their legs and the upstream renders them with the plain offset —
+ *  special-casing them made seated agents look wrong. Excludes all chairs, benches, 1-tile side seats. */
+function isTallSideSeat(
+  type: string,
+  entry: { orientation?: string; footprintH: number },
+): boolean {
   return (
+    /^SOFA/i.test(type) &&
     (entry.orientation === 'side' ||
       entry.orientation === 'left' ||
       entry.orientation === 'right') &&
@@ -85,7 +91,7 @@ export function layoutToFurnitureInstances(furniture: PlacedFurniture[]): Furnit
         // Use the bottom footprint row so it sorts after the character
         // even when the chair has background tiles that push seats down.
         zY = (item.row + entry.footprintH) * TILE_SIZE + 1;
-      } else if (isTallSideSeat(entry)) {
+      } else if (isTallSideSeat(item.type, entry)) {
         // Tall (2-tile) side sofa/chair: nudge zY just past the UPPER seat-tile occupant's zY
         // ((row+1)*TILE_SIZE + CHARACTER_Z_SORT_OFFSET) so the couch frame draws in front of and
         // occludes that agent's lower body (reads as seated). The lower (front) seat occupant keeps a
@@ -281,7 +287,7 @@ export function layoutToSeats(layout: OfficeLayout): Map<string, Seat> {
           seatKind: zone,
           zoneSource,
           assigned: false,
-          ...(isTallSideSeat(entry) ? { tallSide: true } : {}),
+          ...(isTallSideSeat(item.type, entry) ? { tallSide: true } : {}),
         });
         seatCount++;
       }
