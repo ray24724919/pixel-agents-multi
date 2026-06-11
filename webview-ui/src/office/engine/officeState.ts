@@ -1175,6 +1175,15 @@ export class OfficeState {
     return 1 + Math.floor(Math.random() * 4);
   }
 
+  /** True when the agent is currently parked ON its own assigned seat tile (not walking). Drives the
+   *  seated sprite pose + sitting offset so an agent only "sits" when actually on a seat. */
+  private isCharacterParkedOnOwnSeat(ch: Character): boolean {
+    if (ch.state === CharacterState.WALK || ch.path.length > 0) return false;
+    if (!ch.seatId) return false;
+    const seat = this.seats.get(ch.seatId);
+    return !!seat && ch.tileCol === seat.seatCol && ch.tileRow === seat.seatRow;
+  }
+
   private nudgeInactiveStandingOffSeats(ch: Character): void {
     if (ch.isActive || ch.state === CharacterState.TYPE || ch.path.length > 0) return;
     const seatHere = this.getSeatAtTile(ch.tileCol, ch.tileRow);
@@ -1354,6 +1363,9 @@ export class OfficeState {
         updateCharacter(ch, dt, wanderTiles, updateSeats, this.tileMap, this.blockedTiles),
       );
       this.nudgeInactiveStandingOffSeats(ch);
+      // Recompute the position-based seated flag AFTER the FSM + nudge settle the tile, so the seated
+      // pose/offset track where the agent actually is this frame.
+      ch.seated = this.isCharacterParkedOnOwnSeat(ch);
 
       // Tick bubble timer for waiting bubbles
       if (ch.bubbleType === 'waiting') {

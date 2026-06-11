@@ -222,6 +222,10 @@ export interface Character {
   workSeatId: string | null;
   /** Seat used when the agent is idle/resting */
   restSeatId: string | null;
+  /** True when the character is currently parked ON its own seat tile (not walking). Drives the
+   *  seated sprite pose + sitting offset — position-based, so an agent only "sits" when actually on a
+   *  seat, never standing on a sofa (idle on seat) or sitting in mid-air (TYPE on a floor tile). */
+  seated: boolean;
   /** Active speech bubble type, or null if none showing */
   bubbleType: 'permission' | 'waiting' | null;
   /** Countdown timer for bubble (waiting: 2→0, permission: unused) */

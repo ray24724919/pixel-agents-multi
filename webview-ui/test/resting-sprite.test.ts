@@ -22,43 +22,47 @@ function tag(sprite: SpriteData): string {
   return sprite[0][0];
 }
 
-test('a resting (inactive) seated agent renders a seated reading frame, not the standing walk pose', () => {
-  // Regression for "agent stands on the sofa": a resting agent is in TYPE state with isActive=false.
-  // The fork used to return the standing walk[dir][1] frame here, so a resting agent on a sofa was a
-  // STANDING sprite. The upstream uses a seated frame for every TYPE state.
-  const sprites = markerSprites();
-  const ch = {
+function ch(partial: Partial<Character>): Character {
+  return {
     state: CharacterState.TYPE,
     isActive: false,
     dir: Direction.DOWN,
     frame: 0,
     currentTool: null,
+    seated: false,
+    ...partial,
   } as Character;
-  const sprite = getCharacterSprite(ch, sprites);
-  assert.equal(tag(sprite), 'read0', 'resting agent uses the seated reading frame');
-  assert.notEqual(tag(sprite), 'walk1', 'must NOT be the standing idle/walk pose');
+}
+
+const sprites = markerSprites();
+
+test('a resting agent PARKED ON its seat renders the seated reading pose', () => {
+  // The "agent sits on the sofa" case: inactive, on its seat tile (seated=true).
+  assert.equal(tag(getCharacterSprite(ch({ isActive: false, seated: true }), sprites)), 'read0');
 });
 
-test('an ACTIVE typing agent still uses the typing frame (unchanged)', () => {
-  const sprites = markerSprites();
-  const ch = {
-    state: CharacterState.TYPE,
-    isActive: true,
-    dir: Direction.DOWN,
-    frame: 0,
-    currentTool: 'Edit',
-  } as Character;
-  assert.equal(tag(getCharacterSprite(ch, sprites)), 'type0');
+test('a resting agent NOT on a seat renders STANDING (no sitting in mid-air)', () => {
+  // TYPE + inactive but seated=false (e.g. on a floor tile): must NOT render the seated pose.
+  assert.equal(tag(getCharacterSprite(ch({ isActive: false, seated: false }), sprites)), 'walk1');
 });
 
-test('an idle (wandering) agent still uses the standing walk frame', () => {
-  const sprites = markerSprites();
-  const ch = {
-    state: CharacterState.IDLE,
-    isActive: false,
-    dir: Direction.DOWN,
-    frame: 0,
-    currentTool: null,
-  } as Character;
-  assert.equal(tag(getCharacterSprite(ch, sprites)), 'walk1');
+test('an idle agent still on its seat renders seated (no standing on the sofa)', () => {
+  // After a rest the agent flips TYPE->IDLE while still on the sofa; seated=true keeps it sitting.
+  const c = ch({ state: CharacterState.IDLE, isActive: false, seated: true });
+  assert.equal(tag(getCharacterSprite(c, sprites)), 'read0');
+});
+
+test('an idle agent wandering on open floor renders the standing walk pose', () => {
+  const c = ch({ state: CharacterState.IDLE, isActive: false, seated: false });
+  assert.equal(tag(getCharacterSprite(c, sprites)), 'walk1');
+});
+
+test('an ACTIVE typing agent renders the typing frame regardless of seat (covers sub-agents)', () => {
+  assert.equal(tag(getCharacterSprite(ch({ isActive: true, seated: false }), sprites)), 'type0');
+  assert.equal(tag(getCharacterSprite(ch({ isActive: true, seated: true }), sprites)), 'type0');
+});
+
+test('a walking agent always animates the walk cycle', () => {
+  const c = ch({ state: CharacterState.WALK, seated: true, frame: 2 });
+  assert.equal(tag(getCharacterSprite(c, sprites)), 'walk2');
 });

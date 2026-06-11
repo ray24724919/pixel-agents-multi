@@ -86,6 +86,7 @@ export function createCharacter(
     seatId,
     workSeatId: seat?.seatKind === 'work' ? seatId : null,
     restSeatId: seat?.seatKind === 'rest' ? seatId : null,
+    seated: false,
     bubbleType: null,
     bubbleTimer: 0,
     seatTimer: 0,
@@ -106,7 +107,8 @@ export function createCharacter(
 }
 
 export function isCharacterSeated(ch: Character): boolean {
-  return ch.state === CharacterState.TYPE && ch.seatId !== null;
+  // Position-based: set by OfficeState each frame = parked ON its own seat tile (not walking).
+  return ch.seated;
 }
 
 export function updateCharacter(
@@ -393,26 +395,26 @@ function claimIdleRestSeat(ch: Character, seats: Map<string, Seat>): Seat | null
 
 /** Get the correct sprite frame for a character's current state and direction */
 export function getCharacterSprite(ch: Character, sprites: CharacterSprites): SpriteData {
-  switch (ch.state) {
-    case CharacterState.TYPE:
-      if (!ch.isActive) {
-        // Resting on a rest seat (e.g. a sofa): use the calm seated READING pose, NOT the standing
-        // walk frame. Returning walk[dir][1] here is what made resting agents render standing on the
-        // sofa — the upstream uses a seated frame for every TYPE state. Reading reads as relaxing
-        // (not working) which fits a rest seat.
-        return sprites.reading[ch.dir][ch.frame % 2];
-      }
-      if (isReadingTool(ch.currentTool)) {
-        return sprites.reading[ch.dir][ch.frame % 2];
-      }
-      return sprites.typing[ch.dir][ch.frame % 2];
-    case CharacterState.WALK:
-      return sprites.walk[ch.dir][ch.frame % 4];
-    case CharacterState.IDLE:
-      return sprites.walk[ch.dir][1];
-    default:
-      return sprites.walk[ch.dir][1];
+  // Walking always animates the walk cycle.
+  if (ch.state === CharacterState.WALK) {
+    return sprites.walk[ch.dir][ch.frame % 4];
   }
+  // Active = working: typing/reading pose. Covers both desk-seated agents and seatless sub-agents
+  // (which type next to their parent), so it must NOT depend on being on a seat.
+  if (ch.isActive && ch.state === CharacterState.TYPE) {
+    return isReadingTool(ch.currentTool)
+      ? sprites.reading[ch.dir][ch.frame % 2]
+      : sprites.typing[ch.dir][ch.frame % 2];
+  }
+  // Parked ON its own seat (resting on a sofa, or idling on a seat after a rest): seated reading
+  // pose. Keyed on the position-based `seated` flag, NOT the raw TYPE/IDLE state — that is what
+  // prevents both "standing on the sofa" (idle on a seat) and "sitting in mid-air" (TYPE on a floor
+  // tile with no chair under it).
+  if (ch.seated) {
+    return sprites.reading[ch.dir][ch.frame % 2];
+  }
+  // Otherwise standing: idle wandering, or paused on open floor.
+  return sprites.walk[ch.dir][1];
 }
 
 function randomRange(min: number, max: number): number {
