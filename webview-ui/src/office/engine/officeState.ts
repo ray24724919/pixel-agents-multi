@@ -276,7 +276,12 @@ export class OfficeState {
     if (!this.isSeatValidForAgent(ch, seat, mode)) return false;
     const candidates = this.getSeatCandidatesForAgent(ch, mode);
     const bestPriority = candidates[0]?.priority ?? Number.POSITIVE_INFINITY;
-    return this.getSeatPriorityForAgent(ch, seat, mode) <= bestPriority;
+    const priority = this.getSeatPriorityForAgent(ch, seat, mode);
+    // Rest: keep ANY valid seat within the agent's wander tier (own room or lobby). Don't yank an idle
+    // agent off a perfectly good rest seat just because a marginally better-tier seat opened up — that
+    // clears its seat, blocks the tile under it, and forces a relocate that reads as a sofa→lobby flash.
+    if (mode === 'rest') return priority <= Math.max(bestPriority, REST_WANDER_MAX_PRIORITY);
+    return priority <= bestPriority;
   }
 
   private chooseSeatForAgent(ch: Character, mode: 'work' | 'rest'): string | null {

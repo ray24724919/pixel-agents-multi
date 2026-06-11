@@ -501,6 +501,29 @@ test('an agent with its own project room never sits in another project room', ()
   assert.notEqual(seatRoom(layout, ch.seatId)?.id, 'room-beta');
 });
 
+test('an idle agent keeps a valid lobby rest seat instead of being yanked to its own room', () => {
+  const layout = makeLayout(
+    [...loungeFurnitureAt('alpha-sofa', 2, 2), ...loungeFurnitureAt('lobby-sofa', 8, 2)],
+    14,
+    8,
+  );
+  layout.projectRooms = [
+    projectRoom('room-alpha', 'alpha', 0, 0, 6, 8),
+    room('public', 'lobby', 6, 0, 8, 8),
+  ];
+  const state = new OfficeState(layout);
+  addAgent(state, 1, false, undefined, 'alpha');
+  const ch = state.characters.get(1)!;
+  const lobbySeat = [...state.seats.values()].find((s) => s.uid.startsWith('lobby-sofa'))!;
+  // Park the idle agent on the lobby (tier-1) rest seat with its own-room (tier-0) seat free.
+  ch.seatId = lobbySeat.uid;
+  ch.restSeatId = lobbySeat.uid;
+  state.repairSeatingAssignments('tick');
+  // It must KEEP the valid lobby rest seat (within its wander tier), not get yanked to alpha's room —
+  // the yank clears the seat, blocks the tile, and forces a relocate that reads as a sofa→lobby flash.
+  assert.equal(ch.seatId, lobbySeat.uid, 'idle agent keeps its valid lobby rest seat');
+});
+
 test('idle agents prefer rest seats inside their own project room', () => {
   const layout = makeLayout(
     [...loungeFurnitureAt('a-beta-sofa', 2, 5), ...loungeFurnitureAt('z-alpha-sofa', 8, 5)],
