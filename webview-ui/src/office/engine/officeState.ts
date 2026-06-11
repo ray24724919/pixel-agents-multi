@@ -3,6 +3,7 @@ import {
   AUTO_ON_SIDE_DEPTH,
   CHARACTER_HIT_HALF_WIDTH,
   CHARACTER_HIT_HEIGHT,
+  CHARACTER_SITTING_OFFSET_PX,
   DISMISS_BUBBLE_FAST_FADE_SEC,
   FURNITURE_ANIM_INTERVAL_SEC,
   HUE_SHIFT_MIN_DEG,
@@ -44,7 +45,7 @@ import type {
 } from '../types.js';
 import { CharacterState, Direction, MATRIX_EFFECT_DURATION, TILE_SIZE } from '../types.js';
 import { inferTileZone } from '../zoneUtils.js';
-import { createCharacter, seatedRenderOffset, updateCharacter } from './characters.js';
+import { createCharacter, isCharacterSeated, updateCharacter } from './characters.js';
 import { matrixEffectSeeds } from './matrixEffect.js';
 
 function manhattan(a: { col: number; row: number }, b: { col: number; row: number }): number {
@@ -1380,11 +1381,11 @@ export class OfficeState {
       // Skip characters that are despawning
       if (ch.matrixEffect === 'despawn') continue;
       // Character sprite is 16x24, anchored bottom-center
-      // Apply the same seated offset + lean the renderer uses so the hit-box tracks the sprite
-      const seatOff = seatedRenderOffset(ch, this.seats);
-      const anchorY = ch.y + seatOff.dyChar;
-      const left = ch.x + seatOff.dx - CHARACTER_HIT_HALF_WIDTH;
-      const right = ch.x + seatOff.dx + CHARACTER_HIT_HALF_WIDTH;
+      // Apply sitting offset to match visual position
+      const sittingOffset = isCharacterSeated(ch) ? CHARACTER_SITTING_OFFSET_PX : 0;
+      const anchorY = ch.y + sittingOffset;
+      const left = ch.x - CHARACTER_HIT_HALF_WIDTH;
+      const right = ch.x + CHARACTER_HIT_HALF_WIDTH;
       const top = anchorY - CHARACTER_HIT_HEIGHT;
       const bottom = anchorY;
       if (worldX >= left && worldX <= right && worldY >= top && worldY <= bottom) {

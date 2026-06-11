@@ -1,6 +1,7 @@
 import type { ColorValue } from '../../components/ui/types.js';
 import {
   BUBBLE_FADE_DURATION_SEC,
+  BUBBLE_SITTING_OFFSET_PX,
   BUBBLE_VERTICAL_OFFSET_PX,
   BUTTON_ICON_COLOR,
   BUTTON_ICON_SIZE_FACTOR,
@@ -8,6 +9,7 @@ import {
   BUTTON_LINE_WIDTH_ZOOM_FACTOR,
   BUTTON_MIN_RADIUS,
   BUTTON_RADIUS_ZOOM_FACTOR,
+  CHARACTER_SITTING_OFFSET_PX,
   CHARACTER_Z_SORT_OFFSET,
   DELEGATION_MARKER_ACTIVE_DOT,
   DELEGATION_MARKER_BG,
@@ -70,7 +72,7 @@ import type {
 } from '../types.js';
 import { TILE_SIZE, TileType } from '../types.js';
 import { getWallInstances, hasWallSprites, wallColorToHex } from '../wallTiles.js';
-import { getCharacterSprite, seatedRenderOffset } from './characters.js';
+import { getCharacterSprite, isCharacterSeated } from './characters.js';
 import { renderMatrixEffect } from './matrixEffect.js';
 
 // ── Render functions ────────────────────────────────────────────
@@ -219,7 +221,6 @@ export function renderScene(
   zoom: number,
   selectedAgentId: number | null,
   hoveredAgentId: number | null,
-  seats?: Map<string, Seat>,
 ): void {
   const drawables: ZDrawable[] = [];
 
@@ -254,11 +255,11 @@ export function renderScene(
     const sprites = getCharacterSprites(ch.palette, ch.hueShift);
     const spriteData = getCharacterSprite(ch, sprites);
     const cached = getCachedSprite(spriteData, zoom);
-    // Sitting offset: shift character down (and lean into tall side sofas) so they visually sit
-    const seatOff = seatedRenderOffset(ch, seats);
+    // Sitting offset: shift character down when seated so they visually sit in the chair
+    const sittingOffset = isCharacterSeated(ch) ? CHARACTER_SITTING_OFFSET_PX : 0;
     // Anchor at bottom-center of character — round to integer device pixels
-    const drawX = Math.round(offsetX + (ch.x + seatOff.dx) * zoom - cached.width / 2);
-    const drawY = Math.round(offsetY + (ch.y + seatOff.dyChar) * zoom - cached.height);
+    const drawX = Math.round(offsetX + ch.x * zoom - cached.width / 2);
+    const drawY = Math.round(offsetY + (ch.y + sittingOffset) * zoom - cached.height);
 
     // Sort characters by bottom of their tile (not center) so they render
     // in front of same-row furniture (e.g. chairs) but behind furniture
@@ -596,7 +597,6 @@ function renderBubbles(
   offsetX: number,
   offsetY: number,
   zoom: number,
-  seats?: Map<string, Seat>,
 ): void {
   for (const ch of characters) {
     if (!ch.bubbleType) continue;
@@ -613,14 +613,11 @@ function renderBubbles(
     const cached = getCachedSprite(sprite, zoom);
     // Position: centered above the character's head
     // Character is anchored bottom-center at (ch.x, ch.y), sprite is 16x24
-    // Place bubble above head with a small gap; follow sitting offset + lean
-    const seatOff = seatedRenderOffset(ch, seats);
-    const bubbleX = Math.round(offsetX + (ch.x + seatOff.dx) * zoom - cached.width / 2);
+    // Place bubble above head with a small gap; follow sitting offset
+    const sittingOff = isCharacterSeated(ch) ? BUBBLE_SITTING_OFFSET_PX : 0;
+    const bubbleX = Math.round(offsetX + ch.x * zoom - cached.width / 2);
     const bubbleY = Math.round(
-      offsetY +
-        (ch.y + seatOff.dyBubble - BUBBLE_VERTICAL_OFFSET_PX) * zoom -
-        cached.height -
-        1 * zoom,
+      offsetY + (ch.y + sittingOff - BUBBLE_VERTICAL_OFFSET_PX) * zoom - cached.height - 1 * zoom,
     );
 
     ctx.save();
@@ -636,15 +633,13 @@ function renderDelegationMarkers(
   offsetX: number,
   offsetY: number,
   zoom: number,
-  seats?: Map<string, Seat>,
 ): void {
   for (const ch of characters) {
     const delegation = ch.delegation;
     if (!delegation) continue;
 
     const label = delegationVisualMarkerText(delegation);
-    const seatOff = seatedRenderOffset(ch, seats);
-    const sittingOff = seatOff.dyBubble;
+    const sittingOff = isCharacterSeated(ch) ? BUBBLE_SITTING_OFFSET_PX : 0;
     const markerHeight = DELEGATION_MARKER_HEIGHT_PX * zoom;
     const markerPadding = DELEGATION_MARKER_PADDING_X_PX * zoom;
     const dotSize = Math.max(DELEGATION_MARKER_DOT_SIZE_PX * zoom, 1);
@@ -658,9 +653,7 @@ function renderDelegationMarkers(
       DELEGATION_MARKER_MIN_WIDTH_PX * zoom,
       textWidth + markerPadding * 2 + dotSize + markerPadding,
     );
-    const markerX = Math.round(
-      offsetX + (ch.x + seatOff.dx) * zoom + DELEGATION_MARKER_OFFSET_X_PX * zoom,
-    );
+    const markerX = Math.round(offsetX + ch.x * zoom + DELEGATION_MARKER_OFFSET_X_PX * zoom);
     const markerY = Math.round(
       offsetY + (ch.y + sittingOff - DELEGATION_MARKER_VERTICAL_OFFSET_PX) * zoom - markerHeight,
     );
@@ -810,17 +803,7 @@ export function renderFrame(
   // Draw walls + furniture + characters (z-sorted)
   const selectedId = selection?.selectedAgentId ?? null;
   const hoveredId = selection?.hoveredAgentId ?? null;
-  renderScene(
-    ctx,
-    allFurniture,
-    characters,
-    offsetX,
-    offsetY,
-    zoom,
-    selectedId,
-    hoveredId,
-    selection?.seats,
-  );
+  renderScene(ctx, allFurniture, characters, offsetX, offsetY, zoom, selectedId, hoveredId);
 
   if (layout) {
     renderProjectRoomDoorplates(
@@ -835,10 +818,10 @@ export function renderFrame(
   }
 
   // Speech bubbles (always on top of characters)
-  renderBubbles(ctx, characters, offsetX, offsetY, zoom, selection?.seats);
+  renderBubbles(ctx, characters, offsetX, offsetY, zoom);
 
   // Delegation markers sit with the character overlays and never create full agents.
-  renderDelegationMarkers(ctx, characters, offsetX, offsetY, zoom, selection?.seats);
+  renderDelegationMarkers(ctx, characters, offsetX, offsetY, zoom);
 
   // Editor overlays
   if (editor) {

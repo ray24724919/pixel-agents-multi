@@ -1,9 +1,4 @@
 import {
-  BUBBLE_SITTING_OFFSET_PX,
-  BUBBLE_TALL_SIDE_SITTING_OFFSET_PX,
-  CHARACTER_SITTING_OFFSET_PX,
-  CHARACTER_TALL_SIDE_SITTING_EMBED_X_PX,
-  CHARACTER_TALL_SIDE_SITTING_OFFSET_PX,
   SEAT_REST_MAX_SEC,
   SEAT_REST_MIN_SEC,
   SUPERVISION_TOOL_NAME,
@@ -112,37 +107,6 @@ export function createCharacter(
 
 export function isCharacterSeated(ch: Character): boolean {
   return ch.state === CharacterState.TYPE && ch.seatId !== null;
-}
-
-/**
- * Render offsets for a seated character — the single source of truth shared by the renderer,
- * hit-test, speech bubbles and tool overlay so they never drift apart. A seat flagged `tallSide`
- * (a 2-tile side sofa/chair, faced LEFT/RIGHT) gets a deeper downward embed so the upright sprite
- * drops onto the cushion, plus a small horizontal lean toward the seat back. Everything else keeps
- * the flat 1-tile-chair offset. `dyChar` drives the character sprite + hit-box; `dyBubble` drives
- * the bubble/marker/overlay which sit a little higher above the head.
- */
-export function seatedRenderOffset(
-  ch: Character,
-  seats?: Map<string, Seat>,
-): { dx: number; dyChar: number; dyBubble: number } {
-  if (!isCharacterSeated(ch)) return { dx: 0, dyChar: 0, dyBubble: 0 };
-  const seat = seats && ch.seatId ? seats.get(ch.seatId) : undefined;
-  const sideFacing = ch.dir === Direction.LEFT || ch.dir === Direction.RIGHT;
-  if (seat?.tallSide && sideFacing) {
-    // Side sofa faces RIGHT with its back/cushion on the LEFT → lean left (negative); the mirrored
-    // left-facing variant leans right (positive).
-    const dx =
-      ch.dir === Direction.RIGHT
-        ? -CHARACTER_TALL_SIDE_SITTING_EMBED_X_PX
-        : CHARACTER_TALL_SIDE_SITTING_EMBED_X_PX;
-    return {
-      dx,
-      dyChar: CHARACTER_TALL_SIDE_SITTING_OFFSET_PX,
-      dyBubble: BUBBLE_TALL_SIDE_SITTING_OFFSET_PX,
-    };
-  }
-  return { dx: 0, dyChar: CHARACTER_SITTING_OFFSET_PX, dyBubble: BUBBLE_SITTING_OFFSET_PX };
 }
 
 export function updateCharacter(
@@ -432,7 +396,11 @@ export function getCharacterSprite(ch: Character, sprites: CharacterSprites): Sp
   switch (ch.state) {
     case CharacterState.TYPE:
       if (!ch.isActive) {
-        return sprites.walk[ch.dir][1];
+        // Resting on a rest seat (e.g. a sofa): use the calm seated READING pose, NOT the standing
+        // walk frame. Returning walk[dir][1] here is what made resting agents render standing on the
+        // sofa — the upstream uses a seated frame for every TYPE state. Reading reads as relaxing
+        // (not working) which fits a rest seat.
+        return sprites.reading[ch.dir][ch.frame % 2];
       }
       if (isReadingTool(ch.currentTool)) {
         return sprites.reading[ch.dir][ch.frame % 2];

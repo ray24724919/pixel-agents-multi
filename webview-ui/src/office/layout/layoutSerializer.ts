@@ -27,23 +27,6 @@ interface WorkstationTile {
   row: number;
 }
 
-/** A 2-tile-tall side SOFA whose seated occupant needs a deeper embed + front z-nudge so the cushion
- *  occludes the lower body. Scoped to SOFAs ONLY: side DESK chairs (WOODEN_CHAIR_SIDE) are 2-tall too,
- *  but the desk in front already hides their legs and the upstream renders them with the plain offset —
- *  special-casing them made seated agents look wrong. Excludes all chairs, benches, 1-tile side seats. */
-function isTallSideSeat(
-  type: string,
-  entry: { orientation?: string; footprintH: number },
-): boolean {
-  return (
-    /^SOFA/i.test(type) &&
-    (entry.orientation === 'side' ||
-      entry.orientation === 'left' ||
-      entry.orientation === 'right') &&
-    entry.footprintH >= 2
-  );
-}
-
 /** Convert flat tile array from layout into 2D grid */
 export function layoutToTileMap(layout: OfficeLayout): TileTypeVal[][] {
   const map: TileTypeVal[][] = [];
@@ -91,12 +74,6 @@ export function layoutToFurnitureInstances(furniture: PlacedFurniture[]): Furnit
         // Use the bottom footprint row so it sorts after the character
         // even when the chair has background tiles that push seats down.
         zY = (item.row + entry.footprintH) * TILE_SIZE + 1;
-      } else if (isTallSideSeat(item.type, entry)) {
-        // Tall (2-tile) side sofa/chair: nudge zY just past the UPPER seat-tile occupant's zY
-        // ((row+1)*TILE_SIZE + CHARACTER_Z_SORT_OFFSET) so the couch frame draws in front of and
-        // occludes that agent's lower body (reads as seated). The lower (front) seat occupant keeps a
-        // higher zY and still renders in front, so nobody is fully hidden behind the couch.
-        zY = (item.row + 1) * TILE_SIZE + 1;
       } else {
         // All other chairs: cap zY to first row bottom so characters
         // at any seat tile render in front of the chair
@@ -287,7 +264,6 @@ export function layoutToSeats(layout: OfficeLayout): Map<string, Seat> {
           seatKind: zone,
           zoneSource,
           assigned: false,
-          ...(isTallSideSeat(item.type, entry) ? { tallSide: true } : {}),
         });
         seatCount++;
       }
