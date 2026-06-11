@@ -793,6 +793,65 @@ export function persistAgents(
   context.workspaceState.update(WORKSPACE_KEY_AGENTS, persisted);
 }
 
+/**
+ * Enforce one-agent-per-terminal across the LIVE agent map. If two non-external agents are bound to
+ * the SAME terminal — a live adoption/launch race (e.g. the /clear-vs-hook timing) can create a
+ * second character on a terminal that already has one — keep the freshest-JSONL agent (the most
+ * recently active session) and tear the rest down. This is the phantom-duplicate the user sees:
+ * "2 agents opened, 3 characters, two clicking through to the same terminal".
+ *
+ * restoreAgents' per-restore `claimedTerminals` guard only dedups entries being freshly restored;
+ * two duplicates that are ALREADY live in the map are skipped there (`agents.has(p.id)`), so they
+ * would never be reaped. Running this on every webview focus (restoreAgents fires on webviewReady)
+ * clears such a duplicate the next time the panel is shown.
+ */
+export function reapDuplicateTerminalAgents(
+  agents: Map<number, AgentState>,
+  fileWatchers: Map<number, fs.FSWatcher>,
+  pollingTimers: Map<number, ReturnType<typeof setInterval>>,
+  waitingTimers: Map<number, ReturnType<typeof setTimeout>>,
+  permissionTimers: Map<number, ReturnType<typeof setTimeout>>,
+  jsonlPollTimers: Map<number, ReturnType<typeof setInterval>>,
+  webview: vscode.Webview | undefined,
+  persist: () => void,
+): void {
+  const byTerminal = new Map<vscode.Terminal, number[]>();
+  for (const [id, agent] of agents) {
+    if (agent.isExternal || !agent.terminalRef) continue;
+    const ids = byTerminal.get(agent.terminalRef) ?? [];
+    ids.push(id);
+    byTerminal.set(agent.terminalRef, ids);
+  }
+  const mtimeMs = (file: string): number => {
+    try {
+      return fs.statSync(file).mtimeMs;
+    } catch {
+      return 0;
+    }
+  };
+  for (const ids of byTerminal.values()) {
+    if (ids.length < 2) continue;
+    // Keep the freshest JSONL (most recently active session); reap the rest.
+    ids.sort((a, b) => mtimeMs(agents.get(b)!.jsonlFile) - mtimeMs(agents.get(a)!.jsonlFile));
+    for (const staleId of ids.slice(1)) {
+      console.log(
+        `[Pixel Agents] Reaped duplicate agent ${staleId} bound to the same terminal as agent ${ids[0]}`,
+      );
+      removeAgent(
+        staleId,
+        agents,
+        fileWatchers,
+        pollingTimers,
+        waitingTimers,
+        permissionTimers,
+        jsonlPollTimers,
+        persist,
+      );
+      webview?.postMessage({ type: 'agentClosed', id: staleId });
+    }
+  }
+}
+
 export function restoreAgents(
   context: vscode.ExtensionContext,
   nextAgentIdRef: { current: number },
@@ -809,6 +868,20 @@ export function restoreAgents(
   webview: vscode.Webview | undefined,
   doPersist: () => void,
 ): void {
+  // Reap any live duplicate terminal bindings first (runs on every webviewReady). This catches a
+  // duplicate created by a live path AFTER the last restore, which the per-restore dedup below misses
+  // because both agents are already in the map.
+  reapDuplicateTerminalAgents(
+    agents,
+    fileWatchers,
+    pollingTimers,
+    waitingTimers,
+    permissionTimers,
+    jsonlPollTimers,
+    webview,
+    doPersist,
+  );
+
   const persisted = context.workspaceState.get<PersistedAgent[]>(WORKSPACE_KEY_AGENTS, []);
   if (persisted.length === 0) return;
 
