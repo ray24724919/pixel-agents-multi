@@ -7,6 +7,7 @@ import {
   FURNITURE_ANIM_INTERVAL_SEC,
   HUE_SHIFT_MIN_DEG,
   HUE_SHIFT_RANGE_DEG,
+  NUDGE_OFF_SEAT_MAX_TILES,
   SEAT_REST_MAX_SEC,
   SEAT_REST_MIN_SEC,
   SUPERVISION_TOOL_NAME,
@@ -1175,9 +1176,22 @@ export class OfficeState {
 
   private nudgeInactiveStandingOffSeats(ch: Character): void {
     if (ch.isActive || ch.state === CharacterState.TYPE || ch.path.length > 0) return;
-    if (!this.getSeatAtTile(ch.tileCol, ch.tileRow)) return;
+    const seatHere = this.getSeatAtTile(ch.tileCol, ch.tileRow);
+    // Resting on its OWN assigned seat: never nudge. The nudge teleports (direct tile write, no path)
+    // to the GLOBALLY-nearest idle floor tile; a densely-packed project room has zero interior idle
+    // tiles, so that target lands in an adjacent same-column room — the agent flashes across rooms off
+    // its own sofa the instant its rest timer expires (TYPE->IDLE). Only nudge an agent loitering on a
+    // seat it does NOT own.
+    if (!seatHere || seatHere === ch.seatId) return;
     const target = this.findNearestIdleFloorTile(ch.tileCol, ch.tileRow);
     if (!target) return;
+    // Even then, only a SHORT local hop — never a cross-room teleport to the globally-nearest tile.
+    if (
+      Math.abs(target.col - ch.tileCol) + Math.abs(target.row - ch.tileRow) >
+      NUDGE_OFF_SEAT_MAX_TILES
+    ) {
+      return;
+    }
     ch.tileCol = target.col;
     ch.tileRow = target.row;
     ch.x = target.col * TILE_SIZE + TILE_SIZE / 2;

@@ -17,6 +17,9 @@ export const WANDER_MOVES_BEFORE_REST_MIN = 3;
 export const WANDER_MOVES_BEFORE_REST_MAX = 6;
 export const SEAT_REST_MIN_SEC = 120.0;
 export const SEAT_REST_MAX_SEC = 240.0;
+/** Max tiles an idle agent may be nudged off a seat it does NOT own. Bounds the off-seat nudge to a
+ *  short local hop so it can never teleport across rooms to the globally-nearest idle floor tile. */
+export const NUDGE_OFF_SEAT_MAX_TILES = 3;
 export const SUPERVISION_TOOL_NAME = 'Delegation';
 
 // ── Matrix Effect ────────────────────────────────────────────

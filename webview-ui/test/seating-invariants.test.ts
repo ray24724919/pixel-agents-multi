@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { beforeEach, test } from 'node:test';
 
-import { FALLBACK_FLOOR_COLOR } from '../src/constants.ts';
+import { FALLBACK_FLOOR_COLOR, NUDGE_OFF_SEAT_MAX_TILES } from '../src/constants.ts';
 import { OfficeState } from '../src/office/engine/officeState.ts';
 import { buildDynamicCatalog } from '../src/office/layout/furnitureCatalog.ts';
 import { layoutToSeats } from '../src/office/layout/layoutSerializer.ts';
@@ -825,4 +825,47 @@ test('sub-agent behavior remains near parent and is not forced into a work seat'
   assert.equal(sub.seatId, null);
   assert.ok(distance <= 3);
   assert.equal(sub.state, CharacterState.TYPE);
+});
+
+type Nudgeable = { nudgeInactiveStandingOffSeats(c: Character): void };
+
+test('an idle agent resting on its OWN seat is never nudged off it (no cross-room teleport)', () => {
+  // Regression for the sofa->adjacent-room flash: when an agent's rest timer expires it flips
+  // TYPE->IDLE while still on its own seat tile; the off-seat nudge used to TELEPORT it to the
+  // globally-nearest idle floor tile, which in a packed room is in a neighbouring room.
+  const layout = makeLayout(loungeFurnitureAt('sofa', 3, 2), 10, 8);
+  const state = new OfficeState(layout);
+  addAgent(state, 1, false, undefined, 'alpha');
+  const ch = state.characters.get(1)!;
+  const seat = [...state.seats.values()][0];
+  ch.seatId = seat.uid; // its OWN seat
+  ch.tileCol = seat.seatCol;
+  ch.tileRow = seat.seatRow;
+  ch.x = seat.seatCol * TILE_SIZE + TILE_SIZE / 2;
+  ch.y = seat.seatRow * TILE_SIZE + TILE_SIZE / 2;
+  ch.state = CharacterState.IDLE;
+  ch.path = [];
+  (state as unknown as Nudgeable).nudgeInactiveStandingOffSeats(ch);
+  assert.equal(ch.tileCol, seat.seatCol, 'stays on its own seat (col)');
+  assert.equal(ch.tileRow, seat.seatRow, 'stays on its own seat (row)');
+});
+
+test('an idle agent on a seat it does NOT own is nudged off, but only a short bounded hop', () => {
+  const layout = makeLayout(loungeFurnitureAt('sofa', 3, 2), 10, 8);
+  const state = new OfficeState(layout);
+  addAgent(state, 1, false, undefined, 'alpha');
+  const ch = state.characters.get(1)!;
+  const seat = [...state.seats.values()][0];
+  ch.seatId = null; // not its seat — loitering on someone else's seat
+  ch.tileCol = seat.seatCol;
+  ch.tileRow = seat.seatRow;
+  ch.x = seat.seatCol * TILE_SIZE + TILE_SIZE / 2;
+  ch.y = seat.seatRow * TILE_SIZE + TILE_SIZE / 2;
+  ch.state = CharacterState.IDLE;
+  ch.path = [];
+  (state as unknown as Nudgeable).nudgeInactiveStandingOffSeats(ch);
+  const moved = Math.abs(ch.tileCol - seat.seatCol) + Math.abs(ch.tileRow - seat.seatRow);
+  assert.ok(moved >= 1, 'nudged off the non-owned seat');
+  assert.ok(moved <= NUDGE_OFF_SEAT_MAX_TILES, 'bounded local hop, never a cross-room teleport');
+  assert.equal(state.getSeatAtTile(ch.tileCol, ch.tileRow), null, 'ended on a non-seat floor tile');
 });
