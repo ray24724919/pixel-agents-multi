@@ -399,10 +399,14 @@ export function getCharacterSprite(ch: Character, sprites: CharacterSprites): Sp
   if (ch.state === CharacterState.WALK) {
     return sprites.walk[ch.dir][ch.frame % 4];
   }
-  // Active = working: typing/reading pose. Covers both desk-seated agents and seatless sub-agents
-  // (which type next to their parent), so it must NOT depend on being on a seat.
+  // Active = working: the typing pose. Covers both desk-seated agents and seatless sub-agents (which
+  // type next to their parent), so it must NOT depend on being on a seat. The relaxed `reading` frames
+  // are the SAME frames the resting pose uses, so applying them to ordinary read tools (Read/Grep/…)
+  // made a busy working agent look like it was resting at its desk. Reserve the reading posture for
+  // the delegation/supervision state only (a lead leaning back to watch its sub-agents); all other
+  // active work — read or write — types.
   if (ch.isActive && ch.state === CharacterState.TYPE) {
-    return isReadingTool(ch.currentTool)
+    return ch.currentTool === SUPERVISION_TOOL_NAME
       ? sprites.reading[ch.dir][ch.frame % 2]
       : sprites.typing[ch.dir][ch.frame % 2];
   }

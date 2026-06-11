@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
+import { SUPERVISION_TOOL_NAME } from '../src/constants.ts';
 import { getCharacterSprite } from '../src/office/engine/characters.ts';
 import type { CharacterSprites } from '../src/office/sprites/spriteData.ts';
 import { type Character, CharacterState, Direction, type SpriteData } from '../src/office/types.ts';
@@ -60,6 +61,21 @@ test('an idle agent wandering on open floor renders the standing walk pose', () 
 test('an ACTIVE typing agent renders the typing frame regardless of seat (covers sub-agents)', () => {
   assert.equal(tag(getCharacterSprite(ch({ isActive: true, seated: false }), sprites)), 'type0');
   assert.equal(tag(getCharacterSprite(ch({ isActive: true, seated: true }), sprites)), 'type0');
+});
+
+test('an ACTIVE agent running a read tool types (does NOT look like it is resting)', () => {
+  // The bug: read tools (Read/Grep/Glob/WebFetch) used the reading frames, which are the SAME frames
+  // as the resting pose, so a busy agent at its desk looked like it was resting. Working now always types.
+  for (const tool of ['Read', 'Grep', 'Glob', 'WebFetch', 'WebSearch']) {
+    const c = ch({ isActive: true, seated: true, currentTool: tool });
+    assert.equal(tag(getCharacterSprite(c, sprites)), 'type0', `tool ${tool} should type`);
+  }
+});
+
+test('an ACTIVE delegating supervisor keeps the reading (watching) posture', () => {
+  // The reading posture is reserved for delegation/supervision (a lead watching its sub-agents).
+  const c = ch({ isActive: true, seated: true, currentTool: SUPERVISION_TOOL_NAME });
+  assert.equal(tag(getCharacterSprite(c, sprites)), 'read0');
 });
 
 test('a walking agent always animates the walk cycle', () => {
