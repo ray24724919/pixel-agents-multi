@@ -140,6 +140,10 @@ export function ensureProjectRoomsForAgents(
   const initialRooms = normalizeProjectRooms(layout);
   let current: OfficeLayout = { ...layout, projectRooms: initialRooms };
   const initialProjectRooms = initialRooms.filter((room) => room.kind === ProjectRoomKind.PROJECT);
+  // Whether a public lobby already existed BEFORE this provision. Once it does, the campus is frozen
+  // (additive only) — see ensureWorkCorridorCampusLayout. The reflow is reserved for the genuine
+  // first-build / no-lobby recovery case, where the freshly created lobby must absorb orphaned rooms.
+  const lobbyExistedBefore = initialRooms.some((room) => room.kind === ProjectRoomKind.PUBLIC);
   const existingKeys = new Set(
     initialProjectRooms
       .map((room) => normalizeProjectKey(room.project?.key))
@@ -180,6 +184,7 @@ export function ensureProjectRoomsForAgents(
       lobbyCore,
       template,
       expectedProjectRoomCount,
+      lobbyExistedBefore,
     );
     current = corridorResult.layout;
     lobbyCore = corridorResult.lobbyCore;
@@ -686,11 +691,28 @@ function ensureWorkCorridorCampusLayout(
   lobbyCore: ProjectRoom['bounds'],
   template: RoomTemplateAssets,
   expectedProjectRoomCount: number,
+  lobbyExisted: boolean,
 ): { layout: OfficeLayout; lobbyCore: ProjectRoom['bounds']; changedCount: number } {
   const rooms = normalizeProjectRooms(layout);
   const publicRoom = rooms.find((room) => room.kind === ProjectRoomKind.PUBLIC);
   const projectRooms = rooms.filter((room) => room.kind === ProjectRoomKind.PROJECT);
   if (!publicRoom || projectRooms.length === 0) return { layout, lobbyCore, changedCount: 0 };
+
+  // FREEZE: once a real public lobby and project rooms already exist and the project rooms fit the
+  // current grid, the campus is frozen — generation stays additive only (new rooms append via
+  // allocateRoomBounds). Re-laying-out existing rooms on every provision reshuffled their bounds,
+  // which teleported seated agents and orphaned hand-placed furniture, and the lobby row anchor
+  // ratcheted the grid down to MAX_ROWS. Reuse the EXISTING lobby bounds so any new rooms append
+  // relative to the real campus, not a recomputed (and possibly ratcheted) position. The reflow
+  // below is kept only for the genuine first-build / no-lobby recovery case, where a freshly created
+  // lobby must absorb project rooms left orphaned by older code.
+  if (lobbyExisted && projectRooms.every((room) => roomBoundsFitGrid(layout, room.bounds))) {
+    // The reflow used to also fire on `hasStaleLobbyPods` purely to refresh lounge furniture. That
+    // coupling is gone: lounge furniture is owned by the downstream ensureLobbyLoungeFurniture pass,
+    // which is idempotent (it skips lounge pods/seats that already exist), so freezing here neither
+    // strands nor duplicates it — and stripping pods here would only flip-flop against that pass.
+    return { layout, lobbyCore: publicRoom.bounds, changedCount: 0 };
+  }
 
   const corridorBounds = deriveWorkCorridorBounds(layout, expectedProjectRoomCount);
   const roomSlots = buildWorkCorridorRoomSlots(
@@ -974,6 +996,16 @@ function boundsFitMax(bounds: ProjectRoom['bounds']): boolean {
   );
 }
 
+/** True when the bounds lie fully within the layout's current grid (not just the MAX_* ceiling). */
+function roomBoundsFitGrid(layout: OfficeLayout, bounds: ProjectRoom['bounds']): boolean {
+  return (
+    bounds.col >= 0 &&
+    bounds.row >= 0 &&
+    bounds.col + bounds.width <= layout.cols &&
+    bounds.row + bounds.height <= layout.rows
+  );
+}
+
 function canPlaceRoomBounds(layout: OfficeLayout, bounds: ProjectRoom['bounds']): boolean {
   if (!boundsFitMax(bounds)) return false;
   if (bounds.col + bounds.width > layout.cols || bounds.row + bounds.height > layout.rows) {
@@ -1007,6 +1039,16 @@ function rectsOverlap(a: ProjectRoom['bounds'], b: ProjectRoom['bounds']): boole
     a.col + a.width > b.col &&
     a.row < b.row + b.height &&
     a.row + a.height > b.row
+  );
+}
+
+/** True when `rect` lies fully within `bounds` (edges inclusive). */
+function rectInsideBounds(rect: ProjectRoom['bounds'], bounds: ProjectRoom['bounds']): boolean {
+  return (
+    rect.col >= bounds.col &&
+    rect.row >= bounds.row &&
+    rect.col + rect.width <= bounds.col + bounds.width &&
+    rect.row + rect.height <= bounds.row + bounds.height
   );
 }
 
@@ -2775,17 +2817,39 @@ function stableUniqueRoomId(base: string, rooms: ProjectRoom[]): string {
 function protectedDesignMaxRow(layout: OfficeLayout): number {
   const handFurniture = layout.furniture.filter((item) => !isGeneratedFurnitureUid(item.uid));
   if (handFurniture.length === 0) return -1;
+  const rooms = normalizeProjectRooms(layout);
+  const campusRooms = rooms.filter(
+    (room) => room.kind === ProjectRoomKind.PUBLIC || room.kind === ProjectRoomKind.PROJECT,
+  );
+  // The campus footprint is the bounding box of every generated room (lobby + project rooms). The
+  // generator paints corridor tiles WITHIN this box (between room doorways and the lobby) that fall
+  // outside any single room rect. The old code counted those generated tiles, so the anchor row
+  // ratcheted downward every provision — pushing the campus lower and growing the grid to MAX_ROWS.
+  const footprint =
+    campusRooms.length > 0 ? unionBounds(campusRooms.map((room) => room.bounds)) : null;
+
   let maxRow = -1;
   for (const item of handFurniture) {
     const entry = getAllCatalogEntries().find((candidate) => candidate.type === item.type);
-    maxRow = Math.max(maxRow, item.row + (entry?.footprintH ?? 1) - 1);
+    const footprintW = entry?.footprintW ?? 1;
+    const footprintH = entry?.footprintH ?? 1;
+    const rect = { col: item.col, row: item.row, width: footprintW, height: footprintH };
+    // Skip hand furniture that sits fully inside an existing ROOM (the room already contains it, so
+    // it must not push the campus below its own contents). Crucially we test individual rooms, NOT
+    // the footprint bbox: a hand item in the gap BETWEEN scattered rooms is real design and must
+    // still extend the protected row.
+    if (campusRooms.some((room) => rectInsideBounds(rect, room.bounds))) continue;
+    maxRow = Math.max(maxRow, item.row + footprintH - 1);
   }
-  const rooms = normalizeProjectRooms(layout);
   for (let row = 0; row < layout.rows; row++) {
     for (let col = 0; col < layout.cols; col++) {
       const tile = layout.tiles[row * layout.cols + col];
       if (tile === TileType.VOID) continue;
-      if (rooms.some((room) => pointInBounds(col, row, room.bounds))) continue;
+      // Skip tiles inside the campus footprint — this is what excludes the generator's own corridor
+      // tiles (untagged floor between rooms) and stops the ratchet. Hand-painted floor outside the
+      // campus is still counted; hand-painted floor wedged inside the bbox is rare and additionally
+      // guarded at allocation time by canPlaceRoomBounds / clearCampusTiles.
+      if (footprint !== null && pointInBounds(col, row, footprint)) continue;
       maxRow = Math.max(maxRow, row);
     }
   }
