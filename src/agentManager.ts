@@ -817,7 +817,25 @@ export function restoreAgents(
   let maxIdx = 0;
   let restoredProjectDir: string | null = null;
 
-  for (const p of persisted) {
+  // A terminal name can be reused (an agent is closed and a new one is spawned) or a stale persisted
+  // entry can linger, so two persisted agents may map to the SAME live terminal. Restoring both binds
+  // two agents (two characters) to one terminal — the phantom-duplicate the user sees. Restore
+  // freshest-JSONL first and never claim the same terminal twice, so a terminal keeps exactly one
+  // (the most recently active) agent. Because any two agents that share a terminal also share its
+  // name, this also reaps a duplicate created by any other path on the next restore (webview focus).
+  const claimedTerminals = new Set<vscode.Terminal>();
+  const jsonlMtimeMs = (file: string): number => {
+    try {
+      return fs.statSync(file).mtimeMs;
+    } catch {
+      return 0;
+    }
+  };
+  const restoreOrder = [...persisted].sort(
+    (a, b) => jsonlMtimeMs(b.jsonlFile) - jsonlMtimeMs(a.jsonlFile),
+  );
+
+  for (const p of restoreOrder) {
     // Skip agents already in the map — prevents duplicate file watchers on re-entry
     // (webviewReady fires on every panel focus, re-calling restoreAgents each time)
     if (agents.has(p.id)) {
@@ -839,6 +857,10 @@ export function restoreAgents(
       // Terminal agents — find matching terminal by name
       terminal = liveTerminals.find((t) => t.name === p.terminalName);
       if (!terminal) continue;
+      // One agent per terminal: a fresher agent already claimed this terminal — this is a stale
+      // duplicate (same terminal name reused), skip it so we never show two characters for one terminal.
+      if (claimedTerminals.has(terminal)) continue;
+      claimedTerminals.add(terminal);
     }
 
     const sessionId = p.sessionId || path.basename(p.jsonlFile, '.jsonl');
