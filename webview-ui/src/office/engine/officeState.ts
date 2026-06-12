@@ -685,14 +685,29 @@ export class OfficeState {
   }
 
   private getMeetingWalkableTiles(): Array<{ col: number; row: number }> {
-    const meetingTiles = this.idleWalkableTiles.filter(
+    // Meetings gather in shared space — never inside a project room. idleWalkableTiles now includes
+    // room interiors (so idle agents can wander at home), but a team gathering must not converge
+    // into some project's room.
+    const sharedTiles = this.idleWalkableTiles.filter(
+      (tile) =>
+        !(this.layout.projectRooms ?? []).some(
+          (room) =>
+            room.kind === 'project' &&
+            tile.col >= room.bounds.col &&
+            tile.col < room.bounds.col + room.bounds.width &&
+            tile.row >= room.bounds.row &&
+            tile.row < room.bounds.row + room.bounds.height,
+        ),
+    );
+    const pool = sharedTiles.length > 0 ? sharedTiles : this.idleWalkableTiles;
+    const meetingTiles = pool.filter(
       (tile) => inferTileZone(this.layout, tile.col, tile.row).zone === 'meeting',
     );
-    const restTiles = this.idleWalkableTiles.filter((tile) => {
+    const restTiles = pool.filter((tile) => {
       const zone = inferTileZone(this.layout, tile.col, tile.row).zone;
       return zone === 'rest' || zone === 'neutral';
     });
-    const nonWorkTiles = this.idleWalkableTiles.filter(
+    const nonWorkTiles = pool.filter(
       (tile) => inferTileZone(this.layout, tile.col, tile.row).zone !== 'work',
     );
     const candidates =
@@ -702,7 +717,7 @@ export class OfficeState {
           ? restTiles
           : nonWorkTiles.length > 0
             ? nonWorkTiles
-            : this.idleWalkableTiles;
+            : pool;
     if (candidates.length <= 6) return candidates;
 
     const center = this.getTileCentroid(candidates);

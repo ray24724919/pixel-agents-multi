@@ -292,6 +292,29 @@ test('idle wander floor exists inside left-half project rooms (no legacy work-zo
   assert.ok(inLeftRoom.length > 0, 'left-half room must keep idle-walkable floor');
 });
 
+test('team meeting gathers in shared space, never inside a project room', () => {
+  // idleWalkableTiles now includes project-room interiors (idle wander floor), but a team gathering
+  // must converge in shared space — not in some project's room.
+  const layout = makeLayout([], 12, 8);
+  layout.projectRooms = [
+    projectRoom('proj-alpha', 'alpha', 0, 0, 6, 8),
+    room('public', 'lobby', 6, 0, 6, 8),
+  ];
+  const state = new OfficeState(layout);
+  addAgent(state, 1, false, undefined, 'bravo');
+  state.characters.get(1)!.teamName = 'team-x';
+
+  state.setMeetingTeam('team-x');
+
+  const ch = state.characters.get(1)!;
+  const target =
+    ch.path.length > 0 ? ch.path[ch.path.length - 1]! : { col: ch.tileCol, row: ch.tileRow };
+  assert.ok(
+    target.col >= 6,
+    `meeting target (${target.col},${target.row}) must be outside the project room`,
+  );
+});
+
 test('idle agent can rest in both its own project room and the public lobby lounge', () => {
   const projRoom = projectRoom('proj-alpha', 'alpha', 1, 1, 4, 4);
   const lobby = room('public', 'lobby', 6, 1, 4, 4);
