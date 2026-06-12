@@ -164,6 +164,7 @@ export function normalizeProjectRoom(layout: OfficeLayout, value: unknown): Proj
   const label = rawLabel ? safeProjectRoomLabel(rawLabel, '') : undefined;
   const createdAtMs = cleanTimestamp(value.createdAtMs);
   const updatedAtMs = cleanTimestamp(value.updatedAtMs);
+  const loungeRev = cleanTimestamp(value.loungeRev);
 
   return {
     id,
@@ -174,6 +175,7 @@ export function normalizeProjectRoom(layout: OfficeLayout, value: unknown): Proj
     ...(value.color ? { color: value.color as ProjectRoom['color'] } : {}),
     ...(createdAtMs !== undefined ? { createdAtMs } : {}),
     ...(updatedAtMs !== undefined ? { updatedAtMs } : {}),
+    ...(loungeRev !== undefined ? { loungeRev } : {}),
   };
 }
 

@@ -30,6 +30,7 @@ import {
   PROJECT_ROOM_LOBBY_LOUNGE_MAX_PODS,
   PROJECT_ROOM_LOBBY_LOUNGE_MIN_DECOR,
   PROJECT_ROOM_LOBBY_LOUNGE_MIN_PODS,
+  PROJECT_ROOM_LOBBY_LOUNGE_REV,
   PROJECT_ROOM_LOBBY_LOUNGE_TILES_PER_DECOR,
   PROJECT_ROOM_LOBBY_LOUNGE_TILES_PER_POD,
   PROJECT_ROOM_MIN_HEIGHT,
@@ -1600,9 +1601,21 @@ function ensureLobbyLoungeFurniture(
 ): { layout: OfficeLayout; addedCount: number } {
   let furniture = layout.furniture;
   let addedCount = 0;
+  const stampedRoomIds = new Set<string>();
   for (const room of normalizeProjectRooms(layout).filter(
     (candidate) => candidate.kind === ProjectRoomKind.PUBLIC,
   )) {
+    // One-time lounge: a stamped lobby is owned by the user — generation never reasserts its lounge
+    // furniture, so manual edits (move/delete/add) survive every reload. Without this, the corridor
+    // ensure recomputed the canonical lounge set each provision and snapped any deviation back.
+    if (room.loungeRev === PROJECT_ROOM_LOBBY_LOUNGE_REV) continue;
+    // Migration for lobbies provisioned before the stamp existed: lounge furniture already present →
+    // stamp as-is WITHOUT reasserting, so any user edits made since are respected from now on.
+    if (furniture.some((item) => isGeneratedLobbyLoungeFurniture(room, item))) {
+      stampedRoomIds.add(room.id);
+      continue;
+    }
+    stampedRoomIds.add(room.id);
     let roomAdded = 0;
     const cleanedFurniture = furniture.filter((item) => {
       if (!isGeneratedFurnitureUid(item.uid)) return true; // never remove hand-placed furniture
@@ -1704,6 +1717,17 @@ function ensureLobbyLoungeFurniture(
       furniture = nextFurniture;
       addedCount += roomAdded;
     }
+  }
+  if (stampedRoomIds.size > 0) {
+    const projectRooms = normalizeProjectRooms(layout).map((room) =>
+      stampedRoomIds.has(room.id) ? { ...room, loungeRev: PROJECT_ROOM_LOBBY_LOUNGE_REV } : room,
+    );
+    // Stamping must persist (count as a change) so an already-provisioned lobby is marked exactly
+    // once and never touched again.
+    return {
+      layout: { ...layout, furniture, projectRooms },
+      addedCount: addedCount + stampedRoomIds.size,
+    };
   }
   return addedCount > 0 ? { layout: { ...layout, furniture }, addedCount } : { layout, addedCount };
 }

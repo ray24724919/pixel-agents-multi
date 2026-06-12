@@ -8,6 +8,7 @@ import {
   PROJECT_ROOM_GENERATED_FLOOR_COLOR,
   PROJECT_ROOM_GENERATED_FLOOR_TILE,
   PROJECT_ROOM_GENERATED_WALL_COLOR,
+  PROJECT_ROOM_LOBBY_LOUNGE_REV,
   PROJECT_ROOM_TEMPLATE,
 } from '../src/constants.ts';
 import { buildDynamicCatalog, getCatalogEntry } from '../src/office/layout/furnitureCatalog.ts';
@@ -402,6 +403,67 @@ test('an existing public lobby and project room are kept in place (frozen) and g
       (seat) => seat.seatKind === 'rest',
     ),
   );
+});
+
+test('lobby lounge is planted once (stamped): user edits to lounge furniture survive re-provision', () => {
+  // First build: lounge planted + the lobby stamped with loungeRev.
+  const first = ensureProjectRoomsForAgents(makeLayout(), [
+    { folderName: 'Alpha', isSubagent: false },
+  ]);
+  const lobby = publicRooms(first.layout)[0]!;
+  assert.equal(lobby.loungeRev, PROJECT_ROOM_LOBBY_LOUNGE_REV);
+  const seatA = first.layout.furniture.find((item) => item.uid === `${lobby.id}-lounge-seat-a`)!;
+  assert.ok(seatA, 'first build must plant the lounge');
+
+  // The user edits the lobby: moves one sofa, deletes one table. These must SURVIVE the next
+  // provision — previously the corridor ensure recomputed the canonical lounge set and snapped
+  // every deviation back (the "my lobby edits revert on reload" bug).
+  const edited = {
+    ...first.layout,
+    furniture: first.layout.furniture
+      .filter((item) => item.uid !== `${lobby.id}-lounge-table-a`)
+      .map((item) => (item.uid === seatA.uid ? { ...item, col: item.col + 1 } : item)),
+  };
+
+  const second = ensureProjectRoomsForAgents(edited, [{ folderName: 'Alpha', isSubagent: false }]);
+  const seatAfter = second.layout.furniture.find((item) => item.uid === seatA.uid);
+  assert.equal(seatAfter?.col, seatA.col + 1, 'moved lounge sofa must stay where the user put it');
+  assert.equal(
+    second.layout.furniture.some((item) => item.uid === `${lobby.id}-lounge-table-a`),
+    false,
+    'deleted lounge table must stay deleted',
+  );
+  assert.equal(second.loungeFurnitureAddedCount, 0, 'stamped lobby must see zero lounge churn');
+});
+
+test('a pre-stamp lobby that already has lounge furniture is stamped as-is without reasserting', () => {
+  // Migration path: lobbies provisioned before the stamp existed carry lounge furniture but no
+  // loungeRev. The first provision after upgrade must stamp them WITHOUT moving anything.
+  const first = ensureProjectRoomsForAgents(makeLayout(), [
+    { folderName: 'Alpha', isSubagent: false },
+  ]);
+  const lobby = publicRooms(first.layout)[0]!;
+  const unstamped = {
+    ...first.layout,
+    projectRooms: (first.layout.projectRooms ?? []).map((room) => {
+      const clone = { ...room };
+      delete clone.loungeRev;
+      return clone;
+    }),
+  };
+  const moved = {
+    ...unstamped,
+    furniture: unstamped.furniture.map((item) =>
+      item.uid === `${lobby.id}-lounge-seat-a` ? { ...item, col: item.col + 1 } : item,
+    ),
+  };
+  const second = ensureProjectRoomsForAgents(moved, [{ folderName: 'Alpha', isSubagent: false }]);
+  const seatAfter = second.layout.furniture.find(
+    (item) => item.uid === `${lobby.id}-lounge-seat-a`,
+  );
+  const movedSeat = moved.furniture.find((item) => item.uid === `${lobby.id}-lounge-seat-a`)!;
+  assert.equal(seatAfter?.col, movedSeat.col, 'migration stamp must not reassert lounge positions');
+  assert.equal(publicRooms(second.layout)[0]?.loungeRev, PROJECT_ROOM_LOBBY_LOUNGE_REV);
 });
 
 test('an existing work-corridor lounge is kept in place, not reflowed', () => {

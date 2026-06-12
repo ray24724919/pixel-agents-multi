@@ -165,6 +165,10 @@ export interface ProjectRoom {
   color?: ColorValue;
   createdAtMs?: number;
   updatedAtMs?: number;
+  /** Lounge-stamp revision for PUBLIC rooms: once set, generation never reasserts the lobby's lounge
+   *  furniture, so the user's manual lobby edits survive reloads (same one-time-stamp pattern as the
+   *  project-room template's -tpl- uids). */
+  loungeRev?: number;
 }
 
 export interface OfficeLayout {
