@@ -1,3 +1,4 @@
+import type { TokenRateLimitSnapshot } from '../../office/types.js';
 // Pure formatting / className helpers extracted from AgentCenter.tsx so the cluster files can import
 // them without reaching back into the monolithic surface component. Only types are imported, so this
 // module stays runtime dependency-free.
@@ -93,4 +94,28 @@ export function providerLabel(providerId: string): string {
   if (providerId === 'codex') return 'Codex';
   if (providerId === 'claude') return 'Claude';
   return providerId;
+}
+
+export function formatRateLimit(limit: TokenRateLimitSnapshot): string {
+  const percent =
+    limit.usedPercent !== undefined
+      ? `${Math.round(limit.usedPercent)}% quota used`
+      : limit.remainingPercent !== undefined
+        ? `${Math.round(limit.remainingPercent)}% quota remaining`
+        : 'quota snapshot available';
+  const reset = rateLimitResetText(limit);
+  return reset ? `Codex ${percent}; resets ${reset}.` : `Codex ${percent}.`;
+}
+
+export function rateLimitResetText(limit: TokenRateLimitSnapshot): string | undefined {
+  let seconds: number | undefined;
+  if (limit.resetAfterSeconds !== undefined) {
+    seconds = limit.resetAfterSeconds;
+  } else if (limit.resetAtMs !== undefined) {
+    seconds = Math.max(0, Math.round((limit.resetAtMs - Date.now()) / 1000));
+  }
+  if (seconds === undefined) return undefined;
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
+  return `${Math.round(seconds / 3600)}h`;
 }
