@@ -4,7 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 
-import { JSONL_POLL_INTERVAL_MS } from '../server/src/constants.js';
+import { EXTERNAL_AGENT_STALE_REAP_MS, JSONL_POLL_INTERVAL_MS } from '../server/src/constants.js';
 import {
   buildCodexLaunchArgs,
   buildCodexLaunchCommand,
@@ -793,6 +793,125 @@ export function persistAgents(
   context.workspaceState.update(WORKSPACE_KEY_AGENTS, persisted);
 }
 
+/**
+ * Enforce one-agent-per-terminal across the LIVE agent map. If two non-external agents are bound to
+ * the SAME terminal — a live adoption/launch race (e.g. the /clear-vs-hook timing) can create a
+ * second character on a terminal that already has one — keep the freshest-JSONL agent (the most
+ * recently active session) and tear the rest down. This is the phantom-duplicate the user sees:
+ * "2 agents opened, 3 characters, two clicking through to the same terminal".
+ *
+ * restoreAgents' per-restore `claimedTerminals` guard only dedups entries being freshly restored;
+ * two duplicates that are ALREADY live in the map are skipped there (`agents.has(p.id)`), so they
+ * would never be reaped. Running this on every webview focus (restoreAgents fires on webviewReady)
+ * clears such a duplicate the next time the panel is shown.
+ */
+export function reapDuplicateTerminalAgents(
+  agents: Map<number, AgentState>,
+  fileWatchers: Map<number, fs.FSWatcher>,
+  pollingTimers: Map<number, ReturnType<typeof setInterval>>,
+  waitingTimers: Map<number, ReturnType<typeof setTimeout>>,
+  permissionTimers: Map<number, ReturnType<typeof setTimeout>>,
+  jsonlPollTimers: Map<number, ReturnType<typeof setInterval>>,
+  webview: vscode.Webview | undefined,
+  persist: () => void,
+  onAgentRemoved?: (agent: AgentState) => void,
+): void {
+  const byTerminal = new Map<vscode.Terminal, number[]>();
+  for (const [id, agent] of agents) {
+    if (agent.isExternal || !agent.terminalRef) continue;
+    const ids = byTerminal.get(agent.terminalRef) ?? [];
+    ids.push(id);
+    byTerminal.set(agent.terminalRef, ids);
+  }
+  const mtimeMs = (file: string): number => {
+    try {
+      return fs.statSync(file).mtimeMs;
+    } catch {
+      return 0;
+    }
+  };
+  for (const ids of byTerminal.values()) {
+    if (ids.length < 2) continue;
+    // Keep the freshest JSONL (most recently active session); reap the rest.
+    ids.sort((a, b) => mtimeMs(agents.get(b)!.jsonlFile) - mtimeMs(agents.get(a)!.jsonlFile));
+    for (const staleId of ids.slice(1)) {
+      console.log(
+        `[Pixel Agents] Reaped duplicate agent ${staleId} bound to the same terminal as agent ${ids[0]}`,
+      );
+      const staleAgent = agents.get(staleId);
+      // Unregister hook routing BEFORE removal: a lingering sessionId→agentId mapping would route
+      // future hook events (e.g. a resume of that session) to a dead id and drop them.
+      if (staleAgent) onAgentRemoved?.(staleAgent);
+      removeAgent(
+        staleId,
+        agents,
+        fileWatchers,
+        pollingTimers,
+        waitingTimers,
+        permissionTimers,
+        jsonlPollTimers,
+        persist,
+      );
+      webview?.postMessage({ type: 'agentClosed', id: staleId });
+    }
+  }
+}
+
+/**
+ * Reap EXTERNAL agents whose session is dead: the transcript no longer exists, or has been silent
+ * longer than EXTERNAL_AGENT_STALE_REAP_MS. Scheduled/recurring sessions (e.g. a daily cron run)
+ * spawn a fresh external agent per run, and their SessionEnd usually fires while VS Code is closed —
+ * so nothing live ever removes the previous run's agent, and restoreAgents would re-restore it as
+ * long as the transcript file existed on disk (weeks). The user saw the room gain one zombie agent
+ * per day, with the agent count no longer matching the session count.
+ *
+ * Removal is cheap and reversible: adoption windows are 2-10 minutes, so a reaped session that
+ * genuinely wakes up again is re-adopted within seconds of new activity. Hooks-only providers
+ * (no transcript file) are managed purely by SessionEnd and are never stale-reaped.
+ */
+export function reapStaleExternalAgents(
+  agents: Map<number, AgentState>,
+  fileWatchers: Map<number, fs.FSWatcher>,
+  pollingTimers: Map<number, ReturnType<typeof setInterval>>,
+  waitingTimers: Map<number, ReturnType<typeof setTimeout>>,
+  permissionTimers: Map<number, ReturnType<typeof setTimeout>>,
+  jsonlPollTimers: Map<number, ReturnType<typeof setInterval>>,
+  webview: vscode.Webview | undefined,
+  persist: () => void,
+  onAgentRemoved?: (agent: AgentState) => void,
+): void {
+  const staleIds: number[] = [];
+  for (const [id, agent] of agents) {
+    if (!agent.isExternal) continue;
+    if (!agent.jsonlFile) continue; // hooks-only provider: lifecycle owned by SessionEnd
+    try {
+      const stat = fs.statSync(agent.jsonlFile);
+      if (Date.now() - stat.mtimeMs > EXTERNAL_AGENT_STALE_REAP_MS) staleIds.push(id);
+    } catch {
+      staleIds.push(id); // transcript deleted → session gone
+    }
+  }
+  for (const id of staleIds) {
+    const agent = agents.get(id);
+    if (!agent) continue;
+    console.log(
+      `[Pixel Agents] Reaped stale external agent ${id} (transcript silent > ${Math.round(EXTERNAL_AGENT_STALE_REAP_MS / 3_600_000)}h)`,
+    );
+    onAgentRemoved?.(agent);
+    removeAgent(
+      id,
+      agents,
+      fileWatchers,
+      pollingTimers,
+      waitingTimers,
+      permissionTimers,
+      jsonlPollTimers,
+      persist,
+    );
+    webview?.postMessage({ type: 'agentClosed', id });
+  }
+}
+
 export function restoreAgents(
   context: vscode.ExtensionContext,
   nextAgentIdRef: { current: number },
@@ -808,7 +927,36 @@ export function restoreAgents(
   activeAgentIdRef: { current: number | null },
   webview: vscode.Webview | undefined,
   doPersist: () => void,
+  onAgentRemoved?: (agent: AgentState) => void,
 ): void {
+  // Reap any live duplicate terminal bindings first (runs on every webviewReady). This catches a
+  // duplicate created by a live path AFTER the last restore, which the per-restore dedup below misses
+  // because both agents are already in the map.
+  reapDuplicateTerminalAgents(
+    agents,
+    fileWatchers,
+    pollingTimers,
+    waitingTimers,
+    permissionTimers,
+    jsonlPollTimers,
+    webview,
+    doPersist,
+    onAgentRemoved,
+  );
+  // Reap dead external sessions in the live map too (scheduled runs whose SessionEnd was missed
+  // while this window was open across the schedule boundary).
+  reapStaleExternalAgents(
+    agents,
+    fileWatchers,
+    pollingTimers,
+    waitingTimers,
+    permissionTimers,
+    jsonlPollTimers,
+    webview,
+    doPersist,
+    onAgentRemoved,
+  );
+
   const persisted = context.workspaceState.get<PersistedAgent[]>(WORKSPACE_KEY_AGENTS, []);
   if (persisted.length === 0) return;
 
@@ -817,7 +965,25 @@ export function restoreAgents(
   let maxIdx = 0;
   let restoredProjectDir: string | null = null;
 
-  for (const p of persisted) {
+  // A terminal name can be reused (an agent is closed and a new one is spawned) or a stale persisted
+  // entry can linger, so two persisted agents may map to the SAME live terminal. Restoring both binds
+  // two agents (two characters) to one terminal — the phantom-duplicate the user sees. Restore
+  // freshest-JSONL first and never claim the same terminal twice, so a terminal keeps exactly one
+  // (the most recently active) agent. Because any two agents that share a terminal also share its
+  // name, this also reaps a duplicate created by any other path on the next restore (webview focus).
+  const claimedTerminals = new Set<vscode.Terminal>();
+  const jsonlMtimeMs = (file: string): number => {
+    try {
+      return fs.statSync(file).mtimeMs;
+    } catch {
+      return 0;
+    }
+  };
+  const restoreOrder = [...persisted].sort(
+    (a, b) => jsonlMtimeMs(b.jsonlFile) - jsonlMtimeMs(a.jsonlFile),
+  );
+
+  for (const p of restoreOrder) {
     // Skip agents already in the map — prevents duplicate file watchers on re-entry
     // (webviewReady fires on every panel focus, re-calling restoreAgents each time)
     if (agents.has(p.id)) {
@@ -829,9 +995,14 @@ export function restoreAgents(
     const isExternal = p.isExternal ?? false;
 
     if (isExternal) {
-      // External agents — restore if JSONL file still exists on disk
+      // External agents — restore only when the transcript still exists AND is recent. A scheduled
+      // session's SessionEnd typically fires while VS Code is closed, so nothing live removes the old
+      // agent; transcripts linger on disk for weeks, so an existence check alone re-restored every
+      // past run's agent — one new zombie per scheduled run. A stale transcript = a dead session;
+      // if it ever wakes again, scanners/hooks re-adopt it within seconds.
       try {
-        if (!fs.existsSync(p.jsonlFile)) continue;
+        const stat = fs.statSync(p.jsonlFile);
+        if (Date.now() - stat.mtimeMs > EXTERNAL_AGENT_STALE_REAP_MS) continue;
       } catch {
         continue;
       }
@@ -839,6 +1010,10 @@ export function restoreAgents(
       // Terminal agents — find matching terminal by name
       terminal = liveTerminals.find((t) => t.name === p.terminalName);
       if (!terminal) continue;
+      // One agent per terminal: a fresher agent already claimed this terminal — this is a stale
+      // duplicate (same terminal name reused), skip it so we never show two characters for one terminal.
+      if (claimedTerminals.has(terminal)) continue;
+      claimedTerminals.add(terminal);
     }
 
     const sessionId = p.sessionId || path.basename(p.jsonlFile, '.jsonl');

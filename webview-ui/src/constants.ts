@@ -17,6 +17,9 @@ export const WANDER_MOVES_BEFORE_REST_MIN = 3;
 export const WANDER_MOVES_BEFORE_REST_MAX = 6;
 export const SEAT_REST_MIN_SEC = 120.0;
 export const SEAT_REST_MAX_SEC = 240.0;
+/** Max tiles an idle agent may be nudged off a seat it does NOT own. Bounds the off-seat nudge to a
+ *  short local hop so it can never teleport across rooms to the globally-nearest idle floor tile. */
+export const NUDGE_OFF_SEAT_MAX_TILES = 3;
 export const SUPERVISION_TOOL_NAME = 'Delegation';
 
 // ── Matrix Effect ────────────────────────────────────────────
@@ -206,6 +209,13 @@ export const PROJECT_ROOM_MIN_HEIGHT = 3;
 export const PROJECT_ROOM_LOBBY_ID = 'project-room-lobby';
 export const PROJECT_ROOM_LOBBY_LABEL = 'Lobby';
 export const PROJECT_ROOM_LOBBY_LOUNGE_EDGE_PADDING_TILES = 2;
+/** One-time lounge stamp revision: once a PUBLIC room carries this loungeRev, generation never
+ *  reasserts its lounge furniture again, so the user's manual lobby edits survive reloads. */
+export const PROJECT_ROOM_LOBBY_LOUNGE_REV = 1;
+/** Rest-seat priority penalty for seats adjacent to a desk: an idle agent resting on a sofa jammed
+ *  against a workstation reads as "loitering at the computer desk", so such seats rank below the
+ *  lobby lounge (tier 1) and are only used as a last resort. */
+export const REST_SEAT_DESK_ADJACENT_PENALTY = 2;
 export const PROJECT_ROOM_LOBBY_LOUNGE_MIN_PODS = 2;
 export const PROJECT_ROOM_LOBBY_LOUNGE_MAX_PODS = 6;
 export const PROJECT_ROOM_LOBBY_LOUNGE_TILES_PER_POD = 48;

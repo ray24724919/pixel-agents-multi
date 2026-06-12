@@ -8,8 +8,10 @@ import {
   PROJECT_ROOM_GENERATED_FLOOR_COLOR,
   PROJECT_ROOM_GENERATED_FLOOR_TILE,
   PROJECT_ROOM_GENERATED_WALL_COLOR,
+  PROJECT_ROOM_LOBBY_LOUNGE_REV,
   PROJECT_ROOM_TEMPLATE,
 } from '../src/constants.ts';
+import { rectsOverlap } from '../src/office/geometry.ts';
 import { buildDynamicCatalog, getCatalogEntry } from '../src/office/layout/furnitureCatalog.ts';
 import {
   deserializeLayout,
@@ -107,7 +109,10 @@ beforeEach(() => {
       height: TILE_SIZE * 2,
       footprintW: 2,
       footprintH: 2,
-      isDesk: false,
+      // Matches the shipped catalog: COFFEE_TABLE is isDesk (surface items can sit on it). Keeping
+      // fixtures aligned with real catalog semantics matters — desk-vs-not drives workstation
+      // matching and the idle desk-adjacency penalty.
+      isDesk: true,
     },
     {
       id: 'PLANT',
@@ -153,15 +158,6 @@ function projectRoom(id: string, key: string, col: number, row: number): Project
     bounds: { col, row, width: 9, height: 7 },
     project: { key, displayName: key, source: 'folderName' },
   };
-}
-
-function rectsOverlap(a: ProjectRoom['bounds'], b: ProjectRoom['bounds']): boolean {
-  return (
-    a.col < b.col + b.width &&
-    a.col + a.width > b.col &&
-    a.row < b.row + b.height &&
-    a.row + a.height > b.row
-  );
 }
 
 function furnitureBounds(item: PlacedFurniture): ProjectRoom['bounds'] {
@@ -353,7 +349,7 @@ test('public lobby is provisioned as a lounge without duplicating project workst
   );
 });
 
-test('existing public lobby is rebuilt as a horizontal work corridor lounge', () => {
+test('an existing public lobby and project room are kept in place (frozen) and given lounge furniture', () => {
   const layout = makeLayout();
   layout.projectRooms = [
     {
@@ -367,55 +363,105 @@ test('existing public lobby is rebuilt as a horizontal work corridor lounge', ()
   layout.projectRooms[1]!.bounds = { col: 10, row: 0, width: 9, height: 7 };
   layout.cols = 19;
   layout.tiles = Array.from({ length: layout.cols * layout.rows }, () => TileType.FLOOR_1);
-  // Stale GENERATED lobby furniture (project-room-lobby-* uids) is what gets rebuilt away. Hand-placed
-  // furniture (f-* / arbitrary uids) is never destroyed — see the dedicated non-destructive test.
+  // Stale GENERATED lobby WORK furniture (project-room-lobby-* desk/pc/chair) is cleaned up by the
+  // lounge pass; hand-placed furniture (f-* uids) is never destroyed.
   layout.furniture = [
     { uid: 'project-room-lobby-stale-desk', type: 'DESK', col: 1, row: 1 },
     { uid: 'project-room-lobby-stale-pc', type: 'PC', col: 2, row: 1 },
     { uid: 'project-room-lobby-stale-chair', type: 'CHAIR_UP', col: 2, row: 3 },
-    { uid: 'project-room-lobby-stale-sofa', type: 'SOFA', col: 6, row: 2 },
-    { uid: 'project-room-lobby-stale-table', type: 'COFFEE_TABLE', col: 6, row: 3 },
-    { uid: 'project-room-lobby-stale-plant', type: 'PLANT', col: 8, row: 5 },
+    { uid: 'f-hand-keepsake', type: 'PLANT', col: 8, row: 5 },
   ];
 
   const result = ensureProjectRoomsForAgents(layout, [{ folderName: 'Alpha', isSubagent: false }]);
   const furnitureByUid = new Map(result.layout.furniture.map((item) => [item.uid, item.type]));
 
-  assert.ok(result.loungeFurnitureAddedCount >= 3);
+  // FROZEN: an existing lobby + project room are NOT relocated/resized on provision (ray approved
+  // reversing the old relocate-to-row-11 reflow in favour of in-place stability).
+  assert.deepEqual(publicRooms(result.layout)[0]?.bounds, { col: 0, row: 0, width: 10, height: 8 });
+  assert.deepEqual(projectRooms(result.layout)[0]?.bounds, {
+    col: 10,
+    row: 0,
+    width: 9,
+    height: 7,
+  });
+  assert.equal(result.layout.cols, 19);
+  assert.equal(result.layout.rows, 8);
+  // Generated lobby work furniture removed; hand furniture preserved.
   assert.equal(furnitureByUid.has('project-room-lobby-stale-desk'), false);
   assert.equal(furnitureByUid.has('project-room-lobby-stale-pc'), false);
   assert.equal(furnitureByUid.has('project-room-lobby-stale-chair'), false);
-  assert.equal(furnitureByUid.has('project-room-lobby-stale-sofa'), false);
-  assert.equal(furnitureByUid.has('project-room-lobby-stale-table'), false);
-  assert.equal(furnitureByUid.has('project-room-lobby-stale-plant'), false);
-  assert.deepEqual(publicRooms(result.layout)[0]?.bounds, {
-    col: 0,
-    row: 11,
-    width: 25,
-    height: 6,
-  });
-  assert.deepEqual(projectRooms(result.layout)[0]?.bounds, {
-    col: 0,
-    row: 0,
-    width: PROJECT_ROOM_DEFAULT_WIDTH,
-    height: PROJECT_ROOM_DEFAULT_HEIGHT,
-  });
-  assert.equal(furnitureByUid.get('project-room-lobby-lounge-seat-a'), 'SOFA');
-  assert.equal(furnitureByUid.get('project-room-lobby-lounge-table-a'), 'COFFEE_TABLE');
-  assert.equal(furnitureByUid.get('project-room-lobby-lounge-table-b'), 'COFFEE_TABLE');
-  assert.equal(furnitureByUid.get('project-room-lobby-lounge-seat-a-back'), 'SOFA');
-  assert.equal(furnitureByUid.get('project-room-lobby-lounge-seat-a-left'), 'SOFA');
-  assert.equal(furnitureByUid.get('project-room-lobby-lounge-seat-a-right'), 'SOFA');
-  assert.equal(furnitureByUid.get('project-room-lobby-lounge-seat-b-back'), 'SOFA');
-  assert.equal(furnitureByUid.get('project-room-lobby-lounge-seat-b-left'), 'SOFA');
-  assert.equal(furnitureByUid.get('project-room-lobby-lounge-seat-b-right'), 'SOFA');
-  assert.equal(
-    result.layout.furniture.some((item) => item.uid.includes('-lounge-pod-')),
-    false,
+  assert.equal(furnitureByUid.get('f-hand-keepsake'), 'PLANT');
+  // Lounge furniture is still provided in place.
+  assert.ok(result.loungeFurnitureAddedCount >= 3);
+  assert.ok(
+    seatsInRoom(result.layout, publicRooms(result.layout)[0]!).some(
+      (seat) => seat.seatKind === 'rest',
+    ),
   );
 });
 
-test('existing two-sofa work corridor lounge upgrades to old-lobby-style sofa clusters', () => {
+test('lobby lounge is planted once (stamped): user edits to lounge furniture survive re-provision', () => {
+  // First build: lounge planted + the lobby stamped with loungeRev.
+  const first = ensureProjectRoomsForAgents(makeLayout(), [
+    { folderName: 'Alpha', isSubagent: false },
+  ]);
+  const lobby = publicRooms(first.layout)[0]!;
+  assert.equal(lobby.loungeRev, PROJECT_ROOM_LOBBY_LOUNGE_REV);
+  const seatA = first.layout.furniture.find((item) => item.uid === `${lobby.id}-lounge-seat-a`)!;
+  assert.ok(seatA, 'first build must plant the lounge');
+
+  // The user edits the lobby: moves one sofa, deletes one table. These must SURVIVE the next
+  // provision — previously the corridor ensure recomputed the canonical lounge set and snapped
+  // every deviation back (the "my lobby edits revert on reload" bug).
+  const edited = {
+    ...first.layout,
+    furniture: first.layout.furniture
+      .filter((item) => item.uid !== `${lobby.id}-lounge-table-a`)
+      .map((item) => (item.uid === seatA.uid ? { ...item, col: item.col + 1 } : item)),
+  };
+
+  const second = ensureProjectRoomsForAgents(edited, [{ folderName: 'Alpha', isSubagent: false }]);
+  const seatAfter = second.layout.furniture.find((item) => item.uid === seatA.uid);
+  assert.equal(seatAfter?.col, seatA.col + 1, 'moved lounge sofa must stay where the user put it');
+  assert.equal(
+    second.layout.furniture.some((item) => item.uid === `${lobby.id}-lounge-table-a`),
+    false,
+    'deleted lounge table must stay deleted',
+  );
+  assert.equal(second.loungeFurnitureAddedCount, 0, 'stamped lobby must see zero lounge churn');
+});
+
+test('a pre-stamp lobby that already has lounge furniture is stamped as-is without reasserting', () => {
+  // Migration path: lobbies provisioned before the stamp existed carry lounge furniture but no
+  // loungeRev. The first provision after upgrade must stamp them WITHOUT moving anything.
+  const first = ensureProjectRoomsForAgents(makeLayout(), [
+    { folderName: 'Alpha', isSubagent: false },
+  ]);
+  const lobby = publicRooms(first.layout)[0]!;
+  const unstamped = {
+    ...first.layout,
+    projectRooms: (first.layout.projectRooms ?? []).map((room) => {
+      const clone = { ...room };
+      delete clone.loungeRev;
+      return clone;
+    }),
+  };
+  const moved = {
+    ...unstamped,
+    furniture: unstamped.furniture.map((item) =>
+      item.uid === `${lobby.id}-lounge-seat-a` ? { ...item, col: item.col + 1 } : item,
+    ),
+  };
+  const second = ensureProjectRoomsForAgents(moved, [{ folderName: 'Alpha', isSubagent: false }]);
+  const seatAfter = second.layout.furniture.find(
+    (item) => item.uid === `${lobby.id}-lounge-seat-a`,
+  );
+  const movedSeat = moved.furniture.find((item) => item.uid === `${lobby.id}-lounge-seat-a`)!;
+  assert.equal(seatAfter?.col, movedSeat.col, 'migration stamp must not reassert lounge positions');
+  assert.equal(publicRooms(second.layout)[0]?.loungeRev, PROJECT_ROOM_LOBBY_LOUNGE_REV);
+});
+
+test('an existing work-corridor lounge is kept in place, not reflowed', () => {
   const layout = makeLayout(21, 15);
   layout.projectRooms = [
     {
@@ -442,20 +488,22 @@ test('existing two-sofa work corridor lounge upgrades to old-lobby-style sofa cl
   const result = ensureProjectRoomsForAgents(layout, [{ folderName: 'Alpha', isSubagent: false }]);
   const furnitureByUid = new Map(result.layout.furniture.map((item) => [item.uid, item]));
 
-  assert.equal(furnitureByUid.get('project-room-lobby-lounge-table-a')?.col, 3);
-  assert.equal(furnitureByUid.get('project-room-lobby-lounge-table-a')?.row, 13);
-  assert.equal(furnitureByUid.get('project-room-lobby-lounge-table-b')?.col, 19);
-  assert.equal(furnitureByUid.get('project-room-lobby-lounge-table-b')?.row, 13);
-  assert.equal(furnitureByUid.get('project-room-lobby-lounge-seat-a-back')?.type, 'SOFA');
-  assert.equal(furnitureByUid.get('project-room-lobby-lounge-seat-a-left')?.type, 'SOFA');
-  assert.equal(furnitureByUid.get('project-room-lobby-lounge-seat-a-right')?.type, 'SOFA');
-  assert.equal(furnitureByUid.get('project-room-lobby-lounge-seat-b-back')?.type, 'SOFA');
-  assert.equal(furnitureByUid.get('project-room-lobby-lounge-seat-b-left')?.type, 'SOFA');
-  assert.equal(furnitureByUid.get('project-room-lobby-lounge-seat-b-right')?.type, 'SOFA');
-  assert.equal(
-    result.layout.furniture.some((item) => item.uid.includes('-lounge-pod-')),
-    false,
-  );
+  // FROZEN: rooms stay put and the existing lounge seats/tables are not relocated or rebuilt.
+  assert.deepEqual(publicRooms(result.layout)[0]?.bounds, { col: 0, row: 9, width: 21, height: 6 });
+  assert.deepEqual(projectRooms(result.layout)[0]?.bounds, {
+    col: 0,
+    row: 0,
+    width: 10,
+    height: 8,
+  });
+  assert.equal(result.layout.cols, 21);
+  assert.equal(result.layout.rows, 15);
+  assert.equal(furnitureByUid.get('project-room-lobby-lounge-seat-a')?.col, 2);
+  assert.equal(furnitureByUid.get('project-room-lobby-lounge-seat-a')?.row, 11);
+  assert.equal(furnitureByUid.get('project-room-lobby-lounge-table-a')?.col, 2);
+  assert.equal(furnitureByUid.get('project-room-lobby-lounge-table-a')?.row, 12);
+  assert.equal(furnitureByUid.get('project-room-lobby-lounge-seat-b')?.col, 16);
+  assert.equal(furnitureByUid.get('project-room-lobby-lounge-table-b')?.col, 16);
 });
 
 test('existing project rooms without suite furniture are repaired with work and rest seats', () => {
@@ -477,7 +525,7 @@ test('existing project rooms without suite furniture are repaired with work and 
   assert.ok(seats.some((seat) => seat.seatKind === 'rest'));
 });
 
-test('existing generated project room furniture is reflowed away from room walls', () => {
+test('existing generated project room furniture is kept in place (frozen), not reflowed or resized', () => {
   const layout = makeLayout(21, 15);
   layout.projectRooms = [
     {
@@ -505,18 +553,113 @@ test('existing generated project room furniture is reflowed away from room walls
   const room = projectRooms(result.layout)[0]!;
   const furnitureByUid = new Map(result.layout.furniture.map((item) => [item.uid, item]));
 
-  assert.equal(furnitureByUid.get('project-alpha-desk')?.row, 2);
-  assert.equal(furnitureByUid.get('project-alpha-tech')?.row, 2);
-  assert.equal(furnitureByUid.get('project-alpha-work-chair')?.row, 4);
-  assert.deepEqual(room.bounds, {
-    col: 0,
-    row: 0,
-    width: PROJECT_ROOM_DEFAULT_WIDTH,
-    height: PROJECT_ROOM_DEFAULT_HEIGHT,
-  });
-  assert.equal(furnitureByUid.get('project-alpha-rest-seat')?.row, 7);
+  // FROZEN: the existing room keeps its own bounds (not resized to the default) and none of its
+  // furniture is reflowed inward — provision is additive only on an existing campus.
+  assert.deepEqual(room.bounds, { col: 0, row: 0, width: 10, height: 8 });
+  assert.equal(furnitureByUid.get('project-alpha-desk')?.row, 1);
+  assert.equal(furnitureByUid.get('project-alpha-tech')?.row, 1);
+  assert.equal(furnitureByUid.get('project-alpha-work-chair')?.row, 3);
+  assert.equal(furnitureByUid.get('project-alpha-rest-seat')?.row, 4);
   assert.equal(furnitureByUid.get('project-alpha-rest-table')?.row, 5);
-  assertGeneratedFurnitureInsetFromRoomWalls(result.layout, room);
+});
+
+test('an existing multi-room campus is frozen: re-provision relocates no room and grows no grid', () => {
+  // Build a campus from scratch, then re-provision with no new projects (exactly what happens on
+  // every webview load). Room bounds + grid size must be a complete no-op — this is the regression
+  // guard for the campus auto-reorg that teleported seated agents and ratcheted the grid to MAX_ROWS.
+  const built = ensureProjectRoomsForAgents(makeLayout(40, 40), [
+    { folderName: 'alpha', isSubagent: false },
+    { folderName: 'bravo', isSubagent: false },
+    { folderName: 'charlie', isSubagent: false },
+  ]).layout;
+  const boundsBefore = new Map(
+    (built.projectRooms ?? []).map((room) => [room.id, { ...room.bounds }]),
+  );
+
+  const reprovision = ensureProjectRoomsForAgents(built, []);
+
+  assert.equal(reprovision.createdRooms.length, 0);
+  assert.equal(reprovision.layout.cols, built.cols);
+  assert.equal(reprovision.layout.rows, built.rows);
+  for (const room of reprovision.layout.projectRooms ?? []) {
+    assert.deepEqual(room.bounds, boundsBefore.get(room.id), `${room.id} bounds were moved`);
+  }
+  assert.equal((reprovision.layout.projectRooms ?? []).length, boundsBefore.size);
+});
+
+test('no-lobby recovery anchors the campus below the hand-design without ratcheting the row down', () => {
+  // The de-ratchet guard: when project rooms exist with no lobby (older orphaned layout), the
+  // recovery reflow must anchor the recreated lobby just below the user's hand-design and land at the
+  // SAME row every time. The old protectedDesignMaxRow counted the generator's own corridor tiles, so
+  // each recovery pass pushed the lobby lower until placement failed.
+  const base = makeLayout(40, 40);
+  base.furniture = [{ uid: 'f-hand-desk', type: 'DESK', col: 2, row: 1 }];
+  const agents = [
+    { folderName: 'alpha', isSubagent: false },
+    { folderName: 'bravo', isSubagent: false },
+    { folderName: 'charlie', isSubagent: false },
+  ];
+
+  let layout = ensureProjectRoomsForAgents(base, agents).layout;
+  const firstLobbyRow = publicRooms(layout)[0]!.bounds.row;
+  assert.ok(firstLobbyRow > 0, 'campus should anchor below the hand-design');
+
+  for (let pass = 0; pass < 3; pass++) {
+    const orphaned = {
+      ...layout,
+      projectRooms: (layout.projectRooms ?? []).filter(
+        (room) => room.kind !== ProjectRoomKind.PUBLIC,
+      ),
+    };
+    layout = ensureProjectRoomsForAgents(orphaned, agents).layout;
+    assert.equal(
+      publicRooms(layout)[0]?.bounds.row,
+      firstLobbyRow,
+      `recovery pass ${pass} ratcheted the lobby row`,
+    );
+  }
+});
+
+test('de-ratchet protects hand furniture in the gap between scattered rooms (not just inside rooms)', () => {
+  // protectedDesignMaxRow excludes the campus footprint bbox for TILES (to drop generated corridor
+  // tiles), but hand furniture must be tested per-room, NOT per-bbox: an f- item in the gap between
+  // two scattered rooms is real design and must still anchor the campus clear of it. Recovery (no
+  // lobby) is the only path that consults protectedDesignMaxRow.
+  const layout = makeLayout(40, 40);
+  layout.tiles = Array.from({ length: layout.cols * layout.rows }, () => TileType.VOID);
+  layout.projectRooms = [
+    {
+      id: 'project-alpha',
+      kind: ProjectRoomKind.PROJECT,
+      bounds: { col: 0, row: 2, width: 10, height: 8 },
+      project: { key: 'alpha', displayName: 'alpha', source: 'folderName' },
+    },
+    {
+      id: 'project-bravo',
+      kind: ProjectRoomKind.PROJECT,
+      bounds: { col: 26, row: 2, width: 10, height: 8 },
+      project: { key: 'bravo', displayName: 'bravo', source: 'folderName' },
+    },
+  ];
+  // Hand furniture in the gap (col 17) — inside the union bbox (cols 0-35) but outside any room.
+  layout.furniture = [{ uid: 'f-gap-keepsake', type: 'PLANT', col: 17, row: 2 }];
+
+  const result = ensureProjectRoomsForAgents(layout, [
+    { folderName: 'alpha', isSubagent: false },
+    { folderName: 'bravo', isSubagent: false },
+  ]);
+
+  const keepsake = result.layout.furniture.find((item) => item.uid === 'f-gap-keepsake');
+  assert.ok(keepsake, 'hand furniture in the gap was destroyed by recovery');
+  const { col: keepCol, row: keepRow } = keepsake;
+  for (const room of result.layout.projectRooms ?? []) {
+    const inside: boolean =
+      keepCol >= room.bounds.col &&
+      keepCol < room.bounds.col + room.bounds.width &&
+      keepRow >= room.bounds.row &&
+      keepRow < room.bounds.row + room.bounds.height;
+    assert.equal(inside, false, `${room.id} was anchored on top of the gap hand furniture`);
+  }
 });
 
 test('existing project room rest corner upgrades from a small bench to sofa and table', () => {
@@ -1095,7 +1238,10 @@ test('generated room prefers the collaborative four-computer work table when ava
       height: TILE_SIZE * 2,
       footprintW: 2,
       footprintH: 2,
-      isDesk: false,
+      // Matches the shipped catalog: COFFEE_TABLE is isDesk (surface items can sit on it). Keeping
+      // fixtures aligned with real catalog semantics matters — desk-vs-not drives workstation
+      // matching and the idle desk-adjacency penalty.
+      isDesk: true,
     },
     {
       id: 'PLANT_2',
@@ -1337,7 +1483,10 @@ test('new project rooms are stamped verbatim from the user template', () => {
       height: TILE_SIZE * 2,
       footprintW: 2,
       footprintH: 2,
-      isDesk: false,
+      // Matches the shipped catalog: COFFEE_TABLE is isDesk (surface items can sit on it). Keeping
+      // fixtures aligned with real catalog semantics matters — desk-vs-not drives workstation
+      // matching and the idle desk-adjacency penalty.
+      isDesk: true,
     },
     {
       id: 'PLANT_2',

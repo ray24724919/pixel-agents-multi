@@ -8,11 +8,14 @@ import {
   FURNITURE_ANIM_INTERVAL_SEC,
   HUE_SHIFT_MIN_DEG,
   HUE_SHIFT_RANGE_DEG,
+  NUDGE_OFF_SEAT_MAX_TILES,
+  REST_SEAT_DESK_ADJACENT_PENALTY,
   SEAT_REST_MAX_SEC,
   SEAT_REST_MIN_SEC,
   SUPERVISION_TOOL_NAME,
   WAITING_BUBBLE_DURATION_SEC,
 } from '../../constants.js';
+import { pointInBounds } from '../geometry.js';
 import { getAnimationFrames, getCatalogEntry, getOnStateType } from '../layout/furnitureCatalog.js';
 import {
   createDefaultLayout,
@@ -26,6 +29,7 @@ import { findPath, getWalkableTiles, isWalkable } from '../layout/tileMap.js';
 import {
   deriveAgentProjectKey,
   normalizeProjectRoomsInLayout,
+  seatIsForeignProjectRoomForAgent,
   seatPriorityForAgent,
   seatPriorityForProjectKey,
 } from '../projectRooms.js';
@@ -65,6 +69,9 @@ export class OfficeState {
   furniture: FurnitureInstance[];
   walkableTiles: Array<{ col: number; row: number }>;
   idleWalkableTiles: Array<{ col: number; row: number }>;
+  /** Tiles on or directly around (chebyshev-1) any desk's footprint — rest seats here are penalized
+   *  so idle agents don't look like they're loitering at a workstation. */
+  deskAdjacentTiles: Set<string>;
   characters: Map<number, Character> = new Map();
   /** Accumulated time for furniture animation frame cycling */
   furnitureAnimTimer = 0;
@@ -86,6 +93,7 @@ export class OfficeState {
     this.blockedTiles = getBlockedTiles(this.layout.furniture);
     this.furniture = layoutToFurnitureInstances(this.layout.furniture);
     this.walkableTiles = getWalkableTiles(this.tileMap, this.blockedTiles);
+    this.deskAdjacentTiles = this.getDeskAdjacentTiles();
     this.idleWalkableTiles = this.getIdleWalkableTiles();
   }
 
@@ -98,6 +106,7 @@ export class OfficeState {
     this.blockedTiles = getBlockedTiles(this.layout.furniture);
     this.rebuildFurnitureInstances();
     this.walkableTiles = getWalkableTiles(this.tileMap, this.blockedTiles);
+    this.deskAdjacentTiles = this.getDeskAdjacentTiles();
     this.idleWalkableTiles = this.getIdleWalkableTiles();
 
     // Shift character positions when grid expands left/up
@@ -222,6 +231,9 @@ export class OfficeState {
       return false;
     }
     if (seat.assigned && ch.seatId !== seat.uid) return false;
+    // An agent with its own project room must never occupy a different project's room — rather stay
+    // seatless at home than sit in another team's room.
+    if (seatIsForeignProjectRoomForAgent(this.layout, ch, seat)) return false;
     return this.isSeatReachableForCharacter(ch, seat);
   }
 
@@ -232,8 +244,21 @@ export class OfficeState {
     return seat.seatKind === 'rest';
   }
 
+  /** Extra rest-mode cost for a seat on/next to a desk: an idle agent on a sofa jammed against a
+   *  workstation reads as "loitering at the computer desk". The penalty pushes such seats below the
+   *  lobby lounge tier, so idle agents prefer lounge seats, then wandering — desk-side sofas are a
+   *  last resort (everything else taken). Applied in BOTH priority wrappers so seat assignment
+   *  (repairSeatingAssignments) and the FSM wander pool (getUpdateSeatsForCharacter) agree. */
+  private deskAdjacencyPenalty(seat: Seat, mode: 'work' | 'rest'): number {
+    return mode === 'rest' && this.deskAdjacentTiles.has(`${seat.seatCol},${seat.seatRow}`)
+      ? REST_SEAT_DESK_ADJACENT_PENALTY
+      : 0;
+  }
+
   private getSeatPriorityForAgent(ch: Character, seat: Seat, mode: 'work' | 'rest'): number {
-    return seatPriorityForAgent(this.layout, ch, seat, mode);
+    return (
+      seatPriorityForAgent(this.layout, ch, seat, mode) + this.deskAdjacencyPenalty(seat, mode)
+    );
   }
 
   private getSeatPriorityForProjectKey(
@@ -241,7 +266,10 @@ export class OfficeState {
     seat: Seat,
     mode: 'work' | 'rest',
   ): number {
-    return seatPriorityForProjectKey(this.layout, projectKey, seat, mode);
+    return (
+      seatPriorityForProjectKey(this.layout, projectKey, seat, mode) +
+      this.deskAdjacencyPenalty(seat, mode)
+    );
   }
 
   private getSeatCandidatesForAgent(
@@ -272,7 +300,12 @@ export class OfficeState {
     if (!this.isSeatValidForAgent(ch, seat, mode)) return false;
     const candidates = this.getSeatCandidatesForAgent(ch, mode);
     const bestPriority = candidates[0]?.priority ?? Number.POSITIVE_INFINITY;
-    return this.getSeatPriorityForAgent(ch, seat, mode) <= bestPriority;
+    const priority = this.getSeatPriorityForAgent(ch, seat, mode);
+    // Rest: keep ANY valid seat within the agent's wander tier (own room or lobby). Don't yank an idle
+    // agent off a perfectly good rest seat just because a marginally better-tier seat opened up — that
+    // clears its seat, blocks the tile under it, and forces a relocate that reads as a sofa→lobby flash.
+    if (mode === 'rest') return priority <= Math.max(bestPriority, REST_WANDER_MAX_PRIORITY);
+    return priority <= bestPriority;
   }
 
   private chooseSeatForAgent(ch: Character, mode: 'work' | 'rest'): string | null {
@@ -414,9 +447,12 @@ export class OfficeState {
         seat.assigned = true;
         if (mode === 'work') ch.workSeatId = ch.seatId;
         if (mode === 'rest') ch.restSeatId = ch.seatId;
-        if (snap) {
+        // Snap only ACTIVE agents onto their work seat so they look seated immediately on a layout
+        // load. Idle agents are never teleported — they walk to a rest seat — otherwise a routine
+        // re-provision snaps them mid-walk and they appear to flash from a sofa back to the lobby.
+        if (snap && ch.isActive) {
           this.snapCharacterToSeat(ch, seat);
-          ch.state = mode === 'work' && ch.isActive ? CharacterState.TYPE : CharacterState.IDLE;
+          ch.state = CharacterState.TYPE;
         }
         continue;
       }
@@ -443,7 +479,8 @@ export class OfficeState {
         if (ch.seatId) continue;
         const restSeatId = this.chooseSeatForAgent(ch, 'rest');
         if (restSeatId) {
-          this.assignSeatToCharacter(ch, restSeatId, 'rest', snap);
+          // Idle agents always walk to a rest seat — never snap — so they can't teleport to the lobby.
+          this.assignSeatToCharacter(ch, restSeatId, 'rest', false);
         } else if (!this.isCharacterOnWalkableTile(ch)) {
           this.relocateCharacterToWalkable(ch);
         }
@@ -504,8 +541,54 @@ export class OfficeState {
     this.rebuildFurnitureInstances();
   }
 
+  private getDeskAdjacentTiles(): Set<string> {
+    // Only desks that are part of a WORKSTATION count (a 'work' seat within 1 tile of the desk's
+    // footprint). Plain isDesk would also flag coffee tables / decorative desks, wrongly penalizing
+    // lounge sofas that sit beside their coffee table.
+    const workSeatTiles = new Set<string>();
+    for (const seat of this.seats.values()) {
+      if (seat.seatKind === 'work' && seat.zoneSource === 'workstation') {
+        workSeatTiles.add(`${seat.seatCol},${seat.seatRow}`);
+      }
+    }
+    const tiles = new Set<string>();
+    for (const item of this.layout.furniture) {
+      const entry = getCatalogEntry(item.type);
+      if (!entry?.isDesk) continue;
+      let nearWorkSeat = false;
+      for (let row = item.row - 1; row < item.row + entry.footprintH + 1 && !nearWorkSeat; row++) {
+        for (let col = item.col - 1; col < item.col + entry.footprintW + 1; col++) {
+          if (workSeatTiles.has(`${col},${row}`)) {
+            nearWorkSeat = true;
+            break;
+          }
+        }
+      }
+      if (!nearWorkSeat) continue;
+      for (let row = item.row - 1; row < item.row + entry.footprintH + 1; row++) {
+        for (let col = item.col - 1; col < item.col + entry.footprintW + 1; col++) {
+          tiles.add(`${col},${row}`);
+        }
+      }
+    }
+    return tiles;
+  }
+
   private getIdleWalkableTiles(): Array<{ col: number; row: number }> {
     const seatTiles = getSeatTiles(this.seats);
+    // Room-based offices: every walkable non-seat tile is fair ground for idle standing/wandering.
+    // The legacy left/right zone split below classified the whole left half of the office as 'work',
+    // and the 3x3 work-seat halo ate what remained — together they left densely-packed template rooms
+    // with ZERO idle tiles, so idle agents had nowhere to go and stuck to a sofa jammed against the
+    // desk. Per-character tiering (getIdleWalkableTilesForCharacter) already scopes wandering to the
+    // agent's own room + lobby.
+    if (this.layout.projectRooms && this.layout.projectRooms.length > 0) {
+      const standable = this.walkableTiles.filter(
+        (tile) => !seatTiles.has(`${tile.col},${tile.row}`),
+      );
+      return standable.length > 0 ? standable : this.walkableTiles;
+    }
+    // Legacy room-less layouts: keep the zone-split + work-seat-halo behavior.
     const workSeatTiles = new Set<string>();
     for (const seat of this.seats.values()) {
       if (seat.seatKind !== 'work') continue;
@@ -603,14 +686,24 @@ export class OfficeState {
   }
 
   private getMeetingWalkableTiles(): Array<{ col: number; row: number }> {
-    const meetingTiles = this.idleWalkableTiles.filter(
+    // Meetings gather in shared space — never inside a project room. idleWalkableTiles now includes
+    // room interiors (so idle agents can wander at home), but a team gathering must not converge
+    // into some project's room.
+    const sharedTiles = this.idleWalkableTiles.filter(
+      (tile) =>
+        !(this.layout.projectRooms ?? []).some(
+          (room) => room.kind === 'project' && pointInBounds(tile.col, tile.row, room.bounds),
+        ),
+    );
+    const pool = sharedTiles.length > 0 ? sharedTiles : this.idleWalkableTiles;
+    const meetingTiles = pool.filter(
       (tile) => inferTileZone(this.layout, tile.col, tile.row).zone === 'meeting',
     );
-    const restTiles = this.idleWalkableTiles.filter((tile) => {
+    const restTiles = pool.filter((tile) => {
       const zone = inferTileZone(this.layout, tile.col, tile.row).zone;
       return zone === 'rest' || zone === 'neutral';
     });
-    const nonWorkTiles = this.idleWalkableTiles.filter(
+    const nonWorkTiles = pool.filter(
       (tile) => inferTileZone(this.layout, tile.col, tile.row).zone !== 'work',
     );
     const candidates =
@@ -620,7 +713,7 @@ export class OfficeState {
           ? restTiles
           : nonWorkTiles.length > 0
             ? nonWorkTiles
-            : this.idleWalkableTiles;
+            : pool;
     if (candidates.length <= 6) return candidates;
 
     const center = this.getTileCentroid(candidates);
@@ -1161,11 +1254,33 @@ export class OfficeState {
     return 1 + Math.floor(Math.random() * 4);
   }
 
+  /** True when the agent is currently parked ON its own assigned seat tile (not walking). Drives the
+   *  seated sprite pose + sitting offset so an agent only "sits" when actually on a seat. */
+  private isCharacterParkedOnOwnSeat(ch: Character): boolean {
+    if (ch.state === CharacterState.WALK || ch.path.length > 0) return false;
+    if (!ch.seatId) return false;
+    const seat = this.seats.get(ch.seatId);
+    return !!seat && ch.tileCol === seat.seatCol && ch.tileRow === seat.seatRow;
+  }
+
   private nudgeInactiveStandingOffSeats(ch: Character): void {
     if (ch.isActive || ch.state === CharacterState.TYPE || ch.path.length > 0) return;
-    if (!this.getSeatAtTile(ch.tileCol, ch.tileRow)) return;
+    const seatHere = this.getSeatAtTile(ch.tileCol, ch.tileRow);
+    // Resting on its OWN assigned seat: never nudge. The nudge teleports (direct tile write, no path)
+    // to the GLOBALLY-nearest idle floor tile; a densely-packed project room has zero interior idle
+    // tiles, so that target lands in an adjacent same-column room — the agent flashes across rooms off
+    // its own sofa the instant its rest timer expires (TYPE->IDLE). Only nudge an agent loitering on a
+    // seat it does NOT own.
+    if (!seatHere || seatHere === ch.seatId) return;
     const target = this.findNearestIdleFloorTile(ch.tileCol, ch.tileRow);
     if (!target) return;
+    // Even then, only a SHORT local hop — never a cross-room teleport to the globally-nearest tile.
+    if (
+      Math.abs(target.col - ch.tileCol) + Math.abs(target.row - ch.tileRow) >
+      NUDGE_OFF_SEAT_MAX_TILES
+    ) {
+      return;
+    }
     ch.tileCol = target.col;
     ch.tileRow = target.row;
     ch.x = target.col * TILE_SIZE + TILE_SIZE / 2;
@@ -1327,6 +1442,9 @@ export class OfficeState {
         updateCharacter(ch, dt, wanderTiles, updateSeats, this.tileMap, this.blockedTiles),
       );
       this.nudgeInactiveStandingOffSeats(ch);
+      // Recompute the position-based seated flag AFTER the FSM + nudge settle the tile, so the seated
+      // pose/offset track where the agent actually is this frame.
+      ch.seated = this.isCharacterParkedOnOwnSeat(ch);
 
       // Tick bubble timer for waiting bubbles
       if (ch.bubbleType === 'waiting') {

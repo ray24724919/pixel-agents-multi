@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { beforeEach, test } from 'node:test';
 
-import { FALLBACK_FLOOR_COLOR } from '../src/constants.ts';
+import { FALLBACK_FLOOR_COLOR, NUDGE_OFF_SEAT_MAX_TILES } from '../src/constants.ts';
 import { OfficeState } from '../src/office/engine/officeState.ts';
 import { buildDynamicCatalog } from '../src/office/layout/furnitureCatalog.ts';
 import { layoutToSeats } from '../src/office/layout/layoutSerializer.ts';
@@ -259,6 +259,62 @@ test('idle agent releases a work seat and prefers a rest seat', () => {
   assert.equal(currentSeat?.seatKind ?? 'rest', 'rest');
 });
 
+test('idle agents avoid rest seats jammed against a workstation when a free-standing one exists', () => {
+  // A sofa right beside the workstation desk reads as "loitering at the computer desk"; with a
+  // free-standing sofa available the idle agent must pick the one away from the desk.
+  const layout = makeLayout([
+    ...workstationFurniture(), // desk (2,1)-(4,2) + pc + work chair (3,3)
+    { uid: 'sofa-near-desk', type: 'SOFA_FRONT', col: 5, row: 2 },
+    { uid: 'sofa-far', type: 'SOFA_FRONT', col: 7, row: 6 },
+  ]);
+  const state = new OfficeState(layout);
+
+  addAgent(state, 1, false);
+
+  const ch = state.characters.get(1)!;
+  assert.ok(ch.seatId, 'idle agent should claim a rest seat');
+  assert.ok(
+    ch.seatId!.startsWith('sofa-far'),
+    `idle agent should rest away from the workstation, got ${ch.seatId}`,
+  );
+});
+
+test('idle wander floor exists inside left-half project rooms (no legacy work-zone split)', () => {
+  // The legacy default-split zone heuristic classified the whole left half of the office as 'work'
+  // and excluded it from idle wandering — packed left-side project rooms ended up with ZERO idle
+  // tiles, so idle agents had nowhere to go and froze on the nearest seat. With project rooms
+  // present, every walkable non-seat tile is wanderable.
+  const layout = makeLayout([...workstationFurniture()], 12, 8);
+  layout.projectRooms = [projectRoom('proj-alpha', 'alpha', 0, 0, 6, 8)];
+  const state = new OfficeState(layout);
+
+  const inLeftRoom = state.idleWalkableTiles.filter((tile) => tile.col < 6);
+  assert.ok(inLeftRoom.length > 0, 'left-half room must keep idle-walkable floor');
+});
+
+test('team meeting gathers in shared space, never inside a project room', () => {
+  // idleWalkableTiles now includes project-room interiors (idle wander floor), but a team gathering
+  // must converge in shared space — not in some project's room.
+  const layout = makeLayout([], 12, 8);
+  layout.projectRooms = [
+    projectRoom('proj-alpha', 'alpha', 0, 0, 6, 8),
+    room('public', 'lobby', 6, 0, 6, 8),
+  ];
+  const state = new OfficeState(layout);
+  addAgent(state, 1, false, undefined, 'bravo');
+  state.characters.get(1)!.teamName = 'team-x';
+
+  state.setMeetingTeam('team-x');
+
+  const ch = state.characters.get(1)!;
+  const target =
+    ch.path.length > 0 ? ch.path[ch.path.length - 1]! : { col: ch.tileCol, row: ch.tileRow };
+  assert.ok(
+    target.col >= 6,
+    `meeting target (${target.col},${target.row}) must be outside the project room`,
+  );
+});
+
 test('idle agent can rest in both its own project room and the public lobby lounge', () => {
   const projRoom = projectRoom('proj-alpha', 'alpha', 1, 1, 4, 4);
   const lobby = room('public', 'lobby', 6, 1, 4, 4);
@@ -462,6 +518,66 @@ test('two projects with capacity do not claim each other room-local work seats',
 
   assert.equal(state.characters.get(1)?.seatId, 'z-alpha-chair');
   assert.equal(state.characters.get(2)?.seatId, 'a-beta-chair');
+});
+
+test('a layout repair walks an idle agent to its rest seat instead of teleporting it', () => {
+  const state = new OfficeState(makeLayout(loungeFurnitureAt('sofa', 7, 4), 12, 8));
+  addAgent(state, 1, false);
+  const ch = state.characters.get(1)!;
+  // Park the idle agent far from any rest seat, then force a layout-reason repair (the snap path).
+  ch.seatId = null;
+  ch.restSeatId = null;
+  ch.tileCol = 1;
+  ch.tileRow = 1;
+  ch.x = 1 * TILE_SIZE + TILE_SIZE / 2;
+  ch.y = 1 * TILE_SIZE + TILE_SIZE / 2;
+  state.repairSeatingAssignments('layout');
+  const seat = ch.seatId ? state.seats.get(ch.seatId) : undefined;
+  assert.ok(seat, 'idle agent is assigned a rest seat');
+  assert.equal(seat?.seatKind, 'rest');
+  // It must NOT have been snapped onto the seat — it walks there, so it stays put for now.
+  assert.equal(
+    ch.tileCol === seat?.seatCol && ch.tileRow === seat?.seatRow,
+    false,
+    'idle agent must walk to the rest seat, not teleport (flash) onto it',
+  );
+});
+
+test('an agent with its own project room never sits in another project room', () => {
+  // Only BETA has a workstation; ALPHA's agent has its own (work-seatless) room.
+  const layout = makeLayout(workstationFurniture('beta-chair', 6), 14, 8);
+  layout.projectRooms = [
+    projectRoom('room-alpha', 'alpha', 0, 0, 6, 8),
+    projectRoom('room-beta', 'beta', 6, 0, 8, 8),
+  ];
+  const state = new OfficeState(layout);
+  addAgent(state, 1, true, undefined, 'Alpha');
+  const ch = state.characters.get(1)!;
+  // ALPHA has its own room (with no work seat) — it must stay seatless rather than borrow BETA's seat.
+  assert.notEqual(seatRoom(layout, ch.seatId)?.id, 'room-beta');
+});
+
+test('an idle agent keeps a valid lobby rest seat instead of being yanked to its own room', () => {
+  const layout = makeLayout(
+    [...loungeFurnitureAt('alpha-sofa', 2, 2), ...loungeFurnitureAt('lobby-sofa', 8, 2)],
+    14,
+    8,
+  );
+  layout.projectRooms = [
+    projectRoom('room-alpha', 'alpha', 0, 0, 6, 8),
+    room('public', 'lobby', 6, 0, 8, 8),
+  ];
+  const state = new OfficeState(layout);
+  addAgent(state, 1, false, undefined, 'alpha');
+  const ch = state.characters.get(1)!;
+  const lobbySeat = [...state.seats.values()].find((s) => s.uid.startsWith('lobby-sofa'))!;
+  // Park the idle agent on the lobby (tier-1) rest seat with its own-room (tier-0) seat free.
+  ch.seatId = lobbySeat.uid;
+  ch.restSeatId = lobbySeat.uid;
+  state.repairSeatingAssignments('tick');
+  // It must KEEP the valid lobby rest seat (within its wander tier), not get yanked to alpha's room —
+  // the yank clears the seat, blocks the tile, and forces a relocate that reads as a sofa→lobby flash.
+  assert.equal(ch.seatId, lobbySeat.uid, 'idle agent keeps its valid lobby rest seat');
 });
 
 test('idle agents prefer rest seats inside their own project room', () => {
@@ -765,4 +881,47 @@ test('sub-agent behavior remains near parent and is not forced into a work seat'
   assert.equal(sub.seatId, null);
   assert.ok(distance <= 3);
   assert.equal(sub.state, CharacterState.TYPE);
+});
+
+type Nudgeable = { nudgeInactiveStandingOffSeats(c: Character): void };
+
+test('an idle agent resting on its OWN seat is never nudged off it (no cross-room teleport)', () => {
+  // Regression for the sofa->adjacent-room flash: when an agent's rest timer expires it flips
+  // TYPE->IDLE while still on its own seat tile; the off-seat nudge used to TELEPORT it to the
+  // globally-nearest idle floor tile, which in a packed room is in a neighbouring room.
+  const layout = makeLayout(loungeFurnitureAt('sofa', 3, 2), 10, 8);
+  const state = new OfficeState(layout);
+  addAgent(state, 1, false, undefined, 'alpha');
+  const ch = state.characters.get(1)!;
+  const seat = [...state.seats.values()][0];
+  ch.seatId = seat.uid; // its OWN seat
+  ch.tileCol = seat.seatCol;
+  ch.tileRow = seat.seatRow;
+  ch.x = seat.seatCol * TILE_SIZE + TILE_SIZE / 2;
+  ch.y = seat.seatRow * TILE_SIZE + TILE_SIZE / 2;
+  ch.state = CharacterState.IDLE;
+  ch.path = [];
+  (state as unknown as Nudgeable).nudgeInactiveStandingOffSeats(ch);
+  assert.equal(ch.tileCol, seat.seatCol, 'stays on its own seat (col)');
+  assert.equal(ch.tileRow, seat.seatRow, 'stays on its own seat (row)');
+});
+
+test('an idle agent on a seat it does NOT own is nudged off, but only a short bounded hop', () => {
+  const layout = makeLayout(loungeFurnitureAt('sofa', 3, 2), 10, 8);
+  const state = new OfficeState(layout);
+  addAgent(state, 1, false, undefined, 'alpha');
+  const ch = state.characters.get(1)!;
+  const seat = [...state.seats.values()][0];
+  ch.seatId = null; // not its seat — loitering on someone else's seat
+  ch.tileCol = seat.seatCol;
+  ch.tileRow = seat.seatRow;
+  ch.x = seat.seatCol * TILE_SIZE + TILE_SIZE / 2;
+  ch.y = seat.seatRow * TILE_SIZE + TILE_SIZE / 2;
+  ch.state = CharacterState.IDLE;
+  ch.path = [];
+  (state as unknown as Nudgeable).nudgeInactiveStandingOffSeats(ch);
+  const moved = Math.abs(ch.tileCol - seat.seatCol) + Math.abs(ch.tileRow - seat.seatRow);
+  assert.ok(moved >= 1, 'nudged off the non-owned seat');
+  assert.ok(moved <= NUDGE_OFF_SEAT_MAX_TILES, 'bounded local hop, never a cross-room teleport');
+  assert.equal(state.getSeatAtTile(ch.tileCol, ch.tileRow), null, 'ended on a non-seat floor tile');
 });
