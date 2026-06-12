@@ -28,6 +28,13 @@ export const EXTERNAL_STALE_CHECK_INTERVAL_MS = 30_000;
 /** Cooldown after user closes an agent via X. Must be > EXTERNAL_ACTIVE_THRESHOLD_MS
  *  so the file's mtime becomes stale before the dismissal expires. */
 export const DISMISSED_COOLDOWN_MS = 180_000; // 3 minutes
+/** An EXTERNAL agent whose transcript has been silent this long is a dead session and is reaped.
+ *  Scheduled/recurring runs (e.g. a daily cron) end while VS Code is closed, so their SessionEnd is
+ *  never seen live and the old agent would otherwise be restored every day forever (transcripts stay
+ *  on disk for weeks). Must be well above the adoption windows (EXTERNAL_ACTIVE_THRESHOLD_MS /
+ *  GLOBAL_SCAN_ACTIVE_MAX_AGE_MS) so a reaped session is never instantly re-adopted; if a reaped
+ *  session genuinely wakes again, fresh activity re-adopts it within seconds. */
+export const EXTERNAL_AGENT_STALE_REAP_MS = 21_600_000; // 6 hours
 
 // ── Global Session Scanning ─────────────────────────────────
 /** Only adopt global JSONL files larger than this (filters out empty/init-only sessions) */

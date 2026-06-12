@@ -2420,6 +2420,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
           this.activeAgentId,
           this.webview,
           this.persistAgents,
+          (agent) => this.unregisterAgentHook(agent),
         );
         // Register all restored agents with hook handler
         for (const agent of this.agents.values()) {
