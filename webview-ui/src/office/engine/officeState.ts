@@ -9,6 +9,7 @@ import {
   HUE_SHIFT_MIN_DEG,
   HUE_SHIFT_RANGE_DEG,
   NUDGE_OFF_SEAT_MAX_TILES,
+  REST_SEAT_DESK_ADJACENT_PENALTY,
   SEAT_REST_MAX_SEC,
   SEAT_REST_MIN_SEC,
   SUPERVISION_TOOL_NAME,
@@ -67,6 +68,9 @@ export class OfficeState {
   furniture: FurnitureInstance[];
   walkableTiles: Array<{ col: number; row: number }>;
   idleWalkableTiles: Array<{ col: number; row: number }>;
+  /** Tiles on or directly around (chebyshev-1) any desk's footprint — rest seats here are penalized
+   *  so idle agents don't look like they're loitering at a workstation. */
+  deskAdjacentTiles: Set<string>;
   characters: Map<number, Character> = new Map();
   /** Accumulated time for furniture animation frame cycling */
   furnitureAnimTimer = 0;
@@ -88,6 +92,7 @@ export class OfficeState {
     this.blockedTiles = getBlockedTiles(this.layout.furniture);
     this.furniture = layoutToFurnitureInstances(this.layout.furniture);
     this.walkableTiles = getWalkableTiles(this.tileMap, this.blockedTiles);
+    this.deskAdjacentTiles = this.getDeskAdjacentTiles();
     this.idleWalkableTiles = this.getIdleWalkableTiles();
   }
 
@@ -100,6 +105,7 @@ export class OfficeState {
     this.blockedTiles = getBlockedTiles(this.layout.furniture);
     this.rebuildFurnitureInstances();
     this.walkableTiles = getWalkableTiles(this.tileMap, this.blockedTiles);
+    this.deskAdjacentTiles = this.getDeskAdjacentTiles();
     this.idleWalkableTiles = this.getIdleWalkableTiles();
 
     // Shift character positions when grid expands left/up
@@ -237,8 +243,21 @@ export class OfficeState {
     return seat.seatKind === 'rest';
   }
 
+  /** Extra rest-mode cost for a seat on/next to a desk: an idle agent on a sofa jammed against a
+   *  workstation reads as "loitering at the computer desk". The penalty pushes such seats below the
+   *  lobby lounge tier, so idle agents prefer lounge seats, then wandering — desk-side sofas are a
+   *  last resort (everything else taken). Applied in BOTH priority wrappers so seat assignment
+   *  (repairSeatingAssignments) and the FSM wander pool (getUpdateSeatsForCharacter) agree. */
+  private deskAdjacencyPenalty(seat: Seat, mode: 'work' | 'rest'): number {
+    return mode === 'rest' && this.deskAdjacentTiles.has(`${seat.seatCol},${seat.seatRow}`)
+      ? REST_SEAT_DESK_ADJACENT_PENALTY
+      : 0;
+  }
+
   private getSeatPriorityForAgent(ch: Character, seat: Seat, mode: 'work' | 'rest'): number {
-    return seatPriorityForAgent(this.layout, ch, seat, mode);
+    return (
+      seatPriorityForAgent(this.layout, ch, seat, mode) + this.deskAdjacencyPenalty(seat, mode)
+    );
   }
 
   private getSeatPriorityForProjectKey(
@@ -246,7 +265,10 @@ export class OfficeState {
     seat: Seat,
     mode: 'work' | 'rest',
   ): number {
-    return seatPriorityForProjectKey(this.layout, projectKey, seat, mode);
+    return (
+      seatPriorityForProjectKey(this.layout, projectKey, seat, mode) +
+      this.deskAdjacencyPenalty(seat, mode)
+    );
   }
 
   private getSeatCandidatesForAgent(
@@ -518,8 +540,54 @@ export class OfficeState {
     this.rebuildFurnitureInstances();
   }
 
+  private getDeskAdjacentTiles(): Set<string> {
+    // Only desks that are part of a WORKSTATION count (a 'work' seat within 1 tile of the desk's
+    // footprint). Plain isDesk would also flag coffee tables / decorative desks, wrongly penalizing
+    // lounge sofas that sit beside their coffee table.
+    const workSeatTiles = new Set<string>();
+    for (const seat of this.seats.values()) {
+      if (seat.seatKind === 'work' && seat.zoneSource === 'workstation') {
+        workSeatTiles.add(`${seat.seatCol},${seat.seatRow}`);
+      }
+    }
+    const tiles = new Set<string>();
+    for (const item of this.layout.furniture) {
+      const entry = getCatalogEntry(item.type);
+      if (!entry?.isDesk) continue;
+      let nearWorkSeat = false;
+      for (let row = item.row - 1; row < item.row + entry.footprintH + 1 && !nearWorkSeat; row++) {
+        for (let col = item.col - 1; col < item.col + entry.footprintW + 1; col++) {
+          if (workSeatTiles.has(`${col},${row}`)) {
+            nearWorkSeat = true;
+            break;
+          }
+        }
+      }
+      if (!nearWorkSeat) continue;
+      for (let row = item.row - 1; row < item.row + entry.footprintH + 1; row++) {
+        for (let col = item.col - 1; col < item.col + entry.footprintW + 1; col++) {
+          tiles.add(`${col},${row}`);
+        }
+      }
+    }
+    return tiles;
+  }
+
   private getIdleWalkableTiles(): Array<{ col: number; row: number }> {
     const seatTiles = getSeatTiles(this.seats);
+    // Room-based offices: every walkable non-seat tile is fair ground for idle standing/wandering.
+    // The legacy left/right zone split below classified the whole left half of the office as 'work',
+    // and the 3x3 work-seat halo ate what remained — together they left densely-packed template rooms
+    // with ZERO idle tiles, so idle agents had nowhere to go and stuck to a sofa jammed against the
+    // desk. Per-character tiering (getIdleWalkableTilesForCharacter) already scopes wandering to the
+    // agent's own room + lobby.
+    if (this.layout.projectRooms && this.layout.projectRooms.length > 0) {
+      const standable = this.walkableTiles.filter(
+        (tile) => !seatTiles.has(`${tile.col},${tile.row}`),
+      );
+      return standable.length > 0 ? standable : this.walkableTiles;
+    }
+    // Legacy room-less layouts: keep the zone-split + work-seat-halo behavior.
     const workSeatTiles = new Set<string>();
     for (const seat of this.seats.values()) {
       if (seat.seatKind !== 'work') continue;

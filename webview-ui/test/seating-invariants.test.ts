@@ -259,6 +259,39 @@ test('idle agent releases a work seat and prefers a rest seat', () => {
   assert.equal(currentSeat?.seatKind ?? 'rest', 'rest');
 });
 
+test('idle agents avoid rest seats jammed against a workstation when a free-standing one exists', () => {
+  // A sofa right beside the workstation desk reads as "loitering at the computer desk"; with a
+  // free-standing sofa available the idle agent must pick the one away from the desk.
+  const layout = makeLayout([
+    ...workstationFurniture(), // desk (2,1)-(4,2) + pc + work chair (3,3)
+    { uid: 'sofa-near-desk', type: 'SOFA_FRONT', col: 5, row: 2 },
+    { uid: 'sofa-far', type: 'SOFA_FRONT', col: 7, row: 6 },
+  ]);
+  const state = new OfficeState(layout);
+
+  addAgent(state, 1, false);
+
+  const ch = state.characters.get(1)!;
+  assert.ok(ch.seatId, 'idle agent should claim a rest seat');
+  assert.ok(
+    ch.seatId!.startsWith('sofa-far'),
+    `idle agent should rest away from the workstation, got ${ch.seatId}`,
+  );
+});
+
+test('idle wander floor exists inside left-half project rooms (no legacy work-zone split)', () => {
+  // The legacy default-split zone heuristic classified the whole left half of the office as 'work'
+  // and excluded it from idle wandering — packed left-side project rooms ended up with ZERO idle
+  // tiles, so idle agents had nowhere to go and froze on the nearest seat. With project rooms
+  // present, every walkable non-seat tile is wanderable.
+  const layout = makeLayout([...workstationFurniture()], 12, 8);
+  layout.projectRooms = [projectRoom('proj-alpha', 'alpha', 0, 0, 6, 8)];
+  const state = new OfficeState(layout);
+
+  const inLeftRoom = state.idleWalkableTiles.filter((tile) => tile.col < 6);
+  assert.ok(inLeftRoom.length > 0, 'left-half room must keep idle-walkable floor');
+});
+
 test('idle agent can rest in both its own project room and the public lobby lounge', () => {
   const projRoom = projectRoom('proj-alpha', 'alpha', 1, 1, 4, 4);
   const lobby = room('public', 'lobby', 6, 1, 4, 4);
