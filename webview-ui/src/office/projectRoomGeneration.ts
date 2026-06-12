@@ -53,6 +53,14 @@ import {
   PROJECT_ROOM_WORK_CORRIDOR_LOUNGE_TABLE_ROW_OFFSET,
   PROJECT_ROOM_WORK_CORRIDOR_MIN_WIDTH,
 } from '../constants.js';
+import {
+  boundsEqual,
+  boundsFromPoints,
+  pointInBounds,
+  rectInsideBounds,
+  rectsOverlap,
+  unionBounds,
+} from './geometry.js';
 import { getAllCatalogEntries } from './layout/furnitureCatalog.js';
 import { layoutToSeats } from './layout/layoutSerializer.js';
 import {
@@ -984,10 +992,6 @@ function buildWorkCorridorBayCols(core: ProjectRoom['bounds'], roomWidth: number
   return cols.sort((a, b) => a - b);
 }
 
-function boundsEqual(a: ProjectRoom['bounds'], b: ProjectRoom['bounds']): boolean {
-  return a.col === b.col && a.row === b.row && a.width === b.width && a.height === b.height;
-}
-
 function boundsFitMax(bounds: ProjectRoom['bounds']): boolean {
   return (
     bounds.col >= 0 &&
@@ -1032,25 +1036,6 @@ function canPlaceRoomBounds(layout: OfficeLayout, bounds: ProjectRoom['bounds'])
     }
   }
   return true;
-}
-
-function rectsOverlap(a: ProjectRoom['bounds'], b: ProjectRoom['bounds']): boolean {
-  return (
-    a.col < b.col + b.width &&
-    a.col + a.width > b.col &&
-    a.row < b.row + b.height &&
-    a.row + a.height > b.row
-  );
-}
-
-/** True when `rect` lies fully within `bounds` (edges inclusive). */
-function rectInsideBounds(rect: ProjectRoom['bounds'], bounds: ProjectRoom['bounds']): boolean {
-  return (
-    rect.col >= bounds.col &&
-    rect.row >= bounds.row &&
-    rect.col + rect.width <= bounds.col + bounds.width &&
-    rect.row + rect.height <= bounds.row + bounds.height
-  );
 }
 
 function ensureLayoutSize(layout: OfficeLayout, cols: number, rows: number): OfficeLayout {
@@ -2963,40 +2948,4 @@ function deriveLobbyCoreBounds(layout: OfficeLayout): ProjectRoom['bounds'] {
     width: Math.max(1, layout.cols),
     height: Math.max(1, layout.rows),
   };
-}
-
-function pointInBounds(col: number, row: number, bounds: ProjectRoom['bounds']): boolean {
-  return (
-    col >= bounds.col &&
-    col < bounds.col + bounds.width &&
-    row >= bounds.row &&
-    row < bounds.row + bounds.height
-  );
-}
-
-function boundsFromPoints(points: Array<{ col: number; row: number }>): ProjectRoom['bounds'] {
-  let minCol = Number.POSITIVE_INFINITY;
-  let minRow = Number.POSITIVE_INFINITY;
-  let maxCol = Number.NEGATIVE_INFINITY;
-  let maxRow = Number.NEGATIVE_INFINITY;
-  for (const point of points) {
-    minCol = Math.min(minCol, point.col);
-    minRow = Math.min(minRow, point.row);
-    maxCol = Math.max(maxCol, point.col);
-    maxRow = Math.max(maxRow, point.row);
-  }
-  return {
-    col: minCol,
-    row: minRow,
-    width: maxCol - minCol + 1,
-    height: maxRow - minRow + 1,
-  };
-}
-
-function unionBounds(bounds: ProjectRoom['bounds'][]): ProjectRoom['bounds'] {
-  const points = bounds.flatMap((bound) => [
-    { col: bound.col, row: bound.row },
-    { col: bound.col + bound.width - 1, row: bound.row + bound.height - 1 },
-  ]);
-  return boundsFromPoints(points);
 }

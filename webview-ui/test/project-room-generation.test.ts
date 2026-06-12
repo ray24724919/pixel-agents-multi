@@ -11,6 +11,7 @@ import {
   PROJECT_ROOM_LOBBY_LOUNGE_REV,
   PROJECT_ROOM_TEMPLATE,
 } from '../src/constants.ts';
+import { rectsOverlap } from '../src/office/geometry.ts';
 import { buildDynamicCatalog, getCatalogEntry } from '../src/office/layout/furnitureCatalog.ts';
 import {
   deserializeLayout,
@@ -108,7 +109,10 @@ beforeEach(() => {
       height: TILE_SIZE * 2,
       footprintW: 2,
       footprintH: 2,
-      isDesk: false,
+      // Matches the shipped catalog: COFFEE_TABLE is isDesk (surface items can sit on it). Keeping
+      // fixtures aligned with real catalog semantics matters — desk-vs-not drives workstation
+      // matching and the idle desk-adjacency penalty.
+      isDesk: true,
     },
     {
       id: 'PLANT',
@@ -154,15 +158,6 @@ function projectRoom(id: string, key: string, col: number, row: number): Project
     bounds: { col, row, width: 9, height: 7 },
     project: { key, displayName: key, source: 'folderName' },
   };
-}
-
-function rectsOverlap(a: ProjectRoom['bounds'], b: ProjectRoom['bounds']): boolean {
-  return (
-    a.col < b.col + b.width &&
-    a.col + a.width > b.col &&
-    a.row < b.row + b.height &&
-    a.row + a.height > b.row
-  );
 }
 
 function furnitureBounds(item: PlacedFurniture): ProjectRoom['bounds'] {
@@ -1243,7 +1238,10 @@ test('generated room prefers the collaborative four-computer work table when ava
       height: TILE_SIZE * 2,
       footprintW: 2,
       footprintH: 2,
-      isDesk: false,
+      // Matches the shipped catalog: COFFEE_TABLE is isDesk (surface items can sit on it). Keeping
+      // fixtures aligned with real catalog semantics matters — desk-vs-not drives workstation
+      // matching and the idle desk-adjacency penalty.
+      isDesk: true,
     },
     {
       id: 'PLANT_2',
@@ -1485,7 +1483,10 @@ test('new project rooms are stamped verbatim from the user template', () => {
       height: TILE_SIZE * 2,
       footprintW: 2,
       footprintH: 2,
-      isDesk: false,
+      // Matches the shipped catalog: COFFEE_TABLE is isDesk (surface items can sit on it). Keeping
+      // fixtures aligned with real catalog semantics matters — desk-vs-not drives workstation
+      // matching and the idle desk-adjacency penalty.
+      isDesk: true,
     },
     {
       id: 'PLANT_2',

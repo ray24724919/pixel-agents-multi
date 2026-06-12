@@ -15,6 +15,7 @@ import {
   SUPERVISION_TOOL_NAME,
   WAITING_BUBBLE_DURATION_SEC,
 } from '../../constants.js';
+import { pointInBounds } from '../geometry.js';
 import { getAnimationFrames, getCatalogEntry, getOnStateType } from '../layout/furnitureCatalog.js';
 import {
   createDefaultLayout,
@@ -691,12 +692,7 @@ export class OfficeState {
     const sharedTiles = this.idleWalkableTiles.filter(
       (tile) =>
         !(this.layout.projectRooms ?? []).some(
-          (room) =>
-            room.kind === 'project' &&
-            tile.col >= room.bounds.col &&
-            tile.col < room.bounds.col + room.bounds.width &&
-            tile.row >= room.bounds.row &&
-            tile.row < room.bounds.row + room.bounds.height,
+          (room) => room.kind === 'project' && pointInBounds(tile.col, tile.row, room.bounds),
         ),
     );
     const pool = sharedTiles.length > 0 ? sharedTiles : this.idleWalkableTiles;
