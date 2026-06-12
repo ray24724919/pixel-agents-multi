@@ -1,7 +1,6 @@
 import {
   Component,
   type ErrorInfo,
-  type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
   useEffect,
   useMemo,
@@ -9,7 +8,7 @@ import {
   useState,
 } from 'react';
 
-import { TIMELINE_REPLAY_BASE_INTERVAL_MS, TIMELINE_REPLAY_SPEED_OPTIONS } from '../constants.js';
+import { TIMELINE_REPLAY_BASE_INTERVAL_MS } from '../constants.js';
 import type {
   AgentLifecycleEvent,
   AgentLifecycleState,
@@ -20,21 +19,51 @@ import type {
   UsageHistoryState,
 } from '../hooks/useExtensionMessages.js';
 import type { OfficeState } from '../office/engine/officeState.js';
-import type { TokenRateLimitSnapshot, TokenUsageDetails, ToolActivity } from '../office/types.js';
-import {
-  type AgentZone,
-  type AgentZoneSource,
-  inferAgentZone,
-  zoneSourceLabel,
-} from '../office/zoneUtils.js';
+import type { TokenRateLimitSnapshot, ToolActivity } from '../office/types.js';
+import { inferAgentZone, zoneSourceLabel } from '../office/zoneUtils.js';
 import { vscode } from '../vscodeApi.js';
+import {
+  compactNumber,
+  copyTextToClipboard,
+  formatProxyUsd,
+  formatRelative,
+  formatUsageOverviewMetricValue,
+  providerLabel,
+  severityDot,
+  usageAccuracyClass,
+  usageAccuracyShort,
+  usageBarPercent,
+  usageInsightClass,
+  usageInsightDotClass,
+} from './agentCenter/formatters.js';
+import { ProviderBadge } from './agentCenter/ProviderBadge.js';
+import { SectionHeader } from './agentCenter/SectionHeader.js';
+import {
+  TimelineEmptyState,
+  TimelineEventRow,
+  TimelineFilterSelect,
+} from './agentCenter/TimelineEventPanel.js';
+import { TimelineReplayPanel } from './agentCenter/TimelineReplayPanel.js';
+import type {
+  AgentStateCounts,
+  AgentSummary,
+  HandoffOpenStatus,
+  HandoffStatusUpdateStatus,
+  HandoffWriteStatus,
+  ProjectFilter,
+  ProjectSummary,
+  ProviderFilter,
+  StatusFilter,
+  TeamFilter,
+  TeamSummary,
+  TimelineItem,
+  UsagePane,
+} from './agentCenter/types.js';
 import { isAgentVisibleWithHiddenToggle } from './agentCenterFilters.js';
 import {
   AGENT_LIST_SORT_OPTIONS,
-  type AgentListItem,
   type AgentListSortKey,
   agentListSortLabel,
-  type AgentListStatusFilter,
   type AgentListStatusGroup,
   filterAndSortAgentList,
 } from './agentCenterListModel.js';
@@ -115,7 +144,6 @@ import {
   type TimelinePageFilters,
   type TimelinePageItem,
   type TimelinePageModel,
-  type TimelineSeverity,
   type TimelineSeverityFilter,
   timelineSeverityLabel,
   type TimelineTimeWindowFilter,
@@ -126,9 +154,6 @@ import {
   findTimelineReplayFrameByEventId,
   getTimelineReplayFrameMarker,
   resolveTimelineReplaySelection,
-  type TimelineReplayFrameMarker,
-  type TimelineReplaySession,
-  type TimelineReplayState,
 } from './timelineReplayModel.js';
 import { TokenCostSummary } from './TokenCostSummary.js';
 import { Button } from './ui/Button.js';
@@ -162,15 +187,6 @@ import {
   type UsageOverviewTrendBucket,
 } from './usageOverviewDashboardModel.js';
 
-type ProviderFilter = 'all' | 'codex' | 'claude';
-type StatusFilter = AgentListStatusFilter;
-type ProjectFilter = 'all' | string;
-type TeamFilter = 'all' | string;
-type UsagePane = 'overview' | 'live' | 'history';
-type HandoffWriteStatus = 'idle' | 'writing' | 'written' | 'failed';
-type HandoffOpenStatus = 'idle' | 'opening' | 'opened' | 'failed';
-type HandoffStatusUpdateStatus = 'idle' | 'updating' | 'updated' | 'failed';
-
 interface AgentCenterSurfaceProps {
   activePage: AgentCenterPage;
   isActive: boolean;
@@ -193,59 +209,6 @@ interface AgentCenterSurfaceProps {
   onResumeAgent: (id: number) => void;
   usageHistory: UsageHistoryState;
   timelineHistory: TimelineHistoryState;
-}
-
-interface AgentSummary extends AgentListItem {
-  id: number;
-  name: string;
-  project: string;
-  providerId: string;
-  status: string;
-  statusGroup: AgentListStatusGroup;
-  activity: string;
-  detail?: string;
-  tokens: number;
-  updatedAt?: number;
-  inputTokens: number;
-  outputTokens: number;
-  artifactOutputTokens: number;
-  tokenUsageEstimated: boolean;
-  tokenUsageDetails?: TokenUsageDetails;
-  codexRateLimit?: TokenRateLimitSnapshot;
-  delegation?: DelegationSummary;
-  zone: AgentZone;
-  zoneSource: AgentZoneSource;
-  projectDir?: string;
-  transcriptPath?: string;
-  teamName?: string;
-  roleName?: string;
-  isTeamLead?: boolean;
-  leadAgentId?: number;
-  isPaused: boolean;
-  hidden: boolean;
-}
-
-interface ProjectSummary {
-  project: string;
-  projectDir?: string;
-  agentCount: number;
-  activeCount: number;
-  waitingCount: number;
-  needsMeCount: number;
-  errorCount: number;
-  tokens: number;
-}
-
-interface TeamSummary {
-  teamName: string;
-  memberCount: number;
-  leadAgentId?: number;
-  leadName?: string;
-  activeCount: number;
-  needsMeCount: number;
-  errorCount: number;
-  tokens: number;
-  projects: string[];
 }
 
 export function AgentCenterSurface({
@@ -2650,204 +2613,6 @@ function TimelineDashboard({
   );
 }
 
-function TimelineReplayPanel({
-  sessions,
-  selectedSessionId,
-  state,
-  isPlaying,
-  speed,
-  onSessionChange,
-  onFirst,
-  onPrevious,
-  onNext,
-  onLast,
-  onTogglePlay,
-  onSpeedChange,
-}: {
-  sessions: TimelineReplaySession[];
-  selectedSessionId: string;
-  state: TimelineReplayState;
-  isPlaying: boolean;
-  speed: number;
-  onSessionChange: (sessionId: string) => void;
-  onFirst: () => void;
-  onPrevious: () => void;
-  onNext: () => void;
-  onLast: () => void;
-  onTogglePlay: () => void;
-  onSpeedChange: (speed: number) => void;
-}) {
-  const frame = state.currentFrame;
-  const selectedSessionMissing =
-    state.unavailableReason === 'session-filtered-out' && selectedSessionId !== '';
-  const replayHint = timelineReplayHintText(state);
-  const handleKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
-    if (isReplayKeyboardTargetInteractive(event.target)) return;
-    if (event.key === 'ArrowLeft' || event.key === 'Left') {
-      if (!state.hasPrevious) return;
-      event.preventDefault();
-      onPrevious();
-      return;
-    }
-    if (event.key === 'ArrowRight' || event.key === 'Right') {
-      if (!state.hasNext) return;
-      event.preventDefault();
-      onNext();
-      return;
-    }
-    if (event.key === 'Home') {
-      if (!state.hasFirst) return;
-      event.preventDefault();
-      onFirst();
-      return;
-    }
-    if (event.key === 'End') {
-      if (!state.hasLast) return;
-      event.preventDefault();
-      onLast();
-      return;
-    }
-    if (event.key === ' ' || event.key === 'Spacebar') {
-      if (!isPlaying && !state.hasNext) return;
-      event.preventDefault();
-      onTogglePlay();
-    }
-  };
-  return (
-    <section
-      className="border border-border bg-bg outline-none focus:border-accent"
-      tabIndex={0}
-      onKeyDown={handleKeyDown}
-      aria-label="Session Replay controls"
-    >
-      <SectionHeader
-        title="Session Replay"
-        subtitle="Normalized event playback from local timeline history"
-      />
-      <div className="grid gap-3 p-4 lg:grid-cols-[minmax(260px,1fr)_auto_minmax(240px,0.9fr)]">
-        <label className="min-w-0 text-xs uppercase tracking-wide text-text-muted">
-          Scope
-          <select
-            className="mt-2 h-34 w-full border border-border bg-bg px-3 text-sm normal-case tracking-normal text-text outline-none focus:border-accent"
-            value={selectedSessionId}
-            onChange={(event) => onSessionChange(event.currentTarget.value)}
-            aria-label="Select replay scope"
-            disabled={sessions.length === 0}
-          >
-            {sessions.length === 0 ? (
-              <option value="">No replay sessions</option>
-            ) : (
-              <>
-                {selectedSessionMissing && (
-                  <option value={selectedSessionId}>Selected replay scope hidden by filters</option>
-                )}
-                {sessions.map((session) => (
-                  <option key={session.id} value={session.id}>
-                    {session.label} ({session.frameCount})
-                  </option>
-                ))}
-              </>
-            )}
-          </select>
-          {selectedSessionMissing && (
-            <div className="mt-2 text-xs normal-case tracking-normal text-status-permission">
-              The selected replay scope is outside the current filters.
-            </div>
-          )}
-        </label>
-
-        <div className="flex flex-wrap items-end gap-2">
-          <Button
-            variant={state.hasFirst ? 'default' : 'disabled'}
-            size="sm"
-            disabled={!state.hasFirst}
-            onClick={onFirst}
-          >
-            First
-          </Button>
-          <Button
-            variant={state.hasPrevious ? 'default' : 'disabled'}
-            size="sm"
-            disabled={!state.hasPrevious}
-            onClick={onPrevious}
-          >
-            Prev
-          </Button>
-          <Button
-            variant={state.hasNext ? 'default' : 'disabled'}
-            size="sm"
-            disabled={!state.hasNext}
-            onClick={onTogglePlay}
-          >
-            {isPlaying ? 'Pause' : 'Play'}
-          </Button>
-          <Button
-            variant={state.hasNext ? 'default' : 'disabled'}
-            size="sm"
-            disabled={!state.hasNext}
-            onClick={onNext}
-          >
-            Next
-          </Button>
-          <Button
-            variant={state.hasLast ? 'default' : 'disabled'}
-            size="sm"
-            disabled={!state.hasLast}
-            onClick={onLast}
-          >
-            Last
-          </Button>
-          <label className="min-w-[104px] text-xs uppercase tracking-wide text-text-muted">
-            Speed
-            <select
-              className="mt-2 h-34 w-full border border-border bg-bg px-3 text-sm normal-case tracking-normal text-text outline-none focus:border-accent"
-              value={String(speed)}
-              onChange={(event) => onSpeedChange(Number(event.currentTarget.value))}
-              aria-label="Replay speed"
-            >
-              {TIMELINE_REPLAY_SPEED_OPTIONS.map((option) => (
-                <option key={option} value={String(option)}>
-                  {option}x
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-
-        <div className="min-w-0 border border-border bg-btn-bg p-3">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <span className={`h-2 w-2 shrink-0 rounded-full ${severityDot(state.severity)}`} />
-            <span className="shrink-0 border border-border bg-bg px-2 py-1 text-xs uppercase tracking-wide text-text-muted">
-              {state.statusLabel}
-            </span>
-            <span className="text-xs text-text-muted">{state.progressLabel}</span>
-          </div>
-          <div className="mt-2 h-2 border border-border bg-bg">
-            <div
-              className="h-full bg-accent"
-              style={{ width: `${Math.round(state.progress * 100)}%` }}
-            />
-          </div>
-          <div className="mt-3 min-w-0">
-            <div className="truncate text-sm text-text">
-              {frame ? frame.event.title : 'No replay frame selected'}
-            </div>
-            <div className="mt-1 break-words text-xs text-text-muted">
-              {frame?.event.summary ?? replayHint}
-            </div>
-            <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2 text-xs text-text-muted">
-              {state.kind && <span className="truncate">{state.kind}</span>}
-              {state.category && <span>{timelineCategoryLabel(state.category)}</span>}
-              {frame && <span>{formatRelative(frame.timestamp)}</span>}
-              {state.isSingleFrame && <span>Single-frame replay</span>}
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
-  );
-}
-
 function HandoffDraftPanel({
   model,
   isPreviewOpen,
@@ -4012,201 +3777,6 @@ function HandoffActionGroup({
   );
 }
 
-function TimelineFilterSelect({
-  label,
-  value,
-  allLabel,
-  options,
-  onChange,
-  ariaLabel,
-}: {
-  label: string;
-  value: string;
-  allLabel: string;
-  options: Array<{ value: string; label: string; count: number }>;
-  onChange: (value: string) => void;
-  ariaLabel: string;
-}) {
-  return (
-    <label className="min-w-0 text-xs uppercase tracking-wide text-text-muted">
-      {label}
-      <select
-        className="mt-2 h-34 w-full border border-border bg-bg px-3 text-sm normal-case tracking-normal text-text outline-none focus:border-accent"
-        value={value}
-        onChange={(event) => onChange(event.currentTarget.value)}
-        aria-label={ariaLabel}
-      >
-        <option value="all">{allLabel}</option>
-        {options.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label} ({option.count})
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-}
-
-function timelineReplayHintText(state: TimelineReplayState): string {
-  if (state.unavailableReason === 'session-filtered-out') {
-    return 'The selected replay scope is hidden by the current Timeline filters. Choose another scope or clear filters.';
-  }
-  if (state.unavailableReason === 'no-sessions') {
-    return 'No replay sessions are available in the current Timeline filters.';
-  }
-  if (state.isSingleFrame) {
-    return 'This replay has one frame, so previous and next controls stay disabled.';
-  }
-  return 'Choose a replay scope with timeline events.';
-}
-
-function isReplayKeyboardTargetInteractive(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  if (target.isContentEditable) return true;
-  return ['BUTTON', 'INPUT', 'SELECT', 'TEXTAREA'].includes(target.tagName);
-}
-
-function TimelineEmptyState({
-  hasEvents,
-  hasFilters,
-  onClearFilters,
-}: {
-  hasEvents: boolean;
-  hasFilters: boolean;
-  onClearFilters: () => void;
-}) {
-  return (
-    <div className="p-8 text-center text-text-muted">
-      <div className="text-lg text-accent-bright">
-        {hasEvents ? 'No events match these filters' : 'No timeline events yet'}
-      </div>
-      <div className="mt-2 text-sm">
-        {hasEvents
-          ? 'Adjust search or filters to widen the event history.'
-          : 'Lifecycle and action events will appear here as agents run.'}
-      </div>
-      {hasFilters && (
-        <div className="mt-4">
-          <Button variant="default" size="sm" onClick={onClearFilters}>
-            Clear filters
-          </Button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function TimelineEventRow({
-  event,
-  replayMarker,
-  onSelectReplay,
-}: {
-  event: TimelinePageItem;
-  replayMarker: TimelineReplayFrameMarker;
-  onSelectReplay: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      className={`grid w-full cursor-pointer gap-3 p-4 text-left hover:bg-btn-bg md:grid-cols-[98px_minmax(0,1.2fr)_minmax(180px,0.8fr)] ${
-        replayMarker.isCurrent ? 'bg-active-bg' : 'bg-transparent'
-      }`}
-      onClick={onSelectReplay}
-      title={replayMarker.isCurrent ? replayMarker.label : 'Cue replay to this event'}
-    >
-      <div className="text-xs text-text-muted">{formatRelative(event.timestamp)}</div>
-      <div className="min-w-0">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <span className={`h-2 w-2 shrink-0 rounded-full ${severityDot(event.severity)}`} />
-          <TimelineSeverityPill severity={event.severity} />
-          {event.isActionLike && <TimelineHistoryPill event={event} />}
-          {replayMarker.isCurrent && <TimelineReplayPill marker={replayMarker} />}
-          <span className="min-w-[120px] max-w-full truncate text-sm text-text">{event.title}</span>
-        </div>
-        {event.summary && (
-          <div className="mt-1 break-words text-xs text-text-muted">{event.summary}</div>
-        )}
-        <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2 text-xs text-text-muted">
-          <span className="truncate">{event.kind}</span>
-          <span>{event.source}</span>
-          {event.sessionId && <span className="truncate">{event.sessionId}</span>}
-          {event.runId && <span className="truncate">{event.runId}</span>}
-          {event.artifactId && <span className="truncate">{event.artifactId}</span>}
-          {event.artifactStatus && <span className="truncate">{event.artifactStatus}</span>}
-          {event.dispatchStatus && <span className="truncate">{event.dispatchStatus}</span>}
-          {event.executionStatus && <span className="truncate">{event.executionStatus}</span>}
-          {event.linkedAgentName && <span className="truncate">{event.linkedAgentName}</span>}
-          {event.linkedAgentId !== undefined && (
-            <span className="truncate">agent {event.linkedAgentId}</span>
-          )}
-          {event.packageRelativePath && (
-            <span className="truncate">{event.packageRelativePath}</span>
-          )}
-          {event.reportRelativePath && <span className="truncate">{event.reportRelativePath}</span>}
-          {event.previousStatus && event.nextStatus && (
-            <span className="truncate">
-              {event.previousStatus} -&gt; {event.nextStatus}
-            </span>
-          )}
-        </div>
-      </div>
-      <div className="min-w-0">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <ProviderBadge providerId={event.providerId} />
-          <span className="truncate text-sm text-text">{event.agentName}</span>
-          <span className="shrink-0 text-xs text-text-muted">#{event.agentId}</span>
-        </div>
-        <div className="mt-1 truncate text-xs text-text-muted">{event.project}</div>
-      </div>
-    </button>
-  );
-}
-
-function TimelineSeverityPill({ severity }: { severity: TimelineSeverity }) {
-  return (
-    <span
-      className={`shrink-0 border px-2 py-1 text-xs uppercase tracking-wide ${timelineSeverityClass(
-        severity,
-      )}`}
-    >
-      {timelineSeverityLabel(severity)}
-    </span>
-  );
-}
-
-function TimelineHistoryPill({ event }: { event: TimelinePageItem }) {
-  const label = event.kind.startsWith('handoff.')
-    ? 'Handoff'
-    : event.isDelegationLike
-      ? 'Delegation'
-      : 'Action';
-  return (
-    <span className="shrink-0 border border-accent bg-btn-bg px-2 py-1 text-xs uppercase tracking-wide text-accent-bright">
-      {label}
-    </span>
-  );
-}
-
-function TimelineReplayPill({ marker }: { marker: TimelineReplayFrameMarker }) {
-  return (
-    <span
-      className="shrink-0 border border-accent bg-bg px-2 py-1 text-xs uppercase tracking-wide text-accent-bright"
-      title={marker.label}
-    >
-      Replay
-    </span>
-  );
-}
-
-function SectionHeader({ title, subtitle }: { title: string; subtitle: string }) {
-  return (
-    <div className="border-b border-border bg-btn-bg p-4">
-      <div className="text-sm uppercase tracking-wide text-accent-bright">{title}</div>
-      <div className="mt-1 text-xs text-text-muted">{subtitle}</div>
-    </div>
-  );
-}
-
 function UsageMetric({ label, value, detail }: { label: string; value: string; detail: string }) {
   return (
     <div className="min-w-0 border border-border bg-btn-bg p-4">
@@ -4610,12 +4180,6 @@ function handoffStatusUpdateLabel(
   return 'Status actions update only local metadata; Markdown remains editable.';
 }
 
-function formatProxyUsd(value: number): string {
-  if (value <= 0) return '$0.0000';
-  if (value < 0.01) return `$${value.toFixed(4)}`;
-  return `$${value.toFixed(2)}`;
-}
-
 function formatUsageHistoryRateLimit(limit: UsageHistoryRateLimitSnapshot): string {
   const percent =
     limit.usedPercent !== undefined
@@ -4627,23 +4191,6 @@ function formatUsageHistoryRateLimit(limit: UsageHistoryRateLimitSnapshot): stri
   return reset
     ? `${limit.providerLabel} ${percent}; resets ${reset}.`
     : `${limit.providerLabel} ${percent}.`;
-}
-
-async function copyTextToClipboard(text: string): Promise<void> {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text);
-    return;
-  }
-  const textarea = document.createElement('textarea');
-  textarea.value = text;
-  textarea.style.position = 'fixed';
-  textarea.style.left = '-9999px';
-  document.body.append(textarea);
-  textarea.focus();
-  textarea.select();
-  const copied = document.execCommand('copy');
-  textarea.remove();
-  if (!copied) throw new Error('Clipboard copy failed');
 }
 
 function UsageBar({ label, value, total }: { label: string; value: number; total: number }) {
@@ -4660,10 +4207,6 @@ function UsageBar({ label, value, total }: { label: string; value: number; total
       </div>
     </div>
   );
-}
-
-function usageBarPercent(value: number, total: number): number {
-  return total > 0 ? Math.min(100, Math.max(value > 0 ? 2 : 0, (value / total) * 100)) : 0;
 }
 
 function LedgerValue({
@@ -4711,17 +4254,6 @@ function SegmentedButtons<T extends string>({
       ))}
     </div>
   );
-}
-
-interface AgentStateCounts {
-  total: number;
-  active: number;
-  delegating: number;
-  paused: number;
-  waiting: number;
-  needsMe: number;
-  error: number;
-  hidden: number;
 }
 
 function AgentStateSummary({
@@ -5507,14 +5039,6 @@ function applyDelegationSummary(
   };
 }
 
-interface TimelineItem {
-  id: string;
-  timestamp: number;
-  title: string;
-  summary?: string;
-  severity?: 'info' | 'success' | 'warning' | 'error';
-}
-
 function buildAgentTimeline(
   agentId: number,
   timelineEvents: AgentTimelineEvent[],
@@ -5707,20 +5231,6 @@ function HiddenMarker() {
   );
 }
 
-function ProviderBadge({ providerId }: { providerId: string }) {
-  return (
-    <span className="shrink-0 border border-border bg-btn-bg px-2 py-1 text-xs uppercase tracking-wide text-text-muted">
-      {providerLabel(providerId)}
-    </span>
-  );
-}
-
-function providerLabel(providerId: string): string {
-  if (providerId === 'codex') return 'Codex';
-  if (providerId === 'claude') return 'Claude';
-  return providerId;
-}
-
 function StatusBadge({ status }: { status: string }) {
   const color =
     status === 'needs approval' || status === 'waiting_permission' || status === 'waiting_user'
@@ -5741,56 +5251,6 @@ function StatusBadge({ status }: { status: string }) {
       <span className="truncate">{status}</span>
     </span>
   );
-}
-
-function severityDot(severity?: 'info' | 'success' | 'warning' | 'error'): string {
-  if (severity === 'error') return 'bg-status-error';
-  if (severity === 'warning') return 'bg-status-permission';
-  if (severity === 'success') return 'bg-status-success';
-  return 'bg-status-active';
-}
-
-function timelineSeverityClass(severity: TimelineSeverity): string {
-  if (severity === 'error') return 'border-status-error bg-bg text-status-error';
-  if (severity === 'warning') return 'border-status-permission bg-bg text-status-permission';
-  if (severity === 'success') return 'border-status-success bg-bg text-status-success';
-  return 'border-status-active bg-bg text-status-active';
-}
-
-function usageInsightClass(severity: UsageInsight['severity']): string {
-  if (severity === 'error') return 'bg-bg border-l-4 border-l-status-error';
-  if (severity === 'warning') return 'bg-bg border-l-4 border-l-status-permission';
-  return 'bg-bg';
-}
-
-function usageInsightDotClass(severity: UsageInsight['severity']): string {
-  if (severity === 'error') return 'bg-status-error';
-  if (severity === 'warning') return 'bg-status-permission';
-  return 'bg-status-active';
-}
-
-function usageAccuracyShort(accuracy: UsageAccuracy): string {
-  if (accuracy === 'exact') return 'Exact';
-  if (accuracy === 'estimated') return 'Estimated';
-  if (accuracy === 'mixed') return 'Mixed';
-  return 'None';
-}
-
-function usageAccuracyClass(accuracy: UsageAccuracy): string {
-  if (accuracy === 'exact') return 'border-status-success bg-btn-bg text-text';
-  if (accuracy === 'estimated') return 'border-status-permission bg-btn-bg text-text';
-  if (accuracy === 'mixed') return 'border-status-active bg-btn-bg text-text';
-  return 'border-border bg-btn-bg text-text-muted';
-}
-
-function formatUsageOverviewMetricValue(value: number | string): string {
-  return typeof value === 'number' ? compactNumber(value) : value;
-}
-
-function compactNumber(value: number): string {
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}m`;
-  if (value >= 1_000) return `${Math.round(value / 1_000)}k`;
-  return value.toLocaleString();
 }
 
 function formatRateLimit(limit: TokenRateLimitSnapshot): string {
@@ -5815,12 +5275,4 @@ function rateLimitResetText(limit: TokenRateLimitSnapshot): string | undefined {
   if (seconds < 60) return `${Math.round(seconds)}s`;
   if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
   return `${Math.round(seconds / 3600)}h`;
-}
-
-function formatRelative(timestamp: number): string {
-  const seconds = Math.max(0, Math.round((Date.now() - timestamp) / 1000));
-  if (seconds < 2) return 'now';
-  if (seconds < 60) return `${seconds}s ago`;
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-  return `${Math.floor(seconds / 3600)}h ago`;
 }
