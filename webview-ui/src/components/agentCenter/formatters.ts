@@ -88,3 +88,9 @@ export async function copyTextToClipboard(text: string): Promise<void> {
   textarea.remove();
   if (!copied) throw new Error('Clipboard copy failed');
 }
+
+export function providerLabel(providerId: string): string {
+  if (providerId === 'codex') return 'Codex';
+  if (providerId === 'claude') return 'Claude';
+  return providerId;
+}
