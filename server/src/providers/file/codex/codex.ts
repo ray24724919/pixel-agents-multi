@@ -281,6 +281,20 @@ limit 1;`;
   return queryCodexThread(sql);
 }
 
+/**
+ * True when a Codex thread has been updated within `maxAgeMs` of `nowMs`. Codex spins up a new
+ * thread per run, so without a recency gate every past run in a cwd (kept in the 50-most-recent
+ * list for weeks) re-adopts as its own room agent. A missing/zero timestamp counts as NOT recent —
+ * a genuinely active thread always carries a real updated_at_ms.
+ */
+export function isCodexThreadRecentlyActive(
+  thread: Pick<CodexThread, 'updatedAtMs'>,
+  nowMs: number,
+  maxAgeMs: number,
+): boolean {
+  return thread.updatedAtMs > 0 && nowMs - thread.updatedAtMs <= maxAgeMs;
+}
+
 export function findRecentCodexThreads(limit = 50): CodexThread[] {
   const sql = `
 select id, rollout_path, cwd, coalesce(title, ''), updated_at_ms, coalesce(tokens_used, 0), coalesce(agent_nickname, ''), coalesce(agent_role, '')
