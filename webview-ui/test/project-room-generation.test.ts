@@ -1006,6 +1006,158 @@ test('work corridor growth appends a new bay without overlapping rooms after ref
   }
 });
 
+// ── Freed-slot reuse (③b): vacancy lifecycle + reclaim-on-reload ──────────────────────────────────
+
+function deadRoom(id: string, key: string, col: number, row: number, vacatedAtMs?: number) {
+  return {
+    id,
+    kind: ProjectRoomKind.PROJECT,
+    bounds: { col, row, width: 9, height: 7 },
+    project: { key, displayName: key, source: 'folderName' as const },
+    ...(vacatedAtMs !== undefined ? { vacatedAtMs } : {}),
+  };
+}
+
+test('a project whose agent is gone is stamped vacant, not reclaimed in the same session', () => {
+  const layout = {
+    ...makeLayout(30, 24),
+    projectRooms: [deadRoom('project-alpha', 'alpha', 2, 2)],
+  };
+  // No agents → alpha absent; it has no prior stamp, so it is stamped now, never reclaimed this pass.
+  const result = ensureProjectRoomsForAgents(layout, [], {
+    nowMs: 1000,
+    reclaimVacatedBeforeMs: 500,
+  });
+  const rooms = projectRooms(result.layout);
+  assert.equal(rooms.length, 1);
+  assert.equal(rooms[0]!.vacatedAtMs, 1000);
+  assert.deepEqual(result.reclaimedRoomIds, []);
+  assert.equal(result.vacancyChanged, true);
+});
+
+test('a returning project clears its vacancy stamp', () => {
+  const layout = {
+    ...makeLayout(30, 24),
+    projectRooms: [deadRoom('project-alpha', 'alpha', 2, 2, 100)],
+  };
+  const result = ensureProjectRoomsForAgents(layout, [{ folderName: 'alpha', isSubagent: false }], {
+    nowMs: 1000,
+    reclaimVacatedBeforeMs: 500,
+  });
+  const room = projectRooms(result.layout).find((r) => r.id === 'project-alpha');
+  assert.ok(room);
+  assert.equal(room!.vacatedAtMs, undefined);
+});
+
+test('a project room vacated before this session is reclaimed and its bay freed', () => {
+  const cols = 30;
+  const rows = 24;
+  const tiles: TileTypeVal[] = Array.from({ length: cols * rows }, () => TileType.VOID);
+  for (let r = 2; r < 9; r++) {
+    for (let c = 2; c < 11; c++) tiles[r * cols + c] = TileType.FLOOR_1;
+  }
+  const layout = {
+    ...makeLayout(cols, rows, tiles),
+    projectRooms: [deadRoom('project-alpha', 'alpha', 2, 2, 100)],
+    furniture: [{ uid: 'project-alpha-desk-1', type: 'DESK', col: 4, row: 4 }],
+  };
+  const result = ensureProjectRoomsForAgents(layout, [], {
+    nowMs: 1000,
+    reclaimVacatedBeforeMs: 500,
+  });
+  assert.deepEqual(result.reclaimedRoomIds, ['project-alpha']);
+  assert.equal(
+    projectRooms(result.layout).some((r) => r.id === 'project-alpha'),
+    false,
+  );
+  assert.equal(
+    result.layout.furniture.some((f) => f.uid === 'project-alpha-desk-1'),
+    false,
+  );
+  assert.equal(tileAt(result.layout, 4, 4), TileType.VOID);
+});
+
+test('reclaim is disabled without a session cutoff (freeze preserved by default)', () => {
+  const layout = {
+    ...makeLayout(30, 24),
+    projectRooms: [deadRoom('project-alpha', 'alpha', 2, 2, 100)],
+  };
+  const result = ensureProjectRoomsForAgents(layout, [], { nowMs: 1000 });
+  assert.deepEqual(result.reclaimedRoomIds, []);
+  assert.equal(
+    projectRooms(result.layout).some((r) => r.id === 'project-alpha'),
+    true,
+  );
+});
+
+test('a hand-edited dead room is kept, not reclaimed', () => {
+  const layout = {
+    ...makeLayout(30, 24),
+    projectRooms: [deadRoom('project-alpha', 'alpha', 2, 2, 100)],
+    // A user-placed item (uid does not start with "project-") inside the room protects it.
+    furniture: [{ uid: 'user-sofa-1', type: 'SOFA', col: 4, row: 4 }],
+  };
+  const result = ensureProjectRoomsForAgents(layout, [], {
+    nowMs: 1000,
+    reclaimVacatedBeforeMs: 500,
+  });
+  assert.deepEqual(result.reclaimedRoomIds, []);
+  assert.equal(
+    projectRooms(result.layout).some((r) => r.id === 'project-alpha'),
+    true,
+  );
+});
+
+test('an editor-created (non-generated) dead room is never auto-reclaimed', () => {
+  const layout = {
+    ...makeLayout(30, 24),
+    projectRooms: [deadRoom('room-custom', 'custom', 2, 2, 100)],
+  };
+  const result = ensureProjectRoomsForAgents(layout, [], {
+    nowMs: 1000,
+    reclaimVacatedBeforeMs: 500,
+  });
+  assert.deepEqual(result.reclaimedRoomIds, []);
+  assert.equal(
+    projectRooms(result.layout).some((r) => r.id === 'room-custom'),
+    true,
+  );
+});
+
+test('a reclaimed centre bay is reused by the next new project (centre-out fill)', () => {
+  const built = ensureProjectRoomsForAgents(makeLayout(), [
+    { folderName: 'Alpha', isSubagent: false },
+    { folderName: 'Beta', isSubagent: false },
+    { folderName: 'Gamma', isSubagent: false },
+  ]);
+  const alpha = built.createdRooms.find((r) => r.project?.key === 'alpha');
+  assert.ok(alpha, 'expected an alpha room');
+  const alphaBounds = alpha!.bounds;
+
+  // Alpha was closed in a prior session: stamp its room vacant before the session cutoff. Preserve
+  // EVERY room (including the PUBLIC lobby) so the campus stays frozen — dropping the lobby here would
+  // trigger the no-lobby recovery reflow and move the surviving rooms.
+  const stagedRooms = (built.layout.projectRooms ?? []).map((room) =>
+    room.id === alpha!.id ? { ...room, vacatedAtMs: 100 } : room,
+  );
+  const staged = { ...built.layout, projectRooms: stagedRooms };
+
+  // Beta + Gamma still live; Delta is new. Alpha is reclaimed and Delta fills the freed centre bay.
+  const result = ensureProjectRoomsForAgents(
+    staged,
+    [
+      { folderName: 'Beta', isSubagent: false },
+      { folderName: 'Gamma', isSubagent: false },
+      { folderName: 'Delta', isSubagent: false },
+    ],
+    { nowMs: 1000, reclaimVacatedBeforeMs: 500 },
+  );
+  assert.deepEqual(result.reclaimedRoomIds, [alpha!.id]);
+  const delta = result.createdRooms.find((r) => r.project?.key === 'delta');
+  assert.ok(delta, 'expected a delta room');
+  assert.deepEqual(delta!.bounds, alphaBounds);
+});
+
 test('generated workstation prefers a front desk with matching front electronics', () => {
   const assets: TestCatalogAsset[] = [
     {
