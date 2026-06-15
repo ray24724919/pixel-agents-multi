@@ -28,17 +28,11 @@ export const EXTERNAL_STALE_CHECK_INTERVAL_MS = 30_000;
 /** Cooldown after user closes an agent via X. Must be > EXTERNAL_ACTIVE_THRESHOLD_MS
  *  so the file's mtime becomes stale before the dismissal expires. */
 export const DISMISSED_COOLDOWN_MS = 180_000; // 3 minutes
-/** An EXTERNAL agent whose transcript has been silent this long is treated as a long-abandoned session
- *  and reaped (on restore + periodically). This is a GENEROUS "clearly abandoned" floor, NOT an idle
- *  timeout: users legitimately keep an external Claude/Codex session OPEN but unused for days and expect
- *  its agent to stay in its room (rooms are persistent campus structure). A live session that actually
- *  ends fires SessionEnd (Claude hook) and is removed promptly regardless of this value; this age-reap
- *  only catches sessions that died while VS Code was closed (so SessionEnd was missed).
- *  History: this was 6h to stop a "daily room accumulation", but that was really the Claude cowork
- *  hook-leak (now blocked at adoption — see sessionPaths/isLocalAgentModeSandboxPath), so the aggressive
- *  6h floor was both unnecessary AND wrong (it deleted real idle-but-open agents). Must stay well above
- *  the adoption windows so a reaped session is never instantly re-adopted. */
-export const EXTERNAL_AGENT_STALE_REAP_MS = 1_209_600_000; // 14 days
+// NOTE: external-agent reaping is now DELETION-based, not time-based — an adopted session's agent stays
+// as long as its transcript/rollout exists (Claude) or its Codex thread is not archived. There is no
+// idle-timeout constant: a live session that ends is removed via SessionEnd (Claude) or thread archival
+// (Codex), and a deleted transcript is reaped by reapStaleExternalAgents. (Was EXTERNAL_AGENT_STALE_REAP_MS
+// = 6h, an idle timeout that wrongly deleted sessions the user kept open but unused; removed 2026-06-15.)
 
 // ── Global Session Scanning ─────────────────────────────────
 /** Only adopt global JSONL files larger than this (filters out empty/init-only sessions) */

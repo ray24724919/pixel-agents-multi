@@ -5,7 +5,6 @@ import * as vscode from 'vscode';
 
 import {
   CODEX_EXTERNAL_ADOPT_MAX_AGE_MS,
-  EXTERNAL_AGENT_STALE_REAP_MS,
   GLOBAL_SCAN_ACTIVE_MAX_AGE_MS,
 } from '../server/src/constants.js';
 import type { HookEvent } from '../server/src/hookEventHandler.js';
@@ -2086,7 +2085,6 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
   }
 
   private removeStaleCodexAgents(topLevelThreadIds: Set<string>): void {
-    const now = Date.now();
     for (const [id, agent] of [...this.agents]) {
       if (agent.providerId !== 'codex' || !agent.jsonlFile) continue;
       // A live, terminal-bound agent is genuinely running — it is just idle between prompts. Codex
@@ -2096,12 +2094,11 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       if (agent.terminalRef && agent.terminalRef.exitStatus === undefined) continue;
       const isTopLevelExternal = agent.isExternal && agent.leadAgentId === undefined;
       const thread = findCodexThreadById(agent.sessionId);
-      // A top-level external agent (no terminal) whose thread has gone quiet beyond the reap window
-      // is a finished scheduled/background run — drop it so daily runs don't accumulate. Recently
-      // active externals and terminal-bound agents are kept by the conditions above/below.
-      const externalWentStale =
-        isTopLevelExternal &&
-        (!thread || !isCodexThreadRecentlyActive(thread, now, EXTERNAL_AGENT_STALE_REAP_MS));
+      // Deletion-based, NOT idle-based: keep a top-level external Codex agent as long as its thread
+      // still exists. findCodexThreadById filters `archived = 0`, so `!thread` means the thread was
+      // archived or deleted by the user — only then drop the agent. An idle-but-kept thread is found
+      // here and survives no matter how long it has been unused.
+      const externalWentStale = isTopLevelExternal && !thread;
       if (
         !externalWentStale &&
         fs.existsSync(agent.jsonlFile) &&
