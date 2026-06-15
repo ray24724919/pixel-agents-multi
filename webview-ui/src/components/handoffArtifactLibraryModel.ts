@@ -953,6 +953,51 @@ export function buildHandoffQueueOperatorSummary(
   };
 }
 
+/** Status groups in which an executor is still producing output — a report is not expected yet. */
+const HANDOFF_EXECUTOR_WORKING_GROUPS = new Set<string>(['active', 'delegating']);
+
+export interface HandoffAutoRefreshDecision {
+  /** Markdown relativePaths whose completion should be re-scanned now. */
+  paths: string[];
+  /** Per-path executor status signature acted on; pass back as `seen` on the next call. */
+  nextSeen: Record<string, string>;
+}
+
+/**
+ * Decide which in-flight handoffs should have their completion auto-refreshed so the queue advances on
+ * its own instead of waiting for a manual "Refresh" click (closes the ① handoff feedback loop). A
+ * handoff is refreshed once each time its linked executor agent SETTLES into a non-working status group
+ * (turn ended / idle / waiting / gone) — that's when an executor report may have appeared. `seen`
+ * records the last status signature acted on per path; feed the returned `nextSeen` back next call.
+ *
+ * Loop-safe: refreshing changes the handoff's completion/review, NOT the executor's status group, so a
+ * settled executor is acted on exactly once until it works again (its group cycles through a working
+ * value and back). Provider-agnostic: keys off the shared `statusGroup` both Claude and Codex agents
+ * report, so Claude (hook-driven) and Codex (transcript-driven) executors behave identically.
+ */
+export function selectHandoffAutoRefreshTargets(
+  items: readonly HandoffArtifactLibraryItem[],
+  agents: readonly HandoffExecutorAgentSnapshot[],
+  seen: Record<string, string>,
+): HandoffAutoRefreshDecision {
+  const agentById = new Map<number, HandoffExecutorAgentSnapshot>();
+  for (const agent of agents) agentById.set(agent.id, agent);
+  const paths: string[] = [];
+  const nextSeen: Record<string, string> = {};
+  for (const item of items) {
+    const agentId = item.dispatchPackage?.execution?.agentId;
+    if (agentId === undefined) continue; // no executor linked yet — nothing to track
+    if (item.review?.status === 'merged') continue; // terminal — nothing left to detect
+    const linked = agentById.get(agentId);
+    const signature = linked ? `group:${linked.statusGroup ?? 'unknown'}` : 'gone';
+    nextSeen[item.relativePath] = signature;
+    if (seen[item.relativePath] === signature) continue; // unchanged since last decision
+    const working = !!linked && HANDOFF_EXECUTOR_WORKING_GROUPS.has(linked.statusGroup ?? '');
+    if (!working) paths.push(item.relativePath); // executor settled → re-scan for a report
+  }
+  return { paths, nextSeen };
+}
+
 export function buildHandoffExecutorStateModel(
   item: Pick<HandoffArtifactLibraryItem, 'dispatchPackage' | 'completion' | 'review'>,
   agents: readonly HandoffExecutorAgentSnapshot[] = [],

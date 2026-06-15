@@ -37,6 +37,7 @@ import {
   handoffExecutionStatusActions,
   handoffQueueGroupForItem,
   handoffWorkPackageStatusLabel,
+  selectHandoffAutoRefreshTargets,
   shouldRefreshHandoffArtifactsForMessage,
 } from '../src/components/handoffArtifactLibraryModel.ts';
 
@@ -1929,3 +1930,122 @@ function handoffQueuePackageItem(
     },
   };
 }
+
+type AutoRefreshLibItem = Parameters<typeof selectHandoffAutoRefreshTargets>[0][number];
+type AutoRefreshAgent = Parameters<typeof selectHandoffAutoRefreshTargets>[1][number];
+const autoRefreshItem = (partial: Partial<AutoRefreshLibItem>): AutoRefreshLibItem =>
+  partial as AutoRefreshLibItem;
+
+test('selectHandoffAutoRefreshTargets refreshes a handoff once each time its executor settles', () => {
+  const items = [
+    autoRefreshItem({
+      relativePath: 'docs/agent-handoffs/h.md',
+      dispatchPackage: {
+        packageRelativePath: 'wp.md',
+        branchName: 'product/handoff-h',
+        reportRelativePath: 'r.md',
+        status: 'dispatched',
+        createdAt: '2026-06-15T00:00:00.000Z',
+        updatedAt: '2026-06-15T00:00:00.000Z',
+        statusLabel: 'Dispatched',
+        execution: {
+          agentId: 7,
+          status: 'active',
+          statusLabel: 'Active',
+          linkedAt: '2026-06-15T00:00:00.000Z',
+          updatedAt: '2026-06-15T00:00:00.000Z',
+        },
+      },
+    }),
+  ];
+  const working: AutoRefreshAgent[] = [{ id: 7, statusGroup: 'active' }];
+  const settled: AutoRefreshAgent[] = [{ id: 7, statusGroup: 'idle' }];
+
+  const r1 = selectHandoffAutoRefreshTargets(items, working, {});
+  assert.deepEqual(r1.paths, [], 'no refresh while the executor is working');
+
+  const r2 = selectHandoffAutoRefreshTargets(items, settled, r1.nextSeen);
+  assert.deepEqual(r2.paths, ['docs/agent-handoffs/h.md'], 'refresh when the executor settles');
+
+  const r3 = selectHandoffAutoRefreshTargets(items, settled, r2.nextSeen);
+  assert.deepEqual(r3.paths, [], 'no repeat while it stays settled (loop-safe)');
+
+  const r4 = selectHandoffAutoRefreshTargets(items, working, r3.nextSeen);
+  const r5 = selectHandoffAutoRefreshTargets(items, settled, r4.nextSeen);
+  assert.deepEqual(r5.paths, ['docs/agent-handoffs/h.md'], 'refresh again after a new turn');
+});
+
+test('selectHandoffAutoRefreshTargets skips handoffs with no executor or already merged', () => {
+  const noExecutor = autoRefreshItem({
+    relativePath: 'a.md',
+    dispatchPackage: {
+      packageRelativePath: 'wp.md',
+      branchName: 'b',
+      reportRelativePath: 'r.md',
+      status: 'ready',
+      createdAt: '2026-06-15T00:00:00.000Z',
+      updatedAt: '2026-06-15T00:00:00.000Z',
+      statusLabel: 'Ready',
+    },
+  });
+  const merged = autoRefreshItem({
+    relativePath: 'b.md',
+    dispatchPackage: {
+      packageRelativePath: 'wp.md',
+      branchName: 'b',
+      reportRelativePath: 'r.md',
+      status: 'dispatched',
+      createdAt: '2026-06-15T00:00:00.000Z',
+      updatedAt: '2026-06-15T00:00:00.000Z',
+      statusLabel: 'Dispatched',
+      execution: {
+        agentId: 1,
+        status: 'completed',
+        statusLabel: 'Completed',
+        linkedAt: '2026-06-15T00:00:00.000Z',
+        updatedAt: '2026-06-15T00:00:00.000Z',
+      },
+    },
+    review: {
+      status: 'merged',
+      statusLabel: 'Merged',
+      nextActionLabel: 'Done',
+      warnings: [],
+      checkedAt: '2026-06-15T00:00:00.000Z',
+    },
+  });
+  const result = selectHandoffAutoRefreshTargets(
+    [noExecutor, merged],
+    [{ id: 1, statusGroup: 'idle' }],
+    {},
+  );
+  assert.deepEqual(result.paths, []);
+});
+
+test('selectHandoffAutoRefreshTargets refreshes once when the executor agent has vanished', () => {
+  const items = [
+    autoRefreshItem({
+      relativePath: 'c.md',
+      dispatchPackage: {
+        packageRelativePath: 'wp.md',
+        branchName: 'b',
+        reportRelativePath: 'r.md',
+        status: 'dispatched',
+        createdAt: '2026-06-15T00:00:00.000Z',
+        updatedAt: '2026-06-15T00:00:00.000Z',
+        statusLabel: 'Dispatched',
+        execution: {
+          agentId: 99,
+          status: 'active',
+          statusLabel: 'Active',
+          linkedAt: '2026-06-15T00:00:00.000Z',
+          updatedAt: '2026-06-15T00:00:00.000Z',
+        },
+      },
+    }),
+  ];
+  const r1 = selectHandoffAutoRefreshTargets(items, [], {});
+  assert.deepEqual(r1.paths, ['c.md'], 'a vanished executor is re-scanned once');
+  const r2 = selectHandoffAutoRefreshTargets(items, [], r1.nextSeen);
+  assert.deepEqual(r2.paths, [], 'no repeat while it stays gone');
+});

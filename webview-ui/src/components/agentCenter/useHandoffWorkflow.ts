@@ -24,6 +24,7 @@ import {
   type HandoffExecutionStatus,
   type HandoffWorkPackageStatus,
   initialHandoffArtifactLibraryState,
+  selectHandoffAutoRefreshTargets,
   shouldRefreshHandoffArtifactsForMessage,
 } from '../handoffArtifactLibraryModel.js';
 import {
@@ -93,6 +94,7 @@ export function useHandoffWorkflow({
   const [handoffExecutionPackagePath, setHandoffExecutionPackagePath] = useState('');
   const [handoffExecutionError, setHandoffExecutionError] = useState('');
   const handoffExecutionRequestIdRef = useRef('');
+  const handoffAutoRefreshSeenRef = useRef<Record<string, string>>({});
   const handoffPageModel = useMemo(
     () => buildHandoffDraftPageModel({ timelineEvents, replayState }),
     [timelineEvents, replayState],
@@ -110,6 +112,31 @@ export function useHandoffWorkflow({
     setHandoffWrittenPath('');
     setHandoffWriteError('');
   }, [handoffPageModel, isHandoffPreviewOpen]);
+
+  // ① handoff spine — close the feedback loop. When a linked executor settles (turn ended / idle), the
+  // queue's completion is re-scanned automatically instead of waiting for a manual "Refresh" click.
+  // Silent: posts the same message the button does but without the manual status flicker; the library
+  // updates via the extension's handoffArtifactsLoaded rebroadcast. Loop-safe via the seen-signature
+  // ref (selectHandoffAutoRefreshTargets only fires once per executor settle).
+  useEffect(() => {
+    const decision = selectHandoffAutoRefreshTargets(
+      handoffLibraryState.items,
+      agents,
+      handoffAutoRefreshSeenRef.current,
+    );
+    handoffAutoRefreshSeenRef.current = decision.nextSeen;
+    if (decision.paths.length === 0) return;
+    const itemByPath = new Map(handoffLibraryState.items.map((item) => [item.relativePath, item]));
+    for (const path of decision.paths) {
+      const item = itemByPath.get(path);
+      if (!item) continue;
+      const requestId = `handoff-completion-auto-${Date.now()}-${Math.random()
+        .toString(36)
+        .slice(2, 8)}`;
+      const message = buildRefreshHandoffCompletionMessage(item, requestId);
+      if (message) vscode.postMessage(message);
+    }
+  }, [handoffLibraryState.items, agents]);
 
   useEffect(() => {
     const handler = (event: MessageEvent) => {
