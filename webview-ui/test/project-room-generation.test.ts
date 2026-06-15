@@ -314,8 +314,10 @@ test('generated room contains a valid workstation seat and a rest seat when spac
   const room = result.createdRooms[0]!;
   const seats = seatsInRoom(result.layout, room);
 
+  // Center-out growth: the first (only) project docks in the centre bay above the corridor, not the
+  // far-left bay.
   assert.deepEqual(room.bounds, {
-    col: 0,
+    col: 13,
     row: 0,
     width: PROJECT_ROOM_DEFAULT_WIDTH,
     height: PROJECT_ROOM_DEFAULT_HEIGHT,
@@ -944,7 +946,7 @@ test('multiple new projects produce stable non-overlapping lobby-adjacent rooms'
   }
 });
 
-test('campus allocation fills four corner rooms around the work corridor first', () => {
+test('campus allocation grows centre-out: centre bay first, then right, then left', () => {
   const result = ensureProjectRoomsForAgents(makeLayout(), [
     { folderName: 'Alpha', isSubagent: false },
     { folderName: 'Beta', isSubagent: false },
@@ -955,16 +957,18 @@ test('campus allocation fills four corner rooms around the work corridor first',
   const rooms = result.createdRooms;
 
   assert.equal(rooms.length, 5);
+  // Each bay fills top-then-bottom before stepping outward, growing centre (col 13) → right (col 26)
+  // → left (col 0): centre-top, centre-bottom, right-top, right-bottom, then left-top.
   assert.deepEqual(
-    rooms.slice(0, 4).map((room) => room.bounds.row),
-    [0, 0, 18, 18],
+    rooms.map((room) => room.bounds.col),
+    [13, 13, 26, 26, 0],
   );
   assert.deepEqual(
-    rooms.slice(0, 4).map((room) => room.bounds.col),
-    [0, 13, 0, 13],
+    rooms.map((room) => room.bounds.row),
+    [0, 18, 0, 18, 0],
   );
   assert.deepEqual(rooms[4]!.bounds, {
-    col: 26,
+    col: 0,
     row: 0,
     width: PROJECT_ROOM_DEFAULT_WIDTH,
     height: PROJECT_ROOM_DEFAULT_HEIGHT,
