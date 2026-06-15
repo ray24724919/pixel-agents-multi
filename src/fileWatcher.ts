@@ -38,6 +38,7 @@ import {
   GLOBAL_SCAN_ACTIVE_MIN_SIZE,
   PROJECT_SCAN_INTERVAL_MS,
 } from '../server/src/constants.js';
+import { isLocalAgentModeSandboxPath } from '../server/src/sessionPaths.js';
 import type { TeamProvider } from '../server/src/teamProvider.js';
 import { removeAgent } from './agentManager.js';
 import { readClaudeCodeSessionMetadata } from './claudeCodeSessionMetadata.js';
@@ -974,6 +975,15 @@ export function adoptExternalSessionFromHook(
   persistAgents: () => void,
   onAgentCreated?: (agent: AgentState) => void,
 ): void {
+  // Claude.ai cowork / local-agent-mode sandbox sessions inherit the user's global hook and fire it with
+  // a cwd/transcript under ".../Claude/local-agent-mode-sessions/.../outputs". Never adopt them via the
+  // hook path — it created phantom "outputs" rooms (one per sandbox). The legitimate cowork experience is
+  // served by the metadata-driven cowork scanner (scanClaudeCoworkSessions), which re-bases onto the real
+  // user project and does NOT route through this hook adopter.
+  if (isLocalAgentModeSandboxPath(cwd) || isLocalAgentModeSandboxPath(transcriptPath)) {
+    if (transcriptPath) knownJsonlFiles.add(transcriptPath);
+    return;
+  }
   if (transcriptPath) {
     // File-based provider (Claude, Codex): adopt with JSONL file watching
     // Invariant: one Claude agent per resolved jsonlFile path; all adopters check

@@ -12,6 +12,7 @@ import { cancelPermissionTimer, cancelWaitingTimer } from '../../src/timerManage
 import type { AgentState } from '../../src/types.js';
 import { HOOK_EVENT_BUFFER_MS, SESSION_END_GRACE_MS } from './constants.js';
 import type { AgentEvent, HookProvider } from './provider.js';
+import { isLocalAgentModeSandboxPath } from './sessionPaths.js';
 import { getInlineTeammates, hasInlineTeammates } from './teamUtils.js';
 
 const debug = process.env.PIXEL_AGENTS_DEBUG !== '0';
@@ -218,6 +219,14 @@ export class HookEventHandler {
             }
           }
         }
+      }
+      // Claude.ai cowork / local-agent-mode sandbox sessions inherit the global hook and fire it with a
+      // cwd/transcript under ".../Claude/local-agent-mode-sessions/.../outputs". They are internal Claude
+      // machinery, not the user's projects, so never adopt them as external agents (doing so created
+      // phantom "outputs" rooms keyed on the sandbox cwd). The legitimate cowork experience is handled by
+      // the metadata-driven cowork scanner, not this hook path.
+      if (isLocalAgentModeSandboxPath(cwd) || isLocalAgentModeSandboxPath(transcriptPath)) {
+        return;
       }
       // Unknown session -- store as pending, create only when a confirmation event
       // arrives (Stop, Notification, PermissionRequest). This filters transient sessions
