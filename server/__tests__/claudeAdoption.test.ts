@@ -110,6 +110,74 @@ describe('Claude adoption dedup and titles', () => {
     expect(agents.get(1)?.jsonlFile).toBe(jsonlFile);
   });
 
+  it('does not adopt a Claude cowork / local-agent-mode sandbox session via the hook path', () => {
+    // Cowork sandboxes inherit the global hook and fire it with a cwd/transcript under
+    // .../Claude/local-agent-mode-sessions/.../local_<id>/outputs. They must never become agents here.
+    const sandboxDir = path.join(
+      tmpDir,
+      'Claude',
+      'local-agent-mode-sessions',
+      'sess',
+      'sub',
+      'local_abc',
+      'outputs',
+    );
+    fs.mkdirSync(sandboxDir, { recursive: true });
+    const jsonlFile = path.join(sandboxDir, 'transcript.jsonl');
+    fs.writeFileSync(
+      jsonlFile,
+      JSON.stringify({ type: 'attachment', sessionId: 'local_abc', cwd: sandboxDir }) + '\n',
+    );
+    const agents = new Map<number, AgentState>();
+
+    adoptExternalSessionFromHook(
+      'local_abc',
+      jsonlFile,
+      sandboxDir,
+      new Set<string>(),
+      { current: 1 },
+      agents,
+      new Map(),
+      new Map(),
+      new Map(),
+      new Map(),
+      undefined,
+      vi.fn(),
+    );
+
+    expect(agents.size).toBe(0);
+  });
+
+  it('does not adopt a sandbox session reported by cwd alone (no transcript path)', () => {
+    const sandboxCwd = path.join(
+      tmpDir,
+      'Claude',
+      'local-agent-mode-sessions',
+      'sess',
+      'sub',
+      'local_def',
+      'outputs',
+    );
+    const agents = new Map<number, AgentState>();
+
+    adoptExternalSessionFromHook(
+      'local_def',
+      undefined,
+      sandboxCwd,
+      new Set<string>(),
+      { current: 1 },
+      agents,
+      new Map(),
+      new Map(),
+      new Map(),
+      new Map(),
+      undefined,
+      vi.fn(),
+    );
+
+    expect(agents.size).toBe(0);
+  });
+
   it('prefers an explicit Claude title over the first user message in the JSONL header', () => {
     const jsonlFile = path.join(tmpDir, 'session-2.jsonl');
     fs.writeFileSync(

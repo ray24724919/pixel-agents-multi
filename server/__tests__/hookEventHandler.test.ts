@@ -572,6 +572,31 @@ describe('HookEventHandler', () => {
     expect(agent?.isWaiting).toBe(true);
   });
 
+  it('does not adopt a cowork / local-agent-mode sandbox session (cwd under local-agent-mode-sessions)', () => {
+    const onExternalSessionDetected = vi.fn();
+    handler.setLifecycleCallbacks({ onExternalSessionDetected });
+
+    // Cowork sandboxes inherit the global hook and fire SessionStart with a cwd under
+    // .../Claude/local-agent-mode-sessions/.../outputs. They must never be stored as pending.
+    handler.handleEvent('claude', {
+      hook_event_name: 'SessionStart',
+      session_id: 'cowork-sess',
+      source: 'startup',
+      transcript_path:
+        'C:/Users/User/AppData/Roaming/Claude/local-agent-mode-sessions/s/sub/local_x/outputs/.claude/projects/p/cowork-sess.jsonl',
+      cwd: 'C:/Users/User/AppData/Roaming/Claude/local-agent-mode-sessions/s/sub/local_x/outputs',
+    });
+
+    // A confirmation event must NOT create the agent — it was never pending.
+    handler.handleEvent('claude', {
+      hook_event_name: 'Stop',
+      session_id: 'cowork-sess',
+    });
+
+    expect(onExternalSessionDetected).not.toHaveBeenCalled();
+    expect(agents.size).toBe(0);
+  });
+
   // ── Resume ──────────────────────────────────────────────────
 
   it('SessionStart(source=resume) calls onSessionResume', () => {

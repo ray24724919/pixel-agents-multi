@@ -13,6 +13,7 @@ import {
   findCodexThreadById,
   findLatestCodexThread,
 } from '../server/src/providers/file/codex/codex.js';
+import { isLocalAgentModeSandboxPath } from '../server/src/sessionPaths.js';
 import { readClaudeCodeSessionMetadata } from './claudeCodeSessionMetadata.js';
 import {
   CLAUDE_TERMINAL_NAME_PREFIX,
@@ -993,6 +994,15 @@ export function restoreAgents(
 
     let terminal: vscode.Terminal | undefined;
     const isExternal = p.isExternal ?? false;
+
+    // Never resurrect a Claude cowork / local-agent-mode sandbox agent persisted by an older build —
+    // those are phantom "outputs" agents. Dropping them on restore lets the campus reclaim their rooms.
+    if (
+      isExternal &&
+      (isLocalAgentModeSandboxPath(p.jsonlFile) || isLocalAgentModeSandboxPath(p.projectDir))
+    ) {
+      continue;
+    }
 
     if (isExternal) {
       // External agents — restore only when the transcript still exists AND is recent. A scheduled
