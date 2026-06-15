@@ -11,6 +11,7 @@ import {
 } from '../../constants.js';
 import { unlockAudio } from '../../notificationSound.js';
 import { vscode } from '../../vscodeApi.js';
+import { computeCampusCenterPan } from '../camera.js';
 import { canPlaceFurniture, getWallPlacementRow } from '../editor/editorActions.js';
 import type { EditorState } from '../editor/editorState.js';
 import { findProjectRoomAtTile } from '../editor/roomEditorActions.js';
@@ -64,6 +65,8 @@ export function OfficeCanvas({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const offsetRef = useRef({ x: 0, y: 0 });
+  // One-time entry centering: set the initial pan to frame the campus once content first loads.
+  const hasCenteredRef = useRef(false);
   // Middle-mouse pan state (imperative, no re-renders)
   const isPanningRef = useRef(false);
   const primaryPanCandidateRef = useRef(false);
@@ -236,6 +239,17 @@ export function OfficeCanvas({
                 editorRender.isRotatable = isRotatable(item.type);
               }
             }
+          }
+        }
+
+        // One-time entry default: center the view on the campus the first frame real content exists,
+        // so a right-growing campus (③c) isn't shown from its left edge. Skipped once the user pans or
+        // a camera-follow takes over (hasCenteredRef latches true).
+        if (!hasCenteredRef.current && officeState.cameraFollowId === null) {
+          const entryLayout = officeState.getLayout();
+          if ((entryLayout.projectRooms?.length ?? 0) > 0) {
+            panRef.current = computeCampusCenterPan(entryLayout, zoom);
+            hasCenteredRef.current = true;
           }
         }
 

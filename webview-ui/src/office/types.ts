@@ -169,6 +169,11 @@ export interface ProjectRoom {
    *  furniture, so the user's manual lobby edits survive reloads (same one-time-stamp pattern as the
    *  project-room template's -tpl- uids). */
   loungeRev?: number;
+  /** Lobby width (tiles) the lounge furniture was last filled for. When ③c right-anchored growth
+   *  widens the lobby, the new span's pods/decor are appended once (append-only, via
+   *  ensureLobbyLoungeWidthFill) and this is re-stamped — WITHOUT bumping loungeRev, so manual lobby
+   *  edits survive. undefined → baseline-stamped to the current width without adding anything. */
+  loungeSpanWidth?: number;
   /** When a generated PROJECT room's project has no live agent, provisioning stamps the time it was
    *  first seen vacant (and clears it the moment the project returns). On the next reload a still-vacant
    *  room stamped before this session started becomes reclaimable, so its slot frees for a new project.

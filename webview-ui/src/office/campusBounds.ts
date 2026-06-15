@@ -10,6 +10,7 @@ import {
 } from '../constants.js';
 import { clampInt, isGeneratedFurnitureUid } from './generationShared.js';
 import {
+  boundsEqual,
   boundsFromPoints,
   pointInBounds,
   rectInsideBounds,
@@ -274,12 +275,9 @@ export function deriveWorkCorridorBounds(
   ).length,
 ): ProjectRoom['bounds'] {
   const base = deriveLobbyCoreBounds(layout);
-  const bayCount = targetWorkCorridorBayCount(projectRoomCount);
-  const bayWidth =
-    bayCount * PROJECT_ROOM_DEFAULT_WIDTH + (bayCount - 1) * PROJECT_ROOM_GENERATED_MARGIN;
   const width = Math.min(
     MAX_COLS,
-    Math.max(PROJECT_ROOM_WORK_CORRIDOR_MIN_WIDTH, bayWidth, base.width),
+    Math.max(requiredWorkCorridorWidth(projectRoomCount), base.width),
   );
   const col = clampInt(base.col, 0, MAX_COLS - width);
   const minRow = PROJECT_ROOM_DEFAULT_HEIGHT + PROJECT_ROOM_GENERATED_MARGIN;
@@ -311,6 +309,61 @@ export function deriveWorkCorridorBounds(
 
 function targetWorkCorridorBayCount(projectRoomCount: number): number {
   return Math.max(2, Math.ceil(Math.max(0, projectRoomCount) / 2));
+}
+
+/**
+ * Ideal work-corridor width (tiles) for a project-room count: enough bays to host every room in the
+ * top+bottom rows, clamped to [MIN_WIDTH, MAX_COLS]. Pure — shared by deriveWorkCorridorBounds and the
+ * right-anchored widen so the two never diverge.
+ */
+export function requiredWorkCorridorWidth(projectRoomCount: number): number {
+  const bayCount = targetWorkCorridorBayCount(projectRoomCount);
+  const bayWidth =
+    bayCount * PROJECT_ROOM_DEFAULT_WIDTH + (bayCount - 1) * PROJECT_ROOM_GENERATED_MARGIN;
+  return Math.min(MAX_COLS, Math.max(PROJECT_ROOM_WORK_CORRIDOR_MIN_WIDTH, bayWidth));
+}
+
+/**
+ * ③c right-anchored corridor growth. Widen an EXISTING lobby's bounds to fit `expectedProjectRoomCount`
+ * bays by extending its RIGHT edge only (col/row/height fixed) so the campus never shifts left and
+ * existing rooms/furniture stay put. The caller paints the new corridor floor and re-feeds the widened
+ * bounds to allocateRoomBounds so newcomers dock in corridor bays instead of ring-scattering.
+ *
+ * No-op (changed=false, original bounds) when: the current corridor can already host every expected
+ * room as a bay (so a user's deliberately narrow lobby is never force-grown), no growth is needed
+ * (required ≤ current width), the grid ceiling is hit (col+required > MAX_COLS leaves no room), or the
+ * right-extension span would overlap an already-placed room (e.g. one ring-scattered to the right by a
+ * pre-fix build) — never corrupt the campus to widen it.
+ */
+export function widenWorkCorridorRightAnchored(
+  layout: OfficeLayout,
+  publicBounds: ProjectRoom['bounds'],
+  expectedProjectRoomCount: number,
+): { bounds: ProjectRoom['bounds']; changed: boolean } {
+  // Grow ONLY on genuine overflow: when the corridor's existing bay slots can already seat every
+  // expected room, leave the lobby exactly as the user has it (no ratchet toward the theoretical ideal).
+  const currentCapacity = buildWorkCorridorRoomSlots(
+    publicBounds,
+    PROJECT_ROOM_DEFAULT_WIDTH,
+    PROJECT_ROOM_DEFAULT_HEIGHT,
+  ).length;
+  if (expectedProjectRoomCount <= currentCapacity) return { bounds: publicBounds, changed: false };
+
+  const required = requiredWorkCorridorWidth(expectedProjectRoomCount);
+  const targetWidth = Math.min(required, MAX_COLS - publicBounds.col);
+  if (targetWidth <= publicBounds.width) return { bounds: publicBounds, changed: false };
+
+  const extension = {
+    col: publicBounds.col + publicBounds.width,
+    row: publicBounds.row,
+    width: targetWidth - publicBounds.width,
+    height: publicBounds.height,
+  };
+  for (const room of normalizeProjectRooms(layout)) {
+    if (boundsEqual(room.bounds, publicBounds)) continue;
+    if (rectsOverlap(extension, room.bounds)) return { bounds: publicBounds, changed: false };
+  }
+  return { bounds: { ...publicBounds, width: targetWidth }, changed: true };
 }
 
 function deriveLobbyCoreBounds(layout: OfficeLayout): ProjectRoom['bounds'] {
