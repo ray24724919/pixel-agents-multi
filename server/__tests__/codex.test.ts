@@ -31,6 +31,7 @@ const {
   codexPathKey,
   formatCodexToolStatus,
   createCodexTranscriptParserState,
+  isCodexThreadRecentlyActive,
 } = await import('../src/providers/file/codex/codex.js');
 
 function codexLine(type: string, payload: Record<string, unknown>): string {
@@ -45,6 +46,25 @@ function parseCodexFixture(name: string) {
     .split(/\r?\n/)
     .map((line) => parseCodexTranscriptLine(line, state));
 }
+
+describe('isCodexThreadRecentlyActive', () => {
+  const now = 1_000_000_000;
+  const maxAge = 600_000; // 10 minutes
+
+  it('accepts a thread updated within the window', () => {
+    expect(isCodexThreadRecentlyActive({ updatedAtMs: now - 1 }, now, maxAge)).toBe(true);
+    expect(isCodexThreadRecentlyActive({ updatedAtMs: now - maxAge }, now, maxAge)).toBe(true);
+  });
+
+  it("rejects a thread older than the window (e.g. yesterday's scheduled run)", () => {
+    expect(isCodexThreadRecentlyActive({ updatedAtMs: now - maxAge - 1 }, now, maxAge)).toBe(false);
+    expect(isCodexThreadRecentlyActive({ updatedAtMs: now - 86_400_000 }, now, maxAge)).toBe(false);
+  });
+
+  it('rejects a missing/zero timestamp (treated as not recent)', () => {
+    expect(isCodexThreadRecentlyActive({ updatedAtMs: 0 }, now, maxAge)).toBe(false);
+  });
+});
 
 describe('codexProvider', () => {
   beforeEach(() => {

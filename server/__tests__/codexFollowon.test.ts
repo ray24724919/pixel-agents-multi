@@ -479,10 +479,13 @@ describe('Codex thread follow-on', () => {
     writeCodexTokenFile(olderPath, 1, 0);
     writeCodexTokenFile(latestPath, 5, 2);
     writeCodexTokenFile(barPath, 3, 1);
-    const older = { ...codexThread('foo-older', olderPath, '/workspace/project'), updatedAtMs: 10 };
+    const older = {
+      ...codexThread('foo-older', olderPath, '/workspace/project'),
+      updatedAtMs: Date.now() - 2000,
+    };
     const latest = {
       ...codexThread('foo-latest', latestPath, '/workspace/project'),
-      updatedAtMs: 20,
+      updatedAtMs: Date.now() - 1000,
     };
     const bar = codexThread('bar-thread', barPath, '/other/project');
     findRecentCodexThreadsMock.mockReturnValue([latest, older, bar]);
@@ -579,11 +582,11 @@ describe('Codex thread follow-on', () => {
     writeCodexTokenFile(barPath, 3, 0);
     const fooOlder = {
       ...codexThread('foo-older', fooOlderPath, '/foo'),
-      updatedAtMs: 10,
+      updatedAtMs: Date.now() - 2000,
     };
     const fooLatest = {
       ...codexThread('foo-latest', fooLatestPath, '/foo'),
-      updatedAtMs: 20,
+      updatedAtMs: Date.now() - 1000,
     };
     const bar = codexThread('bar-thread', barPath, '/bar');
     findRecentCodexThreadsMock.mockReturnValue([fooOlder, fooLatest, bar]);
@@ -820,11 +823,11 @@ describe('Codex thread follow-on', () => {
     writeCodexTokenFile(latestPath, 1, 0);
     const older = {
       ...codexThread('older-external-thread', olderPath, '/workspace/project'),
-      updatedAtMs: 10,
+      updatedAtMs: Date.now() - 2000,
     };
     const latest = {
       ...codexThread('latest-spawned-thread', latestPath, '/workspace/project'),
-      updatedAtMs: 20,
+      updatedAtMs: Date.now() - 1000,
     };
     provider.agents.set(
       1,

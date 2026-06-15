@@ -41,6 +41,12 @@ export const EXTERNAL_AGENT_STALE_REAP_MS = 21_600_000; // 6 hours
 export const GLOBAL_SCAN_ACTIVE_MIN_SIZE = 3_072; // 3KB
 /** Only adopt global JSONL files modified within this window */
 export const GLOBAL_SCAN_ACTIVE_MAX_AGE_MS = 600_000; // 10 minutes
+/** A Codex thread is auto-adopted as an external room agent only while updated within this window.
+ *  Codex rotates a new thread per run, so a daily/scheduled run in a cwd left one external agent per
+ *  run piling up: findRecentCodexThreads returns the 50 most recent with NO age floor, and every one
+ *  in an allowed cwd got re-adopted on each 3s scan (out-racing the stale reap). Mirrors the Claude
+ *  global-scan window so the two providers behave the same. */
+export const CODEX_EXTERNAL_ADOPT_MAX_AGE_MS = GLOBAL_SCAN_ACTIVE_MAX_AGE_MS; // 10 minutes
 
 // ── Display Truncation ──────────────────────────────────────
 export const BASH_COMMAND_DISPLAY_MAX_LENGTH = 30;
