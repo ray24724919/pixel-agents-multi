@@ -859,16 +859,15 @@ export function reapDuplicateTerminalAgents(
 }
 
 /**
- * Reap EXTERNAL agents whose session is dead: the transcript no longer exists, or has been silent
- * longer than EXTERNAL_AGENT_STALE_REAP_MS. Scheduled/recurring sessions (e.g. a daily cron run)
- * spawn a fresh external agent per run, and their SessionEnd usually fires while VS Code is closed —
- * so nothing live ever removes the previous run's agent, and restoreAgents would re-restore it as
- * long as the transcript file existed on disk (weeks). The user saw the room gain one zombie agent
- * per day, with the agent count no longer matching the session count.
+ * Reap EXTERNAL agents whose session is clearly ABANDONED: the transcript no longer exists, or has been
+ * silent longer than EXTERNAL_AGENT_STALE_REAP_MS (a generous 14-day floor, NOT an idle timeout — users
+ * keep external sessions open but unused for days and expect their agent to stay; see the constant).
+ * A session that actually ends fires SessionEnd (Claude hook) and is removed promptly regardless of age;
+ * this only catches sessions that died while VS Code was closed (SessionEnd missed).
  *
- * Removal is cheap and reversible: adoption windows are 2-10 minutes, so a reaped session that
- * genuinely wakes up again is re-adopted within seconds of new activity. Hooks-only providers
- * (no transcript file) are managed purely by SessionEnd and are never stale-reaped.
+ * Removal is reversible: adoption windows are 2-10 minutes, so a reaped session that genuinely wakes up
+ * again is re-adopted within seconds of new activity. Hooks-only providers (no transcript file) are
+ * managed purely by SessionEnd and are never stale-reaped.
  */
 export function reapStaleExternalAgents(
   agents: Map<number, AgentState>,
@@ -896,7 +895,7 @@ export function reapStaleExternalAgents(
     const agent = agents.get(id);
     if (!agent) continue;
     console.log(
-      `[Pixel Agents] Reaped stale external agent ${id} (transcript silent > ${Math.round(EXTERNAL_AGENT_STALE_REAP_MS / 3_600_000)}h)`,
+      `[Pixel Agents] Reaped abandoned external agent ${id} (transcript silent > ${Math.round(EXTERNAL_AGENT_STALE_REAP_MS / 86_400_000)}d)`,
     );
     onAgentRemoved?.(agent);
     removeAgent(
@@ -1005,11 +1004,11 @@ export function restoreAgents(
     }
 
     if (isExternal) {
-      // External agents — restore only when the transcript still exists AND is recent. A scheduled
-      // session's SessionEnd typically fires while VS Code is closed, so nothing live removes the old
-      // agent; transcripts linger on disk for weeks, so an existence check alone re-restored every
-      // past run's agent — one new zombie per scheduled run. A stale transcript = a dead session;
-      // if it ever wakes again, scanners/hooks re-adopt it within seconds.
+      // External agents — restore as long as the transcript exists and is not LONG-abandoned
+      // (silent > EXTERNAL_AGENT_STALE_REAP_MS = 14 days). This deliberately keeps sessions the user
+      // left open but idle for days (their agent stays in its room). Only sessions that died while
+      // VS Code was closed AND have been silent for 2 weeks are dropped; if one wakes, scanners/hooks
+      // re-adopt it within seconds.
       try {
         const stat = fs.statSync(p.jsonlFile);
         if (Date.now() - stat.mtimeMs > EXTERNAL_AGENT_STALE_REAP_MS) continue;

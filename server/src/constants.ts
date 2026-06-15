@@ -28,13 +28,17 @@ export const EXTERNAL_STALE_CHECK_INTERVAL_MS = 30_000;
 /** Cooldown after user closes an agent via X. Must be > EXTERNAL_ACTIVE_THRESHOLD_MS
  *  so the file's mtime becomes stale before the dismissal expires. */
 export const DISMISSED_COOLDOWN_MS = 180_000; // 3 minutes
-/** An EXTERNAL agent whose transcript has been silent this long is a dead session and is reaped.
- *  Scheduled/recurring runs (e.g. a daily cron) end while VS Code is closed, so their SessionEnd is
- *  never seen live and the old agent would otherwise be restored every day forever (transcripts stay
- *  on disk for weeks). Must be well above the adoption windows (EXTERNAL_ACTIVE_THRESHOLD_MS /
- *  GLOBAL_SCAN_ACTIVE_MAX_AGE_MS) so a reaped session is never instantly re-adopted; if a reaped
- *  session genuinely wakes again, fresh activity re-adopts it within seconds. */
-export const EXTERNAL_AGENT_STALE_REAP_MS = 21_600_000; // 6 hours
+/** An EXTERNAL agent whose transcript has been silent this long is treated as a long-abandoned session
+ *  and reaped (on restore + periodically). This is a GENEROUS "clearly abandoned" floor, NOT an idle
+ *  timeout: users legitimately keep an external Claude/Codex session OPEN but unused for days and expect
+ *  its agent to stay in its room (rooms are persistent campus structure). A live session that actually
+ *  ends fires SessionEnd (Claude hook) and is removed promptly regardless of this value; this age-reap
+ *  only catches sessions that died while VS Code was closed (so SessionEnd was missed).
+ *  History: this was 6h to stop a "daily room accumulation", but that was really the Claude cowork
+ *  hook-leak (now blocked at adoption — see sessionPaths/isLocalAgentModeSandboxPath), so the aggressive
+ *  6h floor was both unnecessary AND wrong (it deleted real idle-but-open agents). Must stay well above
+ *  the adoption windows so a reaped session is never instantly re-adopted. */
+export const EXTERNAL_AGENT_STALE_REAP_MS = 1_209_600_000; // 14 days
 
 // ── Global Session Scanning ─────────────────────────────────
 /** Only adopt global JSONL files larger than this (filters out empty/init-only sessions) */
