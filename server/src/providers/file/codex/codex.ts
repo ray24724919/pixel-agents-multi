@@ -307,6 +307,49 @@ limit ${Math.max(1, Math.floor(limit))};`;
   return queryCodexThreads(sql);
 }
 
+export interface CodexAdoptionFilter {
+  /** When false, only threads whose (normalized) cwd is in `allowedCwds` are adopted. */
+  effectiveDiscoverAll: boolean;
+  /** codexPathKey-normalized cwds eligible for adoption when not discovering all. */
+  allowedCwds: Set<string>;
+  /** Thread ids already bound to a live agent — never re-adopt. */
+  existingThreadIds: Set<string>;
+  /** codexPathKey-normalized transcript paths already bound to a live agent. */
+  existingTranscriptPaths: Set<string>;
+  /** Threads reserved to bind a user-spawned agent — handled separately, skip here. */
+  reservedThreadIds: Set<string>;
+}
+
+/**
+ * Choose which Codex threads to auto-adopt as external room agents. DELETION-based, NOT idle-based:
+ * a non-archived thread is adopted no matter how long it has been idle, mirroring the v1.3.40
+ * external-agent policy (a kept session stays in its room until the user archives/deletes it; an
+ * archived thread is dropped by removeStaleCodexAgents and is no longer returned by
+ * findRecentCodexThreads). The previous 10-minute recency gate (CODEX_EXTERNAL_ADOPT_MAX_AGE_MS) was a
+ * workaround for the now-removed idle-reap race; under delete-not-idle it wrongly hid every Codex
+ * thread the user had not touched in the last 10 minutes. `threads` is expected to already exclude
+ * archived + subagent threads (findRecentCodexThreads). Tradeoff: Codex rotates a new thread per run,
+ * so an unmanaged repeated run accumulates one agent per run until archived — the user prunes them.
+ */
+export function selectCodexAdoptionCandidates(
+  threads: CodexThread[],
+  filter: CodexAdoptionFilter,
+): CodexThread[] {
+  const candidates: CodexThread[] = [];
+  for (const thread of threads) {
+    if (!thread.cwd) continue;
+    const cwd = codexPathKey(thread.cwd);
+    if (!cwd) continue;
+    const transcriptPath = codexPathKey(thread.rolloutPath);
+    if (filter.existingThreadIds.has(thread.id)) continue;
+    if (transcriptPath && filter.existingTranscriptPaths.has(transcriptPath)) continue;
+    if (filter.reservedThreadIds.has(thread.id)) continue;
+    if (!filter.effectiveDiscoverAll && !filter.allowedCwds.has(cwd)) continue;
+    candidates.push(thread);
+  }
+  return candidates;
+}
+
 export function findCodexThreadsForCwd(cwd: string, limit = 10): CodexThread[] {
   const sql = `
 select id, rollout_path, cwd, coalesce(title, ''), updated_at_ms, coalesce(tokens_used, 0), coalesce(agent_nickname, ''), coalesce(agent_role, '')
