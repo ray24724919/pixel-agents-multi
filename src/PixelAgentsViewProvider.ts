@@ -3,10 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 
-import {
-  CODEX_EXTERNAL_ADOPT_MAX_AGE_MS,
-  GLOBAL_SCAN_ACTIVE_MAX_AGE_MS,
-} from '../server/src/constants.js';
+import { GLOBAL_SCAN_ACTIVE_MAX_AGE_MS } from '../server/src/constants.js';
 import type { HookEvent } from '../server/src/hookEventHandler.js';
 import { HookEventHandler } from '../server/src/hookEventHandler.js';
 import {
@@ -15,7 +12,7 @@ import {
   type CodexThread,
   findCodexThreadById,
   findRecentCodexThreads,
-  isCodexThreadRecentlyActive,
+  selectCodexAdoptionCandidates,
   terminateCodexThreadProcess,
 } from '../server/src/providers/file/codex/codex.js';
 import {
@@ -1675,24 +1672,16 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       unboundSpawnedAgentCwdCounts.set(cwd, reserveCount - 1);
     }
 
-    const now = Date.now();
-    const candidates: CodexThread[] = [];
-    for (const thread of threads) {
-      if (!thread.cwd) continue;
-      const cwd = codexPathKey(thread.cwd);
-      const transcriptPath = codexPathKey(thread.rolloutPath);
-      if (!cwd) continue;
-      if (existingThreadIds.has(thread.id)) continue;
-      if (transcriptPath && existingTranscriptPaths.has(transcriptPath)) continue;
-      if (reservedThreadIds.has(thread.id)) continue;
-      if (!effectiveDiscoverAll && !allowedCwds.has(cwd)) continue;
-      // Only auto-adopt RECENTLY-active threads. Without this, every past run in a cwd (Codex makes a
-      // new thread per run) re-adopts as its own room agent — the daily scheduled run piled up one
-      // agent per day. A reserved thread (binding a user-spawned agent, handled above) is exempt.
-      if (!isCodexThreadRecentlyActive(thread, now, CODEX_EXTERNAL_ADOPT_MAX_AGE_MS)) continue;
-      candidates.push(thread);
-    }
-    return candidates;
+    // Deletion-based, NOT idle-based (v1.3.41): adopt every non-archived thread in an allowed cwd no
+    // matter how long it has been idle — a kept Codex session stays in its room until the user
+    // archives it (then removeStaleCodexAgents drops it). See selectCodexAdoptionCandidates.
+    return selectCodexAdoptionCandidates(threads, {
+      effectiveDiscoverAll,
+      allowedCwds,
+      existingThreadIds,
+      existingTranscriptPaths,
+      reservedThreadIds,
+    });
   }
 
   private scanClaudeWorkspaceThreads(includeInactive = false): void {

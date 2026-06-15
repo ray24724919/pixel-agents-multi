@@ -32,6 +32,7 @@ const {
   formatCodexToolStatus,
   createCodexTranscriptParserState,
   isCodexThreadRecentlyActive,
+  selectCodexAdoptionCandidates,
 } = await import('../src/providers/file/codex/codex.js');
 
 function codexLine(type: string, payload: Record<string, unknown>): string {
@@ -63,6 +64,67 @@ describe('isCodexThreadRecentlyActive', () => {
 
   it('rejects a missing/zero timestamp (treated as not recent)', () => {
     expect(isCodexThreadRecentlyActive({ updatedAtMs: 0 }, now, maxAge)).toBe(false);
+  });
+});
+
+describe('selectCodexAdoptionCandidates', () => {
+  const makeThread = (id: string, cwd: string, rolloutPath = `/rollouts/${id}.jsonl`) => ({
+    id,
+    rolloutPath,
+    cwd,
+    updatedAtMs: 0, // deliberately ancient: deletion-based adoption ignores idle age
+    tokensUsed: 0,
+  });
+  const makeFilter = (over: Record<string, unknown> = {}) => ({
+    effectiveDiscoverAll: false,
+    allowedCwds: new Set<string>(),
+    existingThreadIds: new Set<string>(),
+    existingTranscriptPaths: new Set<string>(),
+    reservedThreadIds: new Set<string>(),
+    ...over,
+  });
+  const ids = (threads: ReturnType<typeof makeThread>[]) => threads.map((t) => t.id);
+
+  it('adopts an ancient/idle non-archived thread in an allowed cwd (regression: removed 10-min gate)', () => {
+    const thread = makeThread('idle-1', '/ws/a');
+    const out = selectCodexAdoptionCandidates(
+      [thread],
+      makeFilter({ allowedCwds: new Set([codexPathKey('/ws/a')!]) }),
+    );
+    expect(ids(out)).toEqual(['idle-1']);
+  });
+
+  it('honors cwd scope unless discovering all cwds', () => {
+    const thread = makeThread('foreign', '/ws/b');
+    expect(
+      selectCodexAdoptionCandidates(
+        [thread],
+        makeFilter({ allowedCwds: new Set([codexPathKey('/ws/a')!]) }),
+      ),
+    ).toEqual([]);
+    expect(
+      ids(selectCodexAdoptionCandidates([thread], makeFilter({ effectiveDiscoverAll: true }))),
+    ).toEqual(['foreign']);
+  });
+
+  it('skips threads already bound to a live agent (by id or transcript path)', () => {
+    const byId = makeThread('bound-id', '/ws/a');
+    const byPath = makeThread('bound-path', '/ws/a', '/rollouts/dup.jsonl');
+    const filter = makeFilter({
+      effectiveDiscoverAll: true,
+      existingThreadIds: new Set(['bound-id']),
+      existingTranscriptPaths: new Set([codexPathKey('/rollouts/dup.jsonl')!]),
+    });
+    expect(selectCodexAdoptionCandidates([byId, byPath], filter)).toEqual([]);
+  });
+
+  it('skips reserved threads (bindings for user-spawned agents)', () => {
+    const thread = makeThread('reserved-1', '/ws/a');
+    const out = selectCodexAdoptionCandidates(
+      [thread],
+      makeFilter({ effectiveDiscoverAll: true, reservedThreadIds: new Set(['reserved-1']) }),
+    );
+    expect(out).toEqual([]);
   });
 });
 
