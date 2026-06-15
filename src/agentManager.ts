@@ -4,7 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 
-import { EXTERNAL_AGENT_STALE_REAP_MS, JSONL_POLL_INTERVAL_MS } from '../server/src/constants.js';
+import { JSONL_POLL_INTERVAL_MS } from '../server/src/constants.js';
 import {
   buildCodexLaunchArgs,
   buildCodexLaunchCommand,
@@ -859,15 +859,16 @@ export function reapDuplicateTerminalAgents(
 }
 
 /**
- * Reap EXTERNAL agents whose session is clearly ABANDONED: the transcript no longer exists, or has been
- * silent longer than EXTERNAL_AGENT_STALE_REAP_MS (a generous 14-day floor, NOT an idle timeout — users
- * keep external sessions open but unused for days and expect their agent to stay; see the constant).
- * A session that actually ends fires SessionEnd (Claude hook) and is removed promptly regardless of age;
- * this only catches sessions that died while VS Code was closed (SessionEnd missed).
+ * Reap EXTERNAL agents whose session is GONE: the transcript/rollout file no longer exists on disk.
+ * This is DELETION-based, not idle-based — an agent stays as long as its session exists, no matter how
+ * long it has been unused (the user keeps sessions open and resumes them later). A live session that
+ * actually ends is removed promptly by SessionEnd (Claude hook); a Codex thread that gets archived is
+ * removed by removeStaleCodexAgents. This function only handles the case where the underlying transcript
+ * file was deleted outright.
  *
- * Removal is reversible: adoption windows are 2-10 minutes, so a reaped session that genuinely wakes up
- * again is re-adopted within seconds of new activity. Hooks-only providers (no transcript file) are
- * managed purely by SessionEnd and are never stale-reaped.
+ * Removal is reversible: adoption windows are 2-10 minutes, so a session that genuinely wakes up again is
+ * re-adopted within seconds of new activity. Hooks-only providers (no transcript file) are managed purely
+ * by SessionEnd and are never reaped here.
  */
 export function reapStaleExternalAgents(
   agents: Map<number, AgentState>,
@@ -885,18 +886,15 @@ export function reapStaleExternalAgents(
     if (!agent.isExternal) continue;
     if (!agent.jsonlFile) continue; // hooks-only provider: lifecycle owned by SessionEnd
     try {
-      const stat = fs.statSync(agent.jsonlFile);
-      if (Date.now() - stat.mtimeMs > EXTERNAL_AGENT_STALE_REAP_MS) staleIds.push(id);
+      fs.statSync(agent.jsonlFile); // exists → keep, however long it has been idle
     } catch {
-      staleIds.push(id); // transcript deleted → session gone
+      staleIds.push(id); // transcript/rollout deleted → session gone
     }
   }
   for (const id of staleIds) {
     const agent = agents.get(id);
     if (!agent) continue;
-    console.log(
-      `[Pixel Agents] Reaped abandoned external agent ${id} (transcript silent > ${Math.round(EXTERNAL_AGENT_STALE_REAP_MS / 86_400_000)}d)`,
-    );
+    console.log(`[Pixel Agents] Reaped external agent ${id} (transcript deleted → session gone)`);
     onAgentRemoved?.(agent);
     removeAgent(
       id,
@@ -1004,16 +1002,15 @@ export function restoreAgents(
     }
 
     if (isExternal) {
-      // External agents — restore as long as the transcript exists and is not LONG-abandoned
-      // (silent > EXTERNAL_AGENT_STALE_REAP_MS = 14 days). This deliberately keeps sessions the user
-      // left open but idle for days (their agent stays in its room). Only sessions that died while
-      // VS Code was closed AND have been silent for 2 weeks are dropped; if one wakes, scanners/hooks
-      // re-adopt it within seconds.
+      // External agents — restore as long as the adopted session still EXISTS (transcript/rollout file
+      // present). Deletion-based, NOT idle-based: the user keeps sessions open but unused for a long
+      // time and expects the agent to stay in its room. A session only disappears when it actually ends
+      // (Claude fires SessionEnd; a Codex thread gets archived — handled by removeStaleCodexAgents) or
+      // its transcript is deleted (caught here).
       try {
-        const stat = fs.statSync(p.jsonlFile);
-        if (Date.now() - stat.mtimeMs > EXTERNAL_AGENT_STALE_REAP_MS) continue;
+        fs.statSync(p.jsonlFile);
       } catch {
-        continue;
+        continue; // transcript/rollout deleted → session gone
       }
     } else {
       // Terminal agents — find matching terminal by name
