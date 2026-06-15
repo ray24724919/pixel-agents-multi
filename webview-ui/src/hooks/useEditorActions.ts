@@ -42,12 +42,6 @@ import { EditTool } from '../office/types.js';
 import { TileType } from '../office/types.js';
 import { vscode } from '../vscodeApi.js';
 
-/** Captured once when this webview module loads (i.e. per VS Code window session / reload). Dead
- *  project rooms vacated before this time become reclaimable, so a project that was merely closed in a
- *  prior session frees its bay on the next reload — while a project still restoring this session keeps
- *  its room. See applyVacancyLifecycle in projectRoomGeneration. */
-const SESSION_START_MS = Date.now();
-
 interface ProjectRoomProvisioningRuntimeMetadata {
   projectDir?: string;
   projectName?: string;
@@ -423,15 +417,15 @@ export function useEditorActions(
               hidden: options.hiddenAgents?.[ch.id] === true,
             };
           }),
-        { nowMs: Date.now(), reclaimVacatedBeforeMs: SESSION_START_MS },
+        // No reclaim cutoff: auto-reclaim is intentionally disabled — project rooms persist even when
+        // their agent is idle/closed (they are the user's campus structure). Phantom cowork rooms are
+        // blocked at adoption, not reclaimed. See applyVacancyLifecycle.
       );
       const hasProvisioningChanges =
         result.createdRooms.length > 0 ||
         result.suiteFurnitureAddedCount > 0 ||
         result.loungeFurnitureAddedCount > 0 ||
-        result.createdLobbyRoom !== null ||
-        result.reclaimedRoomIds.length > 0 ||
-        result.vacancyChanged;
+        result.createdLobbyRoom !== null;
       if (!hasProvisioningChanges) return false;
       os.rebuildFromLayout(result.layout);
       saveLayout(result.layout);

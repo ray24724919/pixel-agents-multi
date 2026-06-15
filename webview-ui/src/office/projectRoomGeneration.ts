@@ -320,6 +320,12 @@ interface VacancyLifecycleResult {
  * the user hand-edited (non-generated furniture inside, or a non-generated room id) are never removed.
  * Reclaim is keyed off the session-start cutoff so a project that was alive last session — and is only
  * briefly absent while it restores this session — is re-stamped fresh and kept in place.
+ *
+ * IMPORTANT: when `reclaimVacatedBeforeMs` is undefined the whole lifecycle is a NO-OP — no stamping, no
+ * removal, the layout is returned untouched. The webview deliberately passes no cutoff (auto-reclaim is
+ * disabled): project rooms are persistent campus structure to the user and must survive an idle/closed
+ * agent. Phantom cowork "outputs" rooms are prevented at the source by the adoption filter, not reclaimed
+ * here. The reclaim path stays behind the cutoff for tests / a possible future opt-in.
  */
 function applyVacancyLifecycle(
   layout: OfficeLayout,
@@ -327,6 +333,9 @@ function applyVacancyLifecycle(
   nowMs: number,
   reclaimVacatedBeforeMs: number | undefined,
 ): VacancyLifecycleResult {
+  if (reclaimVacatedBeforeMs === undefined) {
+    return { layout, reclaimedRoomIds: [], changed: false };
+  }
   const rooms = normalizeProjectRooms(layout);
   const nextRooms: ProjectRoom[] = [];
   const reclaimedRoomIds: string[] = [];
