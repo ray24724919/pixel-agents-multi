@@ -113,19 +113,37 @@ export function buildWorkCorridorRoomSlots(
   height: number,
 ): ProjectRoom['bounds'][] {
   const margin = PROJECT_ROOM_GENERATED_MARGIN;
-  const bayCols = buildWorkCorridorBayCols(core, width);
-  const firstBays = bayCols.slice(0, 2);
-  const extraBays = bayCols.slice(2);
+  // Center-out growth: the first project docks in the bay nearest the corridor centre, then the campus
+  // grows right, then left, staying balanced around the lobby instead of leaning to one side. Each bay
+  // is filled top-then-bottom before stepping outward so a project's room sits close to centre.
+  const bayCols = orderBayColsCenterOut(buildWorkCorridorBayCols(core, width), core, width);
   const topRow = core.row - height - margin;
   const bottomRow = core.row + core.height + margin;
-  return [
-    ...firstBays.map((col) => ({ col, row: topRow, width, height })),
-    ...firstBays.map((col) => ({ col, row: bottomRow, width, height })),
-    ...extraBays.flatMap((col) => [
+  return bayCols
+    .flatMap((col) => [
       { col, row: topRow, width, height },
       { col, row: bottomRow, width, height },
-    ]),
-  ].filter((bounds) => bounds.col >= 0 && bounds.row >= 0 && boundsFitMax(bounds));
+    ])
+    .filter((bounds) => bounds.col >= 0 && bounds.row >= 0 && boundsFitMax(bounds));
+}
+
+/**
+ * Reorder bay columns by distance from the corridor centre (nearest first); ties resolve to the
+ * right-of-centre bay first so growth proceeds centre → right → left. `cols` is ascending.
+ */
+function orderBayColsCenterOut(
+  cols: number[],
+  core: ProjectRoom['bounds'],
+  width: number,
+): number[] {
+  const corridorCenter = core.col + core.width / 2;
+  const centerOf = (col: number) => col + width / 2;
+  return [...cols].sort((a, b) => {
+    const da = Math.abs(centerOf(a) - corridorCenter);
+    const db = Math.abs(centerOf(b) - corridorCenter);
+    if (da !== db) return da - db;
+    return b - a; // equidistant → right (larger col) first
+  });
 }
 
 function buildWorkCorridorBayCols(core: ProjectRoom['bounds'], roomWidth: number): number[] {

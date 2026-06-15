@@ -99,6 +99,22 @@ export interface ProjectRoomGenerationResult {
   loungeFurnitureAddedCount: number;
   skippedUnknownCount: number;
   overflowCount: number;
+  /** Ids of dead generated rooms reclaimed (removed) this provision because their project was vacated
+   *  before this session. Their bays are freed for new projects. */
+  reclaimedRoomIds: string[];
+  /** True when any room's vacancy stamp was added/cleared or a room was reclaimed — the caller must
+   *  persist the layout so the stamps survive the next reload. */
+  vacancyChanged: boolean;
+}
+
+/** Optional clock + reclaim controls (injected for testability; the webview passes real values). */
+export interface ProjectRoomGenerationOptions {
+  /** Current wall-clock time; defaults to Date.now(). Used for vacancy stamps and room timestamps. */
+  nowMs?: number;
+  /** Reclaim dead generated rooms whose vacancy stamp predates this time. The webview passes the
+   *  session/mount start so only rooms vacated in a PRIOR session are reclaimed (a project that was
+   *  alive last session is re-stamped fresh this session and stays put). Omit to disable reclaim. */
+  reclaimVacatedBeforeMs?: number;
 }
 
 interface ProjectRoomGenerationProject {
@@ -126,9 +142,20 @@ interface SuiteFurnitureCandidate {
 export function ensureProjectRoomsForAgents(
   layout: OfficeLayout,
   agents: ProjectRoomGenerationAgent[],
+  options?: ProjectRoomGenerationOptions,
 ): ProjectRoomGenerationResult {
-  const initialRooms = normalizeProjectRooms(layout);
-  let current: OfficeLayout = { ...layout, projectRooms: initialRooms };
+  const nowMs = options?.nowMs ?? Date.now();
+  const reclaimVacatedBeforeMs = options?.reclaimVacatedBeforeMs;
+  let current: OfficeLayout = { ...layout, projectRooms: normalizeProjectRooms(layout) };
+
+  // Vacancy lifecycle: stamp rooms whose project has no live agent, clear the stamp when it returns,
+  // and reclaim dead generated rooms vacated before this session so their bays free for new projects.
+  const activeProjectKeys = collectActiveProjectKeys(agents);
+  const vacancy = applyVacancyLifecycle(current, activeProjectKeys, nowMs, reclaimVacatedBeforeMs);
+  current = vacancy.layout;
+  const reclaimedRoomIds = vacancy.reclaimedRoomIds;
+
+  const initialRooms = normalizeProjectRooms(current);
   const initialProjectRooms = initialRooms.filter((room) => room.kind === ProjectRoomKind.PROJECT);
   // Whether a public lobby already existed BEFORE this provision. Once it does, the campus is frozen
   // (additive only) — see ensureWorkCorridorCampusLayout. The reflow is reserved for the genuine
@@ -159,6 +186,8 @@ export function ensureProjectRoomsForAgents(
       loungeFurnitureAddedCount,
       skippedUnknownCount,
       overflowCount: projectInputs.length,
+      reclaimedRoomIds,
+      vacancyChanged: vacancy.changed,
     };
   }
 
@@ -202,8 +231,8 @@ export function ensureProjectRoomsForAgents(
         source: project.source,
         ...(project.providerIds.length > 0 ? { providerIds: project.providerIds } : {}),
       },
-      createdAtMs: Date.now(),
-      updatedAtMs: Date.now(),
+      createdAtMs: nowMs,
+      updatedAtMs: nowMs,
     };
     current = {
       ...current,
@@ -261,7 +290,126 @@ export function ensureProjectRoomsForAgents(
     loungeFurnitureAddedCount,
     skippedUnknownCount,
     overflowCount,
+    reclaimedRoomIds,
+    vacancyChanged: vacancy.changed,
   };
+}
+
+/** Normalized project keys of every agent that would generate a room (non-subagent, visible, alive). */
+function collectActiveProjectKeys(agents: ProjectRoomGenerationAgent[]): Set<string> {
+  const keys = new Set<string>();
+  for (const agent of agents) {
+    if (!shouldGenerateForAgent(agent)) continue;
+    const project = deriveGenerationProject(agent);
+    if (project) keys.add(project.key);
+  }
+  return keys;
+}
+
+interface VacancyLifecycleResult {
+  layout: OfficeLayout;
+  reclaimedRoomIds: string[];
+  changed: boolean;
+}
+
+/**
+ * Stamp/clear `vacatedAtMs` on generated PROJECT rooms and reclaim the dead ones. A room whose project
+ * has no live agent is stamped the first time it is seen vacant (and the stamp is cleared the moment
+ * the project returns). When `reclaimVacatedBeforeMs` is given, a room stamped before that time AND
+ * still vacant is removed (record + its generated furniture + floor → VOID), freeing its bay. Rooms
+ * the user hand-edited (non-generated furniture inside, or a non-generated room id) are never removed.
+ * Reclaim is keyed off the session-start cutoff so a project that was alive last session — and is only
+ * briefly absent while it restores this session — is re-stamped fresh and kept in place.
+ */
+function applyVacancyLifecycle(
+  layout: OfficeLayout,
+  activeProjectKeys: Set<string>,
+  nowMs: number,
+  reclaimVacatedBeforeMs: number | undefined,
+): VacancyLifecycleResult {
+  const rooms = normalizeProjectRooms(layout);
+  const nextRooms: ProjectRoom[] = [];
+  const reclaimedRoomIds: string[] = [];
+  const reclaimedBounds: ProjectRoom['bounds'][] = [];
+  let changed = false;
+
+  for (const room of rooms) {
+    if (room.kind !== ProjectRoomKind.PROJECT) {
+      nextRooms.push(room);
+      continue;
+    }
+    const key = normalizeProjectKey(room.project?.key);
+    const present = key !== null && activeProjectKeys.has(key);
+    if (present) {
+      if (room.vacatedAtMs !== undefined) {
+        nextRooms.push(withoutVacatedStamp(room));
+        changed = true;
+      } else {
+        nextRooms.push(room);
+      }
+      continue;
+    }
+
+    const reclaimable =
+      reclaimVacatedBeforeMs !== undefined &&
+      room.vacatedAtMs !== undefined &&
+      room.vacatedAtMs < reclaimVacatedBeforeMs &&
+      room.id.startsWith('project-') &&
+      !roomHasNonGeneratedFurniture(layout, room.bounds);
+    if (reclaimable) {
+      reclaimedRoomIds.push(room.id);
+      reclaimedBounds.push(room.bounds);
+      changed = true;
+      continue;
+    }
+
+    if (room.vacatedAtMs === undefined) {
+      nextRooms.push({ ...room, vacatedAtMs: nowMs });
+      changed = true;
+    } else {
+      nextRooms.push(room);
+    }
+  }
+
+  if (!changed) return { layout, reclaimedRoomIds, changed };
+
+  let next: OfficeLayout = { ...layout, projectRooms: nextRooms };
+  if (reclaimedRoomIds.length > 0) {
+    const removedIds = new Set(reclaimedRoomIds);
+    next = {
+      ...next,
+      furniture: next.furniture.filter(
+        (item) =>
+          !(
+            isGeneratedFurnitureUid(item.uid) &&
+            [...removedIds].some((id) => item.uid.startsWith(`${id}-`))
+          ),
+      ),
+    };
+    next = clearCampusTiles(next, reclaimedBounds);
+  }
+  return { layout: next, reclaimedRoomIds, changed };
+}
+
+function withoutVacatedStamp(room: ProjectRoom): ProjectRoom {
+  if (room.vacatedAtMs === undefined) return room;
+  const next = { ...room };
+  delete next.vacatedAtMs;
+  return next;
+}
+
+/** True when any non-generated (user-placed) furniture overlaps the bounds — guards user investment. */
+function roomHasNonGeneratedFurniture(
+  layout: OfficeLayout,
+  bounds: ProjectRoom['bounds'],
+): boolean {
+  return layout.furniture.some((item) => {
+    if (isGeneratedFurnitureUid(item.uid)) return false;
+    const entry = getAllCatalogEntries().find((candidate) => candidate.type === item.type);
+    const width = entry?.footprintW ?? 1;
+    const height = entry?.footprintH ?? 1;
+    return rectsOverlap(bounds, { col: item.col, row: item.row, width, height });
+  });
 }
 
 function shouldGenerateForAgent(agent: ProjectRoomGenerationAgent): boolean {

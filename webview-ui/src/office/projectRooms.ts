@@ -165,6 +165,7 @@ export function normalizeProjectRoom(layout: OfficeLayout, value: unknown): Proj
   const createdAtMs = cleanTimestamp(value.createdAtMs);
   const updatedAtMs = cleanTimestamp(value.updatedAtMs);
   const loungeRev = cleanTimestamp(value.loungeRev);
+  const vacatedAtMs = cleanTimestamp(value.vacatedAtMs);
 
   return {
     id,
@@ -176,6 +177,7 @@ export function normalizeProjectRoom(layout: OfficeLayout, value: unknown): Proj
     ...(createdAtMs !== undefined ? { createdAtMs } : {}),
     ...(updatedAtMs !== undefined ? { updatedAtMs } : {}),
     ...(loungeRev !== undefined ? { loungeRev } : {}),
+    ...(vacatedAtMs !== undefined ? { vacatedAtMs } : {}),
   };
 }
 
