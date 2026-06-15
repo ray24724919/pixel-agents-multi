@@ -1006,6 +1006,101 @@ test('work corridor growth appends a new bay without overlapping rooms after ref
   }
 });
 
+// ── ③c: right-anchored corridor growth on overflow ────────────────────────────────────────────────
+
+const sixAgents = ['Alpha', 'Beta', 'Gamma', 'Delta', 'Epsilon', 'Zeta'].map((folderName) => ({
+  folderName,
+  isSubagent: false,
+}));
+
+test('③c: a 7th project widens the corridor rightward and docks the newcomer in a bay (no reflow)', () => {
+  const first = ensureProjectRoomsForAgents(makeLayout(), sixAgents);
+  assert.equal(first.createdRooms.length, 6);
+  const lobby0 = publicRooms(first.layout)[0]!;
+  assert.equal(lobby0.bounds.width, 38, '≤6 projects → 3 bays = width 38');
+  const existingRows = new Set(projectRooms(first.layout).map((room) => room.bounds.row));
+
+  const seven = [...sixAgents, { folderName: 'Eta', isSubagent: false }];
+  const second = ensureProjectRoomsForAgents(first.layout, seven);
+
+  // Exactly one new room, and the lobby grows RIGHT (col fixed, width up) — no leftward shift.
+  assert.equal(second.createdRooms.length, 1);
+  const lobby1 = publicRooms(second.layout)[0]!;
+  assert.equal(lobby1.bounds.col, lobby0.bounds.col, 'right-anchored: lobby col must not move');
+  assert.equal(lobby1.bounds.row, lobby0.bounds.row);
+  assert.equal(lobby1.bounds.width, 51, '7 projects → 4 bays = width 51');
+
+  // The newcomer docks in a corridor bay (same row band as the existing rooms), not a far ring.
+  const newRoom = second.createdRooms[0]!;
+  assert.ok(existingRows.has(newRoom.bounds.row), 'newcomer must sit in a corridor bay row');
+  assert.ok(
+    newRoom.bounds.col + newRoom.bounds.width <= lobby1.bounds.col + lobby1.bounds.width,
+    'newcomer must fit within the widened corridor',
+  );
+
+  // The 6 existing rooms are frozen (bounds byte-identical) and nothing overlaps.
+  const firstBounds = new Map(first.createdRooms.map((room) => [room.id, room.bounds]));
+  for (const room of projectRooms(second.layout)) {
+    if (firstBounds.has(room.id)) assert.deepEqual(room.bounds, firstBounds.get(room.id));
+  }
+  const allRects = [...projectRooms(second.layout), lobby1].map((room) => room.bounds);
+  for (let i = 0; i < allRects.length; i++) {
+    for (let j = i + 1; j < allRects.length; j++) {
+      assert.equal(rectsOverlap(allRects[i]!, allRects[j]!), false);
+    }
+  }
+
+  // Freeze is additive only: every furniture item from the first build survives unchanged.
+  const fkey = (item: PlacedFurniture) => `${item.uid}@${item.type}@${item.col},${item.row}`;
+  const secondKeys = new Set(second.layout.furniture.map(fkey));
+  for (const item of first.layout.furniture) {
+    assert.ok(secondKeys.has(fkey(item)), `frozen furniture went missing: ${fkey(item)}`);
+  }
+
+  // The widened lounge span is stamped so it never re-fills (convergence, no churn).
+  assert.equal(lobby1.loungeSpanWidth, 51);
+});
+
+test('③c: widening is idempotent — re-provisioning the same 7 projects changes nothing', () => {
+  const seven = [...sixAgents, { folderName: 'Eta', isSubagent: false }];
+  const grown = ensureProjectRoomsForAgents(
+    ensureProjectRoomsForAgents(makeLayout(), sixAgents).layout,
+    seven,
+  );
+  const again = ensureProjectRoomsForAgents(grown.layout, seven);
+
+  assert.equal(again.createdRooms.length, 0);
+  assert.equal(publicRooms(again.layout)[0]!.bounds.width, 51, 'no further widening');
+  assert.equal(again.loungeFurnitureAddedCount, 0, 'widened lobby must see zero lounge churn');
+  const grownBounds = new Map(projectRooms(grown.layout).map((room) => [room.id, room.bounds]));
+  for (const room of projectRooms(again.layout)) {
+    assert.deepEqual(room.bounds, grownBounds.get(room.id));
+  }
+});
+
+test('③c: widening the lobby preserves hand-placed lobby furniture', () => {
+  const first = ensureProjectRoomsForAgents(makeLayout(), sixAgents);
+  const lobby = publicRooms(first.layout)[0]!;
+  const handItem: PlacedFurniture = {
+    uid: 'user-keepsake',
+    type: 'PLANT',
+    col: lobby.bounds.col + 3,
+    row: lobby.bounds.row + 2,
+  };
+  const staged = { ...first.layout, furniture: [...first.layout.furniture, handItem] };
+
+  const seven = [...sixAgents, { folderName: 'Eta', isSubagent: false }];
+  const second = ensureProjectRoomsForAgents(staged, seven);
+
+  assert.equal(publicRooms(second.layout)[0]!.bounds.width, 51, 'widen must occur');
+  const survivor = second.layout.furniture.find((item) => item.uid === 'user-keepsake');
+  assert.deepEqual(
+    survivor,
+    handItem,
+    'hand-placed lobby furniture must be untouched by the widen',
+  );
+});
+
 // ── Freed-slot reuse (③b): vacancy lifecycle + reclaim-on-reload ──────────────────────────────────
 
 function deadRoom(id: string, key: string, col: number, row: number, vacatedAtMs?: number) {

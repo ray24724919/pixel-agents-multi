@@ -174,6 +174,57 @@ export function ensureLobbyLoungeFurniture(
   return addedCount > 0 ? { layout: { ...layout, furniture }, addedCount } : { layout, addedCount };
 }
 
+/**
+ * ③c append-only lounge widen. ensureLobbyLoungeFurniture's loungeRev short-circuit freezes the
+ * lobby's lounge so manual edits survive — but when ③c right-anchored growth widens the lobby its new
+ * span stays empty. This pass fills ONLY the grown span, append-only (uid-keyed; skips every piece that
+ * already exists, so user moves/deletes elsewhere are untouched), tracking per-room `loungeSpanWidth`
+ * so it runs exactly once per widen. It deliberately does NOT bump PROJECT_ROOM_LOBBY_LOUNGE_REV — a
+ * blanket lounge rebuild would clobber the user's lobby edits (the bug the rev stamp prevents).
+ *
+ * `loungeSpanWidth === undefined` (a lobby stamped before this release, or freshly built this run which
+ * already fills its current width) is baseline-stamped to the current width WITHOUT adding anything;
+ * the stamp counts as a change so it PERSISTS, giving the next genuine widen a correct reference.
+ */
+export function ensureLobbyLoungeWidthFill(
+  layout: OfficeLayout,
+  template: RoomTemplateAssets,
+): { layout: OfficeLayout; addedCount: number } {
+  let furniture = layout.furniture;
+  let addedCount = 0;
+  const stampWidth = new Map<string, number>();
+  for (const room of normalizeProjectRooms(layout).filter(isWorkCorridorLobby)) {
+    const currentWidth = room.bounds.width;
+    const prev = room.loungeSpanWidth;
+    if (prev !== undefined && currentWidth <= prev) continue; // no growth → leave frozen
+    if (prev !== undefined) {
+      const nextFurniture = [...furniture];
+      let roomAdded = appendLobbyLoungePods(layout, room, template, nextFurniture);
+      if (template.loungeDecor) {
+        roomAdded += appendLobbyLoungeDecor(layout, room, template.loungeDecor, nextFurniture);
+      }
+      if (roomAdded > 0) {
+        furniture = nextFurniture;
+        addedCount += roomAdded;
+      }
+    }
+    stampWidth.set(room.id, currentWidth); // fill case restamps; undefined case baselines
+  }
+  if (stampWidth.size === 0) {
+    return addedCount > 0
+      ? { layout: { ...layout, furniture }, addedCount }
+      : { layout, addedCount };
+  }
+  const projectRooms = normalizeProjectRooms(layout).map((room) =>
+    stampWidth.has(room.id) ? { ...room, loungeSpanWidth: stampWidth.get(room.id) } : room,
+  );
+  // Stamping persists (counts as a change) so the baseline/restamp is written exactly once per width.
+  return {
+    layout: { ...layout, furniture, projectRooms },
+    addedCount: addedCount + stampWidth.size,
+  };
+}
+
 function isWorkCorridorLobby(room: ProjectRoom): boolean {
   return (
     room.kind === ProjectRoomKind.PUBLIC &&

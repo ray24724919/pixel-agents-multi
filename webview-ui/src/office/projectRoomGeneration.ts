@@ -44,6 +44,7 @@ import {
   deriveWorkCorridorBounds,
   ensureLayoutSize,
   roomBoundsFitGrid,
+  widenWorkCorridorRightAnchored,
 } from './campusBounds.js';
 import {
   canPlaceSuiteFurniture,
@@ -60,7 +61,11 @@ import {
   type RoomTemplateAssets,
 } from './generationShared.js';
 import { boundsEqual, rectsOverlap } from './geometry.js';
-import { ensureLobbyLoungeFurniture, findLobbyFurniturePlacement } from './lobbyLounge.js';
+import {
+  ensureLobbyLoungeFurniture,
+  ensureLobbyLoungeWidthFill,
+  findLobbyFurniturePlacement,
+} from './lobbyLounge.js';
 
 // Re-export: tests and the editor consume this from projectRoomGeneration historically.
 export { roomDoorwayKeepClearTiles } from './generationShared.js';
@@ -264,6 +269,11 @@ export function ensureProjectRoomsForAgents(
   const loungeResult = ensureLobbyLoungeFurniture(current, template);
   current = loungeResult.layout;
   loungeFurnitureAddedCount = loungeResult.addedCount;
+
+  // ③c: fill the lounge for any lobby the right-anchored widen grew (append-only; preserves edits).
+  const loungeWidthFill = ensureLobbyLoungeWidthFill(current, template);
+  current = loungeWidthFill.layout;
+  loungeFurnitureAddedCount += loungeWidthFill.addedCount;
 
   // Retrofit the studio interior (back-wall decor, focus desk set, desk plants) onto every project
   // room, including pre-existing rooms persisted by older code that never received these pieces.
@@ -831,6 +841,33 @@ function ensureWorkCorridorCampusLayout(
     // coupling is gone: lounge furniture is owned by the downstream ensureLobbyLoungeFurniture pass,
     // which is idempotent (it skips lounge pods/seats that already exist), so freezing here neither
     // strands nor duplicates it — and stripping pods here would only flip-flop against that pass.
+    //
+    // ③c right-anchored growth: the frozen lobby is reused as-is UNLESS more project rooms are now
+    // expected than its width can host as bays. In that case extend the lobby's RIGHT edge only (col
+    // fixed → no leftward grid shift, no room/furniture reflow) and hand the widened bounds back as the
+    // lobbyCore, so the alloc loop docks newcomers in fresh corridor bays instead of ring-scattering
+    // them. The lounge furniture for the new span is filled append-only downstream
+    // (ensureLobbyLoungeWidthFill), without bumping the lounge rev that would clobber manual edits.
+    const widen = widenWorkCorridorRightAnchored(
+      layout,
+      publicRoom.bounds,
+      expectedProjectRoomCount,
+    );
+    if (widen.changed) {
+      let current = ensureLayoutSize(
+        layout,
+        widen.bounds.col + widen.bounds.width,
+        widen.bounds.row + widen.bounds.height,
+      );
+      current = {
+        ...current,
+        projectRooms: normalizeProjectRooms(current).map((room) =>
+          room.id === publicRoom.id ? { ...room, bounds: widen.bounds } : room,
+        ),
+      };
+      current = paintLobbyVoidFloor(current, { ...publicRoom, bounds: widen.bounds });
+      return { layout: current, lobbyCore: widen.bounds, changedCount: 1 };
+    }
     return { layout, lobbyCore: publicRoom.bounds, changedCount: 0 };
   }
 
