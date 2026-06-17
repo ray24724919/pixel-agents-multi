@@ -264,6 +264,9 @@ export interface Character {
   projectName?: string;
   /** Source provider, e.g. codex or claude */
   providerId?: string;
+  /** True when adopted from an external session (no extension-owned terminal). Used to gate the Kill
+   *  action: an external non-codex agent has no terminal handle to dispose, so Kill can't work. */
+  isExternal?: boolean;
 
   // -- Agent Teams --
   /** Team name this agent belongs to */

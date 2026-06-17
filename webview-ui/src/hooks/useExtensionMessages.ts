@@ -485,6 +485,7 @@ export function useExtensionMessages(
       projectName?: string;
       transcriptPath?: string;
       initialActive?: boolean;
+      isExternal?: boolean;
     };
 
     // Buffer agents from existingAgents until layout is loaded.
@@ -549,6 +550,7 @@ export function useExtensionMessages(
         ch.projectName = p.projectName;
         ch.agentName = p.agentName;
         ch.providerId = p.providerId;
+        ch.isExternal = p.isExternal === true;
       }
       applyStoredAgentOfficeActivity(os, p.id);
     };
@@ -686,6 +688,7 @@ export function useExtensionMessages(
             ch.projectName = projectName;
             ch.agentName = agentName;
             ch.providerId = providerId;
+            ch.isExternal = (msg.isExternal as boolean | undefined) === true;
           }
           setAgentOfficeActivity(os, id, true);
         }
@@ -786,6 +789,7 @@ export function useExtensionMessages(
         const projectDirs = (msg.projectDirs || {}) as Record<number, string>;
         const projectNames = (msg.projectNames || {}) as Record<number, string>;
         const transcriptPaths = (msg.transcriptPaths || {}) as Record<number, string>;
+        const externalAgents = (msg.externalAgents || {}) as Record<number, boolean>;
         const incomingHiddenAgents = (msg.hiddenAgents || {}) as Record<number, boolean>;
         setHiddenAgents((prev) => {
           const next = { ...prev };
@@ -821,6 +825,7 @@ export function useExtensionMessages(
             if (projectNames[id] !== undefined) ch.projectName = projectNames[id];
             if (agentNames[id] !== undefined) ch.agentName = agentNames[id];
             if (providerIds[id] !== undefined) ch.providerId = providerIds[id];
+            ch.isExternal = externalAgents[id] === true;
             refreshedExistingMetadata = true;
           }
           const restoredAgent: PendingAgent = {
@@ -835,6 +840,7 @@ export function useExtensionMessages(
             projectName: projectNames[id],
             transcriptPath: transcriptPaths[id],
             initialActive: false,
+            isExternal: externalAgents[id] === true,
           };
           if (layoutReadyRef.current) {
             addRestoredAgent(os, restoredAgent);

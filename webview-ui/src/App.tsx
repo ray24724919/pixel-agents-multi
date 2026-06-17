@@ -301,6 +301,13 @@ function App() {
     pendingCloseAgentId === null ? undefined : officeState.characters.get(pendingCloseAgentId);
   const pendingCloseName =
     pendingCloseCharacter?.agentName ?? `Agent #${pendingCloseAgentId ?? ''}`;
+  // Kill only works when there's a process the extension can terminate: an extension-owned terminal,
+  // or an external Codex thread (matched by process). An external non-codex (Claude) agent has no
+  // terminal handle, so Kill always fails — don't offer it; Archive is the way to clear those.
+  const pendingCanKill = !(
+    pendingCloseCharacter?.isExternal === true &&
+    (pendingCloseCharacter?.providerId ?? 'claude') !== 'codex'
+  );
   const isOfficePage = activePage === 'office';
   const isAgentCenterActive = isAgentCenterPage(activePage);
 
@@ -618,10 +625,17 @@ function App() {
                   the office (it won&apos;t reappear on reload); the transcript file is kept. Use
                   this for ended/stale sessions.
                 </p>
-                <p>
-                  Kill closes owned terminals and terminates external Codex processes only when
-                  safely matched.
-                </p>
+                {pendingCanKill ? (
+                  <p>
+                    Kill closes owned terminals and terminates external Codex processes only when
+                    safely matched.
+                  </p>
+                ) : (
+                  <p className="text-text-muted">
+                    Kill isn&apos;t available for this agent — it&apos;s an external session with no
+                    terminal to terminate. Use Archive to remove it.
+                  </p>
+                )}
               </div>
             </>
           )}
@@ -656,7 +670,10 @@ function App() {
                 Kill
               </button>
             ) : (
-              (['hide', 'archive', 'kill'] as const).map((action) => (
+              (pendingCanKill
+                ? (['hide', 'archive', 'kill'] as const)
+                : (['hide', 'archive'] as const)
+              ).map((action) => (
                 <button
                   key={action}
                   className={`border-2 px-12 py-3 text-white ${
