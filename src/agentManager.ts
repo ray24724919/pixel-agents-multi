@@ -859,6 +859,66 @@ export function reapDuplicateTerminalAgents(
 }
 
 /**
+ * Enforce one EXTERNAL agent per session. An adoption race (two scanners, or scanner + restore, adopting
+ * the same session in the same tick before either is in the map) can bind two agent ids to one session
+ * (same sessionId / transcript) → two characters for one CLI session that doesn't even show twice in the
+ * terminal. The per-restore dedup only covers freshly-restored entries; this catches duplicates created
+ * by a live path after the last restore. Keep the freshest-JSONL agent, reap the rest. Mirrors
+ * reapDuplicateTerminalAgents but keyed by session for the terminal-less (external) agents it skips.
+ */
+export function reapDuplicateExternalAgents(
+  agents: Map<number, AgentState>,
+  fileWatchers: Map<number, fs.FSWatcher>,
+  pollingTimers: Map<number, ReturnType<typeof setInterval>>,
+  waitingTimers: Map<number, ReturnType<typeof setTimeout>>,
+  permissionTimers: Map<number, ReturnType<typeof setTimeout>>,
+  jsonlPollTimers: Map<number, ReturnType<typeof setInterval>>,
+  webview: vscode.Webview | undefined,
+  persist: () => void,
+  onAgentRemoved?: (agent: AgentState) => void,
+): void {
+  const byKey = new Map<string, number[]>();
+  for (const [id, agent] of agents) {
+    if (!agent.isExternal) continue;
+    const key = agent.sessionId || agent.jsonlFile;
+    if (!key) continue;
+    const ids = byKey.get(key) ?? [];
+    ids.push(id);
+    byKey.set(key, ids);
+  }
+  const mtimeMs = (file: string): number => {
+    try {
+      return fs.statSync(file).mtimeMs;
+    } catch {
+      return 0;
+    }
+  };
+  for (const ids of byKey.values()) {
+    if (ids.length < 2) continue;
+    // Keep the freshest JSONL (most recently active); reap the rest.
+    ids.sort((a, b) => mtimeMs(agents.get(b)!.jsonlFile) - mtimeMs(agents.get(a)!.jsonlFile));
+    for (const staleId of ids.slice(1)) {
+      console.log(
+        `[Pixel Agents] Reaped duplicate external agent ${staleId} (same session as agent ${ids[0]})`,
+      );
+      const staleAgent = agents.get(staleId);
+      if (staleAgent) onAgentRemoved?.(staleAgent);
+      removeAgent(
+        staleId,
+        agents,
+        fileWatchers,
+        pollingTimers,
+        waitingTimers,
+        permissionTimers,
+        jsonlPollTimers,
+        persist,
+      );
+      webview?.postMessage({ type: 'agentClosed', id: staleId });
+    }
+  }
+}
+
+/**
  * Reap EXTERNAL agents whose session is GONE: the transcript/rollout file no longer exists on disk.
  * This is DELETION-based, not idle-based — an agent stays as long as its session exists, no matter how
  * long it has been unused (the user keeps sessions open and resumes them later). A live session that
@@ -954,6 +1014,20 @@ export function restoreAgents(
     doPersist,
     onAgentRemoved,
   );
+  // Collapse external agents that an adoption race bound twice to one session (two characters for one
+  // CLI session). Runs every webviewReady to catch duplicates created by a live path after the last
+  // restore (the per-restore session-claim below only covers freshly-restored entries).
+  reapDuplicateExternalAgents(
+    agents,
+    fileWatchers,
+    pollingTimers,
+    waitingTimers,
+    permissionTimers,
+    jsonlPollTimers,
+    webview,
+    doPersist,
+    onAgentRemoved,
+  );
 
   const persisted = context.workspaceState.get<PersistedAgent[]>(WORKSPACE_KEY_AGENTS, []);
   if (persisted.length === 0) return;
@@ -970,6 +1044,10 @@ export function restoreAgents(
   // (the most recently active) agent. Because any two agents that share a terminal also share its
   // name, this also reaps a duplicate created by any other path on the next restore (webview focus).
   const claimedTerminals = new Set<vscode.Terminal>();
+  // One external agent per session: two persisted entries can share a sessionId/transcript (an older
+  // adoption race), and the id-only skip above would restore both. Restore freshest-JSONL first (see
+  // restoreOrder) and let the first claim the session; skip later duplicates.
+  const claimedSessions = new Set<string>();
   const jsonlMtimeMs = (file: string): number => {
     try {
       return fs.statSync(file).mtimeMs;
@@ -1011,6 +1089,12 @@ export function restoreAgents(
         fs.statSync(p.jsonlFile);
       } catch {
         continue; // transcript/rollout deleted → session gone
+      }
+      // One agent per session — skip a duplicate persisted entry for a session already restored.
+      const sessionKey = p.sessionId || p.jsonlFile;
+      if (sessionKey) {
+        if (claimedSessions.has(sessionKey)) continue;
+        claimedSessions.add(sessionKey);
       }
     } else {
       // Terminal agents — find matching terminal by name
