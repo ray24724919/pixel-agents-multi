@@ -312,7 +312,7 @@ export function ToolOverlay({
                       e.stopPropagation();
                       onCloseAgent(id);
                     }}
-                    title="Close agent"
+                    title="Remove agent (hide / archive / kill)…"
                     className="shrink-0 leading-none"
                   >
                     ×

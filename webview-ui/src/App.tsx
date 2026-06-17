@@ -614,7 +614,9 @@ function App() {
               <div className="mt-5 grid gap-3 text-sm text-text-muted">
                 <p>Hide removes the agent from normal views while its process keeps running.</p>
                 <p>
-                  Archive removes it from active tracking and keeps its record for future history.
+                  <span className="text-accent-bright">Archive</span> permanently removes it from
+                  the office (it won&apos;t reappear on reload); the transcript file is kept. Use
+                  this for ended/stale sessions.
                 </p>
                 <p>
                   Kill closes owned terminals and terminates external Codex processes only when
