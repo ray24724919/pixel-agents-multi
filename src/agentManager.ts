@@ -919,12 +919,34 @@ export function reapDuplicateExternalAgents(
 }
 
 /**
+ * Whether an external agent's transcript/rollout file is CONFIRMED gone (deleted outright) — the only
+ * condition under which the deletion-based lifecycle reaps it.
+ *
+ * Returns true ONLY for ENOENT/ENOTDIR (the file, or a parent path component, no longer exists). Any
+ * OTHER stat error (EBUSY, EPERM, EMFILE, EACCES, transient I/O — more likely on long / non-ASCII paths
+ * such as the CJK "硬體連線" project-hash dir) returns false → "still here, keep it". Reaping on a single
+ * transient stat failure would wrongly drop a live idle session, which a scanner then re-adopts seconds
+ * later: the user sees a room briefly empty and refill (a flicker), and the agent's id churns. "Deleted"
+ * means the file was deleted, not "statSync happened to throw once".
+ */
+function isExternalTranscriptGone(file: string): boolean {
+  try {
+    fs.statSync(file);
+    return false; // exists → keep
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException | undefined)?.code;
+    return code === 'ENOENT' || code === 'ENOTDIR';
+  }
+}
+
+/**
  * Reap EXTERNAL agents whose session is GONE: the transcript/rollout file no longer exists on disk.
  * This is DELETION-based, not idle-based — an agent stays as long as its session exists, no matter how
  * long it has been unused (the user keeps sessions open and resumes them later). A live session that
  * actually ends is removed promptly by SessionEnd (Claude hook); a Codex thread that gets archived is
  * removed by removeStaleCodexAgents. This function only handles the case where the underlying transcript
- * file was deleted outright.
+ * file was deleted outright (see isExternalTranscriptGone — only a confirmed ENOENT, never a transient
+ * stat error).
  *
  * Removal is reversible: adoption windows are 2-10 minutes, so a session that genuinely wakes up again is
  * re-adopted within seconds of new activity. Hooks-only providers (no transcript file) are managed purely
@@ -945,10 +967,10 @@ export function reapStaleExternalAgents(
   for (const [id, agent] of agents) {
     if (!agent.isExternal) continue;
     if (!agent.jsonlFile) continue; // hooks-only provider: lifecycle owned by SessionEnd
-    try {
-      fs.statSync(agent.jsonlFile); // exists → keep, however long it has been idle
-    } catch {
-      staleIds.push(id); // transcript/rollout deleted → session gone
+    // exists (or transient stat error) → keep, however long it has been idle; only a confirmed
+    // ENOENT means the transcript was deleted → session gone.
+    if (isExternalTranscriptGone(agent.jsonlFile)) {
+      staleIds.push(id);
     }
   }
   for (const id of staleIds) {
@@ -1085,10 +1107,9 @@ export function restoreAgents(
       // time and expects the agent to stay in its room. A session only disappears when it actually ends
       // (Claude fires SessionEnd; a Codex thread gets archived — handled by removeStaleCodexAgents) or
       // its transcript is deleted (caught here).
-      try {
-        fs.statSync(p.jsonlFile);
-      } catch {
-        continue; // transcript/rollout deleted → session gone
+      if (isExternalTranscriptGone(p.jsonlFile)) {
+        continue; // transcript/rollout deleted (confirmed ENOENT) → session gone; transient stat
+        // errors keep the agent so a momentary I/O hiccup never drops a live idle session on restore.
       }
       // One agent per session — skip a duplicate persisted entry for a session already restored.
       const sessionKey = p.sessionId || p.jsonlFile;
