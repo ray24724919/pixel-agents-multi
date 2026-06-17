@@ -65,13 +65,24 @@ export const seededMtimes = new Map<string, number>();
 /** /clear files waiting for second tick (gives per-agent check time to claim first). */
 const pendingClearFiles = new Map<string, number>();
 
+/**
+ * Canonical key for comparing transcript paths. Windows paths are case-insensitive, and the Claude
+ * project-hash dir can appear with either drive-letter casing (…\projects\C--Users-… vs …\c--Users-…)
+ * depending on which code path computed it — a case-sensitive compare then treats one live session as
+ * two files and adopts it twice (a duplicate room character for one CLI session). Lower-case on win32.
+ */
+function jsonlPathKey(jsonlFile: string): string {
+  const resolved = path.resolve(jsonlFile);
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
 function findAgentForJsonlFile(
   agents: Map<number, AgentState>,
   jsonlFile: string,
 ): AgentState | undefined {
-  const normalized = path.resolve(jsonlFile);
+  const normalized = jsonlPathKey(jsonlFile);
   return [...agents.values()].find(
-    (agent) => agent.jsonlFile && path.resolve(agent.jsonlFile) === normalized,
+    (agent) => agent.jsonlFile && jsonlPathKey(agent.jsonlFile) === normalized,
   );
 }
 
