@@ -6,7 +6,7 @@
   "title": "W15-A Handoff Executor State Observability",
   "status": "draft",
   "createdAt": "2026-06-08T02:17:00.000Z",
-  "updatedAt": "2026-06-08T02:17:00.000Z",
+  "updatedAt": "2026-06-17T00:12:25.480Z",
   "providerId": "codex",
   "projectName": "pixel-agents-multi",
   "agentName": "W15-A executor",
@@ -14,8 +14,18 @@
     "packageRelativePath": "docs/roadmap/supervision/work-packages/handoffs/w15-a-executor-state-observability-work-package.md",
     "branchName": "product/handoff-w15-a-executor-state-observability",
     "reportRelativePath": "docs/roadmap/supervision/reports/w15-a-executor-state-observability-executor-report.md",
-    "status": "ready",
+    "status": "dispatched",
     "createdAt": "2026-06-08T02:17:00.000Z",
-    "updatedAt": "2026-06-08T02:17:00.000Z"
+    "updatedAt": "2026-06-17T00:12:25.480Z",
+    "execution": {
+      "linkedAt": "2026-06-17T00:12:25.480Z",
+      "updatedAt": "2026-06-17T00:12:25.480Z",
+      "status": "active",
+      "agentId": 26,
+      "agentName": "調整 handoff checklist 文案",
+      "providerId": "codex",
+      "projectName": "pixel-agents-multi",
+      "sessionId": "019e9d20-8f61-7ff0-ac19-7be141046fa9"
+    }
   }
 }

@@ -808,6 +808,51 @@ describe('Claude adoption dedup and titles', () => {
     );
   });
 
+  it('skips a Claude Cowork session that fails to re-base (no user folder) instead of adopting an "outputs" phantom', () => {
+    const root = path.join(tmpDir, 'Claude', 'local-agent-mode-sessions');
+    const metadataDir = path.join(root, 'space-1', 'process-1');
+    const sessionId = 'local_cowork_orphan';
+    const sessionDir = path.join(metadataDir, sessionId);
+    const outputDir = path.join(sessionDir, 'outputs');
+    const auditPath = path.join(sessionDir, 'audit.jsonl');
+    fs.mkdirSync(outputDir, { recursive: true });
+    fs.writeFileSync(auditPath, JSON.stringify({ cwd: outputDir }) + '\n');
+    fs.writeFileSync(
+      path.join(metadataDir, `${sessionId}.json`),
+      JSON.stringify({
+        sessionId,
+        title: 'Orphan Cowork',
+        userSelectedFolders: [], // no real project → projectDir falls back into the sandbox
+        cwd: outputDir,
+        isArchived: false,
+        isAgentCompleted: false,
+      }),
+    );
+
+    const agents = new Map<number, AgentState>();
+    const knownJsonlFiles = new Set<string>();
+    const webview = { postMessage: vi.fn() };
+    const persistAgents = vi.fn();
+
+    scanClaudeCoworkSessions(
+      [],
+      knownJsonlFiles,
+      { current: 1 },
+      agents,
+      new Map(),
+      new Map(),
+      new Map(),
+      new Map(),
+      webview as unknown as import('vscode').Webview,
+      persistAgents,
+      root,
+    );
+
+    expect(agents.size).toBe(0);
+    expect(persistAgents).not.toHaveBeenCalled();
+    expect(webview.postMessage).not.toHaveBeenCalled();
+  });
+
   it('refreshes existing Claude Cowork agents back to the selected project root', () => {
     const root = path.join(tmpDir, 'Claude', 'local-agent-mode-sessions');
     const metadataDir = path.join(root, 'space-1', 'process-1');
