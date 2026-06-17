@@ -96,11 +96,12 @@ import {
   linkHandoffExecutionAgent,
   readHandoffArtifactMetadataForMarkdown,
   refreshHandoffCompletionStatus,
+  resolveGitRepoRoot,
   resolveHandoffArtifactOpenPath,
   resolveHandoffReportOpenPath,
   resolveHandoffWorkPackageOpenPath,
   sanitizeHandoffMarkdownBody,
-  scanHandoffArtifacts,
+  scanHandoffArtifactsAcrossRoots,
   updateHandoffArtifactStatus,
   updateHandoffDispatchStatus,
   updateHandoffExecutionStatus,
@@ -310,9 +311,11 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       if (!markdown.trim()) {
         throw new Error('No handoff markdown was supplied.');
       }
-      const repoRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      const repoRoot = this.resolveHandoffRepoRoot(message);
       if (!repoRoot) {
-        throw new Error('Open a repository workspace before writing a handoff draft.');
+        throw new Error(
+          'Could not resolve a repository for this handoff (open the project folder, or run the source session inside a git repo).',
+        );
       }
       const nowMs = Date.now();
       const target = buildHandoffArtifactTarget(
@@ -386,13 +389,17 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
   private postHandoffArtifactsLoaded(): void {
     const loadedAtMs = Date.now();
     try {
-      const repoRoot = this.getHandoffRepoRoot();
-      if (!repoRoot) {
-        throw new Error('Open a repository workspace before loading handoff artifacts.');
+      const roots = this.collectHandoffRepoRoots();
+      if (roots.length === 0) {
+        throw new Error(
+          'Open a project folder, or have an active agent in a git repository, to load handoff artifacts.',
+        );
       }
+      const { artifacts, repoRootByRelativePath } = scanHandoffArtifactsAcrossRoots(roots);
+      this.handoffArtifactRepoRoots = new Map(Object.entries(repoRootByRelativePath));
       this.webview?.postMessage({
         type: 'handoffArtifactsLoaded',
-        artifacts: scanHandoffArtifacts(repoRoot),
+        artifacts,
         loadedAtMs,
       });
     } catch (error) {
@@ -409,7 +416,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
   private async openHandoffArtifactFromWebview(message: Record<string, unknown>): Promise<void> {
     const requestId = typeof message.requestId === 'string' ? message.requestId : undefined;
     try {
-      const repoRoot = this.getHandoffRepoRoot();
+      const repoRoot = this.resolveHandoffRepoRoot(message);
       if (!repoRoot) {
         throw new Error('Open a repository workspace before opening handoff artifacts.');
       }
@@ -450,7 +457,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
   ): Promise<void> {
     const requestId = typeof message.requestId === 'string' ? message.requestId : undefined;
     try {
-      const repoRoot = this.getHandoffRepoRoot();
+      const repoRoot = this.resolveHandoffRepoRoot(message);
       if (!repoRoot) {
         throw new Error('Open a repository workspace before updating handoff artifacts.');
       }
@@ -505,7 +512,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
   ): Promise<void> {
     const requestId = typeof message.requestId === 'string' ? message.requestId : undefined;
     try {
-      const repoRoot = this.getHandoffRepoRoot();
+      const repoRoot = this.resolveHandoffRepoRoot(message);
       if (!repoRoot) {
         throw new Error('Open a repository workspace before creating a dispatch prompt.');
       }
@@ -553,7 +560,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
   ): Promise<void> {
     const requestId = typeof message.requestId === 'string' ? message.requestId : undefined;
     try {
-      const repoRoot = this.getHandoffRepoRoot();
+      const repoRoot = this.resolveHandoffRepoRoot(message);
       if (!repoRoot) {
         throw new Error('Open a repository workspace before creating a handoff work package.');
       }
@@ -607,7 +614,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
   private async openHandoffWorkPackageFromWebview(message: Record<string, unknown>): Promise<void> {
     const requestId = typeof message.requestId === 'string' ? message.requestId : undefined;
     try {
-      const repoRoot = this.getHandoffRepoRoot();
+      const repoRoot = this.resolveHandoffRepoRoot(message);
       if (!repoRoot) {
         throw new Error('Open a repository workspace before opening handoff work packages.');
       }
@@ -656,7 +663,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
   ): Promise<void> {
     const requestId = typeof message.requestId === 'string' ? message.requestId : undefined;
     try {
-      const repoRoot = this.getHandoffRepoRoot();
+      const repoRoot = this.resolveHandoffRepoRoot(message);
       if (!repoRoot) {
         throw new Error('Open a repository workspace before creating a work-package prompt.');
       }
@@ -692,7 +699,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
   ): Promise<void> {
     const requestId = typeof message.requestId === 'string' ? message.requestId : undefined;
     try {
-      const repoRoot = this.getHandoffRepoRoot();
+      const repoRoot = this.resolveHandoffRepoRoot(message);
       if (!repoRoot) {
         throw new Error('Open a repository workspace before updating handoff work packages.');
       }
@@ -757,7 +764,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
   ): Promise<void> {
     const requestId = typeof message.requestId === 'string' ? message.requestId : undefined;
     try {
-      const repoRoot = this.getHandoffRepoRoot();
+      const repoRoot = this.resolveHandoffRepoRoot(message);
       if (!repoRoot) {
         throw new Error('Open a repository workspace before linking handoff execution.');
       }
@@ -837,7 +844,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
   ): Promise<void> {
     const requestId = typeof message.requestId === 'string' ? message.requestId : undefined;
     try {
-      const repoRoot = this.getHandoffRepoRoot();
+      const repoRoot = this.resolveHandoffRepoRoot(message);
       if (!repoRoot) {
         throw new Error('Open a repository workspace before updating handoff execution.');
       }
@@ -911,7 +918,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
   private async launchHandoffExecutorFromWebview(message: Record<string, unknown>): Promise<void> {
     const requestId = typeof message.requestId === 'string' ? message.requestId : undefined;
     try {
-      const repoRoot = this.getHandoffRepoRoot();
+      const repoRoot = this.resolveHandoffRepoRoot(message);
       if (!repoRoot) {
         throw new Error('Open a repository workspace before launching a handoff executor.');
       }
@@ -1015,7 +1022,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
   ): Promise<void> {
     const requestId = typeof message.requestId === 'string' ? message.requestId : undefined;
     try {
-      const repoRoot = this.getHandoffRepoRoot();
+      const repoRoot = this.resolveHandoffRepoRoot(message);
       if (!repoRoot) {
         throw new Error('Open a repository workspace before refreshing handoff completion.');
       }
@@ -1068,7 +1075,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
   private async openHandoffReportFromWebview(message: Record<string, unknown>): Promise<void> {
     const requestId = typeof message.requestId === 'string' ? message.requestId : undefined;
     try {
-      const repoRoot = this.getHandoffRepoRoot();
+      const repoRoot = this.resolveHandoffRepoRoot(message);
       if (!repoRoot) {
         throw new Error('Open a repository workspace before opening a handoff report.');
       }
@@ -1244,6 +1251,50 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 
   private getHandoffRepoRoot(): string | undefined {
     return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  }
+
+  /** relativePath → the git repo root each handoff artifact was scanned from (rebuilt every load). */
+  private handoffArtifactRepoRoots = new Map<string, string>();
+
+  /**
+   * Every git repo a handoff might live in: the open workspace folders PLUS the repos of all live
+   * top-level agents (the office window often has no folder open, or hosts agents from several repos).
+   * resolveGitRepoRoot naturally drops non-repo dirs (e.g. cowork sandbox cwds with no .git).
+   */
+  private collectHandoffRepoRoots(): string[] {
+    const roots = new Set<string>();
+    for (const folder of vscode.workspace.workspaceFolders ?? []) {
+      roots.add(resolveGitRepoRoot(folder.uri.fsPath) ?? folder.uri.fsPath);
+    }
+    for (const agent of this.agents.values()) {
+      if (agent.leadAgentId !== undefined) continue; // skip sub-agents
+      const root = resolveGitRepoRoot(agent.projectDir);
+      if (root) roots.add(root);
+    }
+    return [...roots];
+  }
+
+  /**
+   * Per-session/per-artifact repo root for a handoff message (NOT workspaceFolders[0]). An existing
+   * artifact uses the repo it was scanned from; a fresh draft (write) uses the source session agent's
+   * repo. Falls back to the first workspace folder. See the ① handoff-spine repo-root fix.
+   */
+  private resolveHandoffRepoRoot(message: Record<string, unknown>): string | undefined {
+    if (typeof message.relativePath === 'string') {
+      const mapped = this.handoffArtifactRepoRoots.get(message.relativePath);
+      if (mapped) return mapped;
+    }
+    const agentId =
+      typeof message.agentId === 'number'
+        ? message.agentId
+        : typeof message.agentId === 'string' && message.agentId.trim() !== ''
+          ? Number(message.agentId)
+          : NaN;
+    if (Number.isFinite(agentId)) {
+      const root = resolveGitRepoRoot(this.agents.get(agentId)?.projectDir);
+      if (root) return root;
+    }
+    return this.getHandoffRepoRoot();
   }
 
   private persistAgents = (): void => {

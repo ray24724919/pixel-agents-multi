@@ -20,6 +20,7 @@ import {
   markHandoffExecutorLaunched,
   parseHandoffArtifactMetadata,
   refreshHandoffCompletionStatus,
+  resolveGitRepoRoot,
   resolveHandoffArtifactMetadataPath,
   resolveHandoffArtifactOpenPath,
   resolveHandoffReportOpenPath,
@@ -27,6 +28,7 @@ import {
   safeHandoffFilenamePart,
   sanitizeHandoffMarkdownBody,
   scanHandoffArtifacts,
+  scanHandoffArtifactsAcrossRoots,
   updateHandoffArtifactStatus,
   updateHandoffDispatchStatus,
   updateHandoffExecutionStatus,
@@ -115,6 +117,64 @@ describe('handoff artifact path safety', () => {
       expect(summaries[0]?.title).toBe('Gamma handoff');
     } finally {
       fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('resolveGitRepoRoot walks up to the nearest .git and returns undefined when there is none', () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'pixel-handoff-gitroot-'));
+    try {
+      const repo = path.join(base, 'repo');
+      const deep = path.join(repo, 'src', 'office');
+      fs.mkdirSync(deep, { recursive: true });
+      fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+      expect(resolveGitRepoRoot(deep)).toBe(path.resolve(repo));
+      expect(resolveGitRepoRoot(repo)).toBe(path.resolve(repo));
+      const noRepo = path.join(base, 'loose');
+      fs.mkdirSync(noRepo, { recursive: true });
+      expect(resolveGitRepoRoot(noRepo)).toBeUndefined();
+      expect(resolveGitRepoRoot(undefined)).toBeUndefined();
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it('scanHandoffArtifactsAcrossRoots merges repos newest-first and maps each artifact to its repo', () => {
+    const repoA = fs.mkdtempSync(path.join(os.tmpdir(), 'pixel-handoff-rootA-'));
+    const repoB = fs.mkdtempSync(path.join(os.tmpdir(), 'pixel-handoff-rootB-'));
+    try {
+      const dirA = path.join(repoA, 'docs', 'agent-handoffs');
+      const dirB = path.join(repoB, 'docs', 'agent-handoffs');
+      fs.mkdirSync(dirA, { recursive: true });
+      fs.mkdirSync(dirB, { recursive: true });
+      const aOld = path.join(dirA, '2026-01-01-0900-alpha-handoff.md');
+      const bNew = path.join(dirB, '2026-02-02-0900-beta-handoff.md');
+      fs.writeFileSync(aOld, '# Alpha handoff\n\nBody', 'utf8');
+      fs.writeFileSync(bNew, '# Beta handoff\n\nBody', 'utf8');
+      fs.utimesSync(aOld, new Date(1000), new Date(1000));
+      fs.utimesSync(bNew, new Date(2000), new Date(2000));
+
+      // Duplicate root is de-duped; the newer artifact (repoB) sorts first.
+      const { artifacts, repoRootByRelativePath } = scanHandoffArtifactsAcrossRoots([
+        repoA,
+        repoB,
+        repoA,
+      ]);
+
+      expect(artifacts.map((a) => a.filename)).toEqual([
+        '2026-02-02-0900-beta-handoff.md',
+        '2026-01-01-0900-alpha-handoff.md',
+      ]);
+      expect(artifacts[0]?.repoRoot).toBe(path.resolve(repoB));
+      expect(artifacts[1]?.repoRoot).toBe(path.resolve(repoA));
+      expect(repoRootByRelativePath['docs/agent-handoffs/2026-02-02-0900-beta-handoff.md']).toBe(
+        path.resolve(repoB),
+      );
+      expect(repoRootByRelativePath['docs/agent-handoffs/2026-01-01-0900-alpha-handoff.md']).toBe(
+        path.resolve(repoA),
+      );
+    } finally {
+      fs.rmSync(repoA, { recursive: true, force: true });
+      fs.rmSync(repoB, { recursive: true, force: true });
     }
   });
 

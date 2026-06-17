@@ -1306,6 +1306,13 @@ export function scanClaudeCoworkSessions(
     if (!metadata) continue;
     if (metadata.isArchived || metadata.isAgentCompleted) continue;
     if (!metadata.auditPath || !fs.existsSync(metadata.auditPath)) continue;
+    // Rebase failed: the session had no resolvable userSelectedFolder, so readCoworkSessionMetadata
+    // fell projectDir back to the sandbox cwd itself (.../local-agent-mode-sessions/.../outputs).
+    // Adopting that yields a phantom "outputs" agent + room. Skip — the cowork experience is only for
+    // sessions that re-base onto a REAL user project (projectDir outside the sandbox). This is the
+    // failed-rebase hole the v1.3.37 raw-path filter didn't cover (esp. in a window with no folder open,
+    // where the workspaceRoots guard below is a no-op).
+    if (isLocalAgentModeSandboxPath(metadata.projectDir)) continue;
     if (
       workspaceRoots.length > 0 &&
       !metadata.userSelectedFolders.some((folder) => isCwdInRoots(folder, workspaceRoots))
