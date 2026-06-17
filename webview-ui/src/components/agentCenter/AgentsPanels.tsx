@@ -482,7 +482,7 @@ export function AgentDetail({
             {pauseActionLabel(agent.isPaused)}
           </Button>
           <Button variant="default" size="sm" onClick={() => onCloseAgent(agent.id)}>
-            Actions
+            Remove…
           </Button>
         </div>
       </div>

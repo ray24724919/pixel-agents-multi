@@ -117,7 +117,8 @@ vi.mock('../../src/fileWatcher.js', async () => {
   };
 });
 
-const { launchNewTerminal, restoreAgents } = await import('../../src/agentManager.js');
+const { launchNewTerminal, reapDuplicateExternalAgents, restoreAgents } =
+  await import('../../src/agentManager.js');
 const { getLiveCodexThreadIdsForSpawnedAgentCwds, PixelAgentsViewProvider } =
   await import('../../src/PixelAgentsViewProvider.js');
 const { processTranscriptLine } = await import('../../src/transcriptParser.js');
@@ -915,3 +916,55 @@ function scanCodex(provider: InstanceType<typeof PixelAgentsViewProvider>): void
   const providerWithPrivate = provider as unknown as { scanCodexWorkspaceThreads: () => void };
   providerWithPrivate.scanCodexWorkspaceThreads();
 }
+
+describe('reapDuplicateExternalAgents', () => {
+  it('keeps one external agent per session and reaps same-session duplicates', () => {
+    const agents = new Map<number, AgentState>([
+      [1, makeAgent(1, { isExternal: true, sessionId: 'sess-dup', jsonlFile: '/t/dup.jsonl' })],
+      [2, makeAgent(2, { isExternal: true, sessionId: 'sess-dup', jsonlFile: '/t/dup.jsonl' })],
+      [3, makeAgent(3, { isExternal: true, sessionId: 'sess-uniq', jsonlFile: '/t/uniq.jsonl' })],
+    ]);
+    const webview = { postMessage: vi.fn() };
+
+    reapDuplicateExternalAgents(
+      agents,
+      new Map(),
+      new Map(),
+      new Map(),
+      new Map(),
+      new Map(),
+      webview as unknown as import('vscode').Webview,
+      vi.fn(),
+    );
+
+    expect(agents.size).toBe(2);
+    expect(agents.has(3)).toBe(true); // distinct session untouched
+    expect([agents.has(1), agents.has(2)].filter(Boolean).length).toBe(1); // exactly one dup survives
+    expect(webview.postMessage).toHaveBeenCalledWith({
+      type: 'agentClosed',
+      id: expect.any(Number),
+    });
+  });
+
+  it('does not reap distinct external sessions or terminal agents', () => {
+    const agents = new Map<number, AgentState>([
+      [1, makeAgent(1, { isExternal: true, sessionId: 's1', jsonlFile: '/t/a.jsonl' })],
+      [2, makeAgent(2, { isExternal: true, sessionId: 's2', jsonlFile: '/t/b.jsonl' })],
+    ]);
+    const webview = { postMessage: vi.fn() };
+
+    reapDuplicateExternalAgents(
+      agents,
+      new Map(),
+      new Map(),
+      new Map(),
+      new Map(),
+      new Map(),
+      webview as unknown as import('vscode').Webview,
+      vi.fn(),
+    );
+
+    expect(agents.size).toBe(2);
+    expect(webview.postMessage).not.toHaveBeenCalled();
+  });
+});
