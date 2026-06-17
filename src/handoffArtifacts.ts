@@ -185,6 +185,8 @@ export interface HandoffArtifactSummary {
   dispatchPackage?: HandoffDispatchPackageV1;
   completion?: HandoffCompletionStatusV1;
   review?: HandoffCompletionReviewV1;
+  /** Git repo root this artifact was scanned from (set by scanHandoffArtifactsAcrossRoots). */
+  repoRoot?: string;
 }
 
 export interface HandoffArtifactOpenPath {
@@ -394,6 +396,68 @@ export function scanHandoffArtifacts(
         review,
       };
     });
+}
+
+/**
+ * Walk up from `startDir` to the nearest git repository root (a directory containing a `.git` entry).
+ * Returns undefined if none is found before the filesystem root. Used so a handoff lives in the repo of
+ * the session it came from, not whatever happens to be workspaceFolders[0] (the office window often has
+ * no folder open, or spans several repos). Pure filesystem walk — no VS Code dependency.
+ */
+export function resolveGitRepoRoot(startDir: string | undefined | null): string | undefined {
+  if (!startDir) return undefined;
+  let dir: string;
+  try {
+    dir = path.resolve(startDir);
+  } catch {
+    return undefined;
+  }
+  for (;;) {
+    if (fs.existsSync(path.join(dir, '.git'))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) return undefined;
+    dir = parent;
+  }
+}
+
+export interface HandoffArtifactsAcrossRoots {
+  artifacts: HandoffArtifactSummary[];
+  /** relativePath → the repo root it was scanned from, so later ops resolve the right repo. */
+  repoRootByRelativePath: Record<string, string>;
+}
+
+/**
+ * Scan handoff artifacts across multiple repo roots (the office window can host agents from several
+ * repos at once) and merge into one library, newest-first, capped at `maxItems`. Each artifact is
+ * tagged with its `repoRoot`, and a relativePath→repoRoot map is returned so subsequent handoff
+ * operations target the artifact's own repo. Duplicate roots are de-duped; handoff filenames are
+ * timestamp+slug so cross-repo relativePath collisions are effectively impossible (last-write-wins).
+ */
+export function scanHandoffArtifactsAcrossRoots(
+  roots: readonly string[],
+  maxItems = HANDOFF_ARTIFACT_LIBRARY_MAX_ITEMS,
+): HandoffArtifactsAcrossRoots {
+  const seenRoots = new Set<string>();
+  const tagged: HandoffArtifactSummary[] = [];
+  const repoRootByRelativePath: Record<string, string> = {};
+  for (const root of roots) {
+    let resolved: string;
+    try {
+      resolved = path.resolve(root);
+    } catch {
+      continue;
+    }
+    if (seenRoots.has(resolved)) continue;
+    seenRoots.add(resolved);
+    for (const summary of scanHandoffArtifacts(resolved, maxItems)) {
+      tagged.push({ ...summary, repoRoot: resolved });
+      repoRootByRelativePath[summary.relativePath] = resolved;
+    }
+  }
+  const artifacts = tagged
+    .sort((a, b) => b.modifiedAt - a.modifiedAt || a.filename.localeCompare(b.filename))
+    .slice(0, Math.max(0, Math.floor(maxItems)));
+  return { artifacts, repoRootByRelativePath };
 }
 
 export function resolveHandoffArtifactOpenPath(
