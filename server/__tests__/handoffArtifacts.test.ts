@@ -10,6 +10,7 @@ import {
   buildHandoffDispatchPrompt,
   buildHandoffWorkPackagePrompt,
   buildHandoffWorkPackageTarget,
+  clearHandoffExecutorLink,
   confirmAndMarkHandoffExecutorLaunch,
   createHandoffWorkPackage,
   detectHandoffCompletionStatus,
@@ -949,6 +950,98 @@ describe('handoff artifact path safety', () => {
       expect(parsed?.dispatchPackage?.execution?.agentId).toBe(18);
       expect(fs.readFileSync(target.absolutePath, 'utf8')).toBe(handoffMarkdown);
       expect(fs.readFileSync(workPackage.packageAbsolutePath, 'utf8')).toBe(workPackageMarkdown);
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('cancels a dispatched executor: drops the link and returns dispatch to ready', () => {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pixel-handoff-executor-cancel-'));
+    try {
+      const target = buildHandoffArtifactTarget(
+        repoRoot,
+        { project: 'Executor Cancel' },
+        Date.UTC(2026, 5, 4, 7, 7),
+      );
+      fs.mkdirSync(path.dirname(target.absolutePath), { recursive: true });
+      fs.writeFileSync(target.absolutePath, '# Executor handoff\n\nbody', 'utf8');
+      const metadata = buildHandoffArtifactMetadata(
+        target,
+        { title: 'Cancel W', projectName: 'Pixel Agents Multi' },
+        Date.UTC(2026, 5, 4, 7, 7),
+      );
+      fs.writeFileSync(
+        target.metadataAbsolutePath,
+        `${JSON.stringify(metadata, null, 2)}\n`,
+        'utf8',
+      );
+      createHandoffWorkPackage(repoRoot, target.relativePath, Date.UTC(2026, 5, 4, 8, 30));
+      markHandoffExecutorLaunched(
+        repoRoot,
+        target.relativePath,
+        { agentId: 21, providerId: 'codex', sessionId: 's', projectName: 'P' },
+        Date.UTC(2026, 5, 4, 9, 45),
+      );
+
+      const result = clearHandoffExecutorLink(
+        repoRoot,
+        target.relativePath,
+        Date.UTC(2026, 5, 4, 10, 0),
+      );
+
+      expect(result.previousDispatchStatus).toBe('dispatched');
+      expect(result.nextDispatchStatus).toBe('ready');
+      expect(result.previousAgentId).toBe(21);
+      expect(result.dispatchPackage.status).toBe('ready');
+      expect(result.dispatchPackage.execution).toBeUndefined();
+      const parsed = parseHandoffArtifactMetadata(
+        JSON.parse(fs.readFileSync(target.metadataAbsolutePath, 'utf8')),
+      );
+      expect(parsed?.dispatchPackage?.status).toBe('ready');
+      expect(parsed?.dispatchPackage?.execution).toBeUndefined();
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('cancel leaves a completed handoff status untouched while still dropping the link', () => {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pixel-handoff-executor-cancel-done-'));
+    try {
+      const target = buildHandoffArtifactTarget(
+        repoRoot,
+        { project: 'Executor Cancel Done' },
+        Date.UTC(2026, 5, 4, 7, 7),
+      );
+      fs.mkdirSync(path.dirname(target.absolutePath), { recursive: true });
+      fs.writeFileSync(target.absolutePath, '# Executor handoff\n\nbody', 'utf8');
+      const metadata = buildHandoffArtifactMetadata(
+        target,
+        { title: 'Cancel Done', projectName: 'Pixel Agents Multi' },
+        Date.UTC(2026, 5, 4, 7, 7),
+      );
+      fs.writeFileSync(
+        target.metadataAbsolutePath,
+        `${JSON.stringify(metadata, null, 2)}\n`,
+        'utf8',
+      );
+      createHandoffWorkPackage(repoRoot, target.relativePath, Date.UTC(2026, 5, 4, 8, 30));
+      markHandoffExecutorLaunched(
+        repoRoot,
+        target.relativePath,
+        { agentId: 7, providerId: 'codex', sessionId: 's', projectName: 'P' },
+        Date.UTC(2026, 5, 4, 9, 45),
+      );
+      updateHandoffDispatchStatus(repoRoot, target.relativePath, 'completed');
+
+      const result = clearHandoffExecutorLink(
+        repoRoot,
+        target.relativePath,
+        Date.UTC(2026, 5, 4, 10, 0),
+      );
+
+      expect(result.previousDispatchStatus).toBe('completed');
+      expect(result.nextDispatchStatus).toBe('completed');
+      expect(result.dispatchPackage.execution).toBeUndefined();
     } finally {
       fs.rmSync(repoRoot, { recursive: true, force: true });
     }

@@ -91,6 +91,7 @@ import {
   buildHandoffArtifactTarget,
   buildHandoffDispatchPrompt,
   buildHandoffWorkPackagePrompt,
+  clearHandoffExecutorLink,
   confirmAndMarkHandoffExecutorLaunch,
   createHandoffWorkPackage,
   linkHandoffExecutionAgent,
@@ -958,6 +959,19 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       });
       if (!outcome.confirmed) {
         console.warn(`[Pixel Agents] Handoff: ${outcome.errorMessage}`);
+        // A1: a launch with no session evidence by the deadline must not leave the just-opened
+        // executor terminal orphaned. Close it and roll the handoff back to its prior (un-dispatched)
+        // state so the operator can fix auth/permissions and re-launch cleanly.
+        this.handleAgentAction(agent.id, 'kill');
+        this.postHandoffTimelineEvent(
+          'handoff.executor_launch_timed_out',
+          prompt.markdown.relativePath,
+          {
+            providerId,
+            packageRelativePath: prompt.dispatchPackage.packageRelativePath,
+            reason: outcome.errorMessage,
+          },
+        );
         throw new Error(outcome.errorMessage);
       }
       const result = outcome.result;
@@ -1014,6 +1028,64 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         error: errorMessage,
       });
       vscode.window.showErrorMessage(`Pixel Agents: Failed to launch executor: ${errorMessage}`);
+    }
+  }
+
+  private async cancelHandoffExecutorFromWebview(message: Record<string, unknown>): Promise<void> {
+    const requestId = typeof message.requestId === 'string' ? message.requestId : undefined;
+    try {
+      const repoRoot = this.resolveHandoffRepoRoot(message);
+      if (!repoRoot) {
+        throw new Error('Open a repository workspace before cancelling a handoff executor.');
+      }
+      // B1: drop the executor link + return a dispatched handoff to Ready, THEN kill the linked
+      // executor agent/terminal (best-effort — it may already be gone). Clearing the link first means
+      // the sidecar is consistent even if the agent kill no-ops.
+      const result = clearHandoffExecutorLink(repoRoot, message.relativePath);
+      if (result.previousAgentId !== undefined && this.agents.has(result.previousAgentId)) {
+        this.handleAgentAction(result.previousAgentId, 'kill');
+      }
+      this.webview?.postMessage({
+        type: 'handoffExecutorCancelled',
+        requestId,
+        relativePath: result.markdown.relativePath,
+        filename: result.markdown.filename,
+        artifactId: result.metadata.artifactId,
+        status: result.metadata.status,
+        previousDispatchStatus: result.previousDispatchStatus,
+        dispatchStatus: result.dispatchPackage.status,
+        packageRelativePath: result.dispatchPackage.packageRelativePath,
+        reportRelativePath: result.dispatchPackage.reportRelativePath,
+        cancelledAgentId: result.previousAgentId,
+      });
+      this.postHandoffTimelineEvent('handoff.executor_cancelled', result.markdown.relativePath, {
+        filename: result.markdown.filename,
+        artifactId: result.metadata.artifactId,
+        artifactStatus: result.metadata.status,
+        previousStatus: result.previousDispatchStatus,
+        nextStatus: result.nextDispatchStatus,
+        dispatchStatus: result.dispatchPackage.status,
+        packageRelativePath: result.dispatchPackage.packageRelativePath,
+        reportRelativePath: result.dispatchPackage.reportRelativePath,
+        providerId: result.metadata.providerId,
+        project: result.metadata.projectName,
+        sessionId: result.metadata.sessionId,
+        runId: result.metadata.runId,
+        linkedAgentId: result.previousAgentId,
+      });
+      this.postHandoffArtifactsLoaded();
+      vscode.window.showInformationMessage(
+        `Pixel Agents: Cancelled handoff executor for ${result.dispatchPackage.packageRelativePath}`,
+      );
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.webview?.postMessage({
+        type: 'handoffExecutorCancelFailed',
+        requestId,
+        relativePath: typeof message.relativePath === 'string' ? message.relativePath : undefined,
+        error: errorMessage,
+      });
+      vscode.window.showErrorMessage(`Pixel Agents: Failed to cancel executor: ${errorMessage}`);
     }
   }
 
@@ -1133,6 +1205,8 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       | 'handoff.execution_linked'
       | 'handoff.execution_status_changed'
       | 'handoff.executor_launched'
+      | 'handoff.executor_launch_timed_out'
+      | 'handoff.executor_cancelled'
       | 'handoff.completion_refreshed'
       | 'handoff.report_opened',
     relativePath: string,
@@ -1215,15 +1289,24 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
                         ? 'Handoff execution status changed'
                         : kind === 'handoff.executor_launched'
                           ? 'Handoff executor launched'
-                          : kind === 'handoff.completion_refreshed'
-                            ? 'Handoff completion refreshed'
-                            : 'Handoff report opened';
+                          : kind === 'handoff.executor_launch_timed_out'
+                            ? 'Handoff executor launch timed out'
+                            : kind === 'handoff.executor_cancelled'
+                              ? 'Handoff executor cancelled'
+                              : kind === 'handoff.completion_refreshed'
+                                ? 'Handoff completion refreshed'
+                                : 'Handoff report opened';
     postAgentTimelineEvent(this.webview, {
       agentId: typeof metadata.agentId === 'number' ? metadata.agentId : 0,
       kind,
       title,
       summary: `${filename} (${summaryParts.join(' / ')})`,
-      severity: 'success',
+      severity:
+        kind === 'handoff.executor_launch_timed_out'
+          ? 'warning'
+          : kind === 'handoff.executor_cancelled'
+            ? 'info'
+            : 'success',
       source: 'user',
       providerId: typeof metadata.providerId === 'string' ? metadata.providerId : undefined,
       projectName: typeof metadata.project === 'string' ? metadata.project : undefined,
@@ -2363,6 +2446,12 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         );
       } else if (message.type === 'updateHandoffExecutionStatus') {
         await this.updateHandoffExecutionStatusFromWebview(
+          typeof message === 'object' && message !== null
+            ? (message as Record<string, unknown>)
+            : {},
+        );
+      } else if (message.type === 'cancelHandoffExecutor') {
+        await this.cancelHandoffExecutorFromWebview(
           typeof message === 'object' && message !== null
             ? (message as Record<string, unknown>)
             : {},

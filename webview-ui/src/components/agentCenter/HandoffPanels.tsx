@@ -13,6 +13,7 @@ import {
   buildHandoffStatusSelectModel,
   buildHandoffWorkflowLayout,
   buildWorkQueueRowDecisionModel,
+  canCancelHandoffExecutor,
   canCreateHandoffDispatchPrompt,
   canCreateHandoffWorkPackage,
   canLinkHandoffExecutionAgent,
@@ -211,6 +212,7 @@ export function HandoffArtifactLibraryPanel({
   onLinkExecutionAgent,
   onUpdateExecutionStatus,
   onLaunchExecutor,
+  onCancelExecutor,
   onRefreshCompletion,
   onOpenReport,
 }: {
@@ -255,6 +257,7 @@ export function HandoffArtifactLibraryPanel({
     nextStatus: HandoffExecutionStatus,
   ) => void;
   onLaunchExecutor: (item: HandoffArtifactLibraryItem, providerId: 'codex' | 'claude') => void;
+  onCancelExecutor: (item: HandoffArtifactLibraryItem) => void;
   onRefreshCompletion: (item: HandoffArtifactLibraryItem) => void;
   onOpenReport: (item: HandoffArtifactLibraryItem) => void;
 }) {
@@ -463,6 +466,7 @@ export function HandoffArtifactLibraryPanel({
                           onLinkExecutionAgent={onLinkExecutionAgent}
                           onUpdateExecutionStatus={onUpdateExecutionStatus}
                           onLaunchExecutor={onLaunchExecutor}
+                          onCancelExecutor={onCancelExecutor}
                           onRefreshCompletion={onRefreshCompletion}
                           onOpenReport={onOpenReport}
                         />
@@ -545,6 +549,7 @@ export function HandoffArtifactLibraryPanel({
                           onLinkExecutionAgent={onLinkExecutionAgent}
                           onUpdateExecutionStatus={onUpdateExecutionStatus}
                           onLaunchExecutor={onLaunchExecutor}
+                          onCancelExecutor={onCancelExecutor}
                           onRefreshCompletion={onRefreshCompletion}
                           onOpenReport={onOpenReport}
                         />
@@ -674,6 +679,7 @@ type HandoffRowActionsProps = {
     nextStatus: HandoffExecutionStatus,
   ) => void;
   onLaunchExecutor: (item: HandoffArtifactLibraryItem, providerId: 'codex' | 'claude') => void;
+  onCancelExecutor: (item: HandoffArtifactLibraryItem) => void;
   onRefreshCompletion: (item: HandoffArtifactLibraryItem) => void;
   onOpenReport: (item: HandoffArtifactLibraryItem) => void;
 };
@@ -701,6 +707,7 @@ export function HandoffRowActions({
   onLinkExecutionAgent,
   onUpdateExecutionStatus,
   onLaunchExecutor,
+  onCancelExecutor,
   onRefreshCompletion,
   onOpenReport,
 }: HandoffRowActionsProps) {
@@ -887,6 +894,16 @@ export function HandoffRowActions({
                 Launch Claude
               </Button>
             </>
+          )}
+          {canCancelHandoffExecutor(item) && (
+            <Button
+              variant={executionBusy ? 'disabled' : 'ghost'}
+              size="sm"
+              disabled={executionBusy}
+              onClick={() => onCancelExecutor(item)}
+            >
+              Cancel executor
+            </Button>
           )}
           {decision.primaryActionKind !== 'refresh_completion' && (
             <Button

@@ -228,6 +228,12 @@ export interface RefreshHandoffCompletionMessage {
   relativePath: string;
 }
 
+export interface CancelHandoffExecutorMessage {
+  type: 'cancelHandoffExecutor';
+  requestId: string;
+  relativePath: string;
+}
+
 export interface OpenHandoffReportMessage {
   type: 'openHandoffReport';
   requestId: string;
@@ -274,6 +280,8 @@ export type HandoffExecutionActionStatus =
   | 'launched'
   | 'refreshing'
   | 'refreshed'
+  | 'cancelling'
+  | 'cancelled'
   | 'opening_report'
   | 'report_opened'
   | 'failed';
@@ -774,6 +782,31 @@ export function buildRefreshHandoffCompletionMessage(
   if (!requestId || !canUseHandoffWorkPackage(item)) return undefined;
   return {
     type: 'refreshHandoffCompletion',
+    requestId,
+    relativePath: item.relativePath,
+  };
+}
+
+/**
+ * A handoff is cancellable while it is `dispatched` with a linked executor agent. completed/blocked
+ * handoffs (and ones never dispatched) have nothing in flight to cancel.
+ */
+export function canCancelHandoffExecutor(
+  item: Pick<HandoffArtifactLibraryItem, 'dispatchPackage'>,
+): boolean {
+  return (
+    item.dispatchPackage?.status === 'dispatched' &&
+    safeAgentId(item.dispatchPackage.execution?.agentId) !== undefined
+  );
+}
+
+export function buildCancelHandoffExecutorMessage(
+  item: Pick<HandoffArtifactLibraryItem, 'relativePath' | 'dispatchPackage'>,
+  requestId: string,
+): CancelHandoffExecutorMessage | undefined {
+  if (!requestId || !item.relativePath || !canCancelHandoffExecutor(item)) return undefined;
+  return {
+    type: 'cancelHandoffExecutor',
     requestId,
     relativePath: item.relativePath,
   };

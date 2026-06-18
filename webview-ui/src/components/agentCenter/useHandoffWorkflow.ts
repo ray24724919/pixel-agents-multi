@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { vscode } from '../../vscodeApi.js';
 import {
+  buildCancelHandoffExecutorMessage,
   buildCreateHandoffDispatchPromptMessage,
   buildCreateHandoffWorkPackageMessage,
   buildCreateHandoffWorkPackagePromptMessage,
@@ -473,6 +474,28 @@ export function useHandoffWorkflow({
         return;
       }
       if (
+        message.type === 'handoffExecutorCancelled' &&
+        message.requestId === handoffExecutionRequestIdRef.current
+      ) {
+        setHandoffExecutionActionStatus('cancelled');
+        setHandoffExecutionAgentLabel('');
+        setHandoffExecutionPackagePath(
+          typeof message.packageRelativePath === 'string' ? message.packageRelativePath : '',
+        );
+        setHandoffExecutionError('');
+        return;
+      }
+      if (
+        message.type === 'handoffExecutorCancelFailed' &&
+        message.requestId === handoffExecutionRequestIdRef.current
+      ) {
+        setHandoffExecutionActionStatus('failed');
+        setHandoffExecutionError(
+          typeof message.error === 'string' ? message.error : 'Could not cancel executor.',
+        );
+        return;
+      }
+      if (
         message.type === 'handoffCompletionRefreshed' &&
         message.requestId === handoffExecutionRequestIdRef.current
       ) {
@@ -732,6 +755,23 @@ export function useHandoffWorkflow({
     setHandoffExecutionError('');
     vscode.postMessage(message);
   };
+  const cancelHandoffExecutor = (item: HandoffArtifactLibraryItem) => {
+    const requestId = `handoff-executor-cancel-${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2, 8)}`;
+    const message = buildCancelHandoffExecutorMessage(item, requestId);
+    if (!message) {
+      setHandoffExecutionActionStatus('failed');
+      setHandoffExecutionError('No dispatched executor to cancel.');
+      return;
+    }
+    handoffExecutionRequestIdRef.current = requestId;
+    setHandoffExecutionActionStatus('cancelling');
+    setHandoffExecutionAgentLabel('');
+    setHandoffExecutionPackagePath(item.dispatchPackage?.packageRelativePath ?? '');
+    setHandoffExecutionError('');
+    vscode.postMessage(message);
+  };
   const refreshHandoffCompletion = (item: HandoffArtifactLibraryItem) => {
     const requestId = `handoff-completion-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const message = buildRefreshHandoffCompletionMessage(item, requestId);
@@ -805,6 +845,7 @@ export function useHandoffWorkflow({
     linkHandoffExecutionAgent,
     updateHandoffExecutionStatus,
     launchHandoffExecutor,
+    cancelHandoffExecutor,
     refreshHandoffCompletion,
     openHandoffReport,
   };

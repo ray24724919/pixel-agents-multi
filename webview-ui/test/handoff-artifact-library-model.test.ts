@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  buildCancelHandoffExecutorMessage,
   buildCreateHandoffDispatchPromptMessage,
   buildCreateHandoffWorkPackageMessage,
   buildCreateHandoffWorkPackagePromptMessage,
@@ -25,6 +26,7 @@ import {
   buildUpdateHandoffDispatchStatusMessage,
   buildUpdateHandoffExecutionStatusMessage,
   buildWorkQueueRowDecisionModel,
+  canCancelHandoffExecutor,
   canCreateHandoffDispatchPrompt,
   canCreateHandoffWorkPackage,
   canUseHandoffWorkPackage,
@@ -1371,6 +1373,51 @@ test('handoff executor, completion, and report messages send only safe identifie
     ),
     undefined,
   );
+});
+
+test('cancel executor message is gated on dispatched + a linked executor agent', () => {
+  const dispatched = {
+    relativePath: 'docs/agent-handoffs/2026-06-04-1507-pixel-handoff.md',
+    dispatchPackage: {
+      packageRelativePath: 'docs/roadmap/supervision/work-packages/handoffs/wp.md',
+      branchName: 'product/handoff-pixel',
+      reportRelativePath: 'docs/roadmap/supervision/reports/report.md',
+      status: 'dispatched' as const,
+      createdAt: '2026-06-04T07:09:00.000Z',
+      updatedAt: '2026-06-04T07:10:00.000Z',
+      statusLabel: 'Dispatched',
+      execution: {
+        agentId: 21,
+        status: 'active' as const,
+        statusLabel: 'Active',
+        linkedAt: '2026-06-04T07:10:00.000Z',
+        updatedAt: '2026-06-04T07:10:00.000Z',
+      },
+    },
+  };
+
+  assert.equal(canCancelHandoffExecutor(dispatched), true);
+  assert.deepEqual(buildCancelHandoffExecutorMessage(dispatched, 'cancel-1'), {
+    type: 'cancelHandoffExecutor',
+    requestId: 'cancel-1',
+    relativePath: dispatched.relativePath,
+  });
+
+  // Not dispatched (e.g. already ready) -> nothing in flight to cancel.
+  const ready = {
+    relativePath: dispatched.relativePath,
+    dispatchPackage: { ...dispatched.dispatchPackage, status: 'ready' as const },
+  };
+  assert.equal(canCancelHandoffExecutor(ready), false);
+  assert.equal(buildCancelHandoffExecutorMessage(ready, 'cancel-2'), undefined);
+
+  // Dispatched but no linked executor agent id -> not cancellable.
+  const noAgent = {
+    relativePath: dispatched.relativePath,
+    dispatchPackage: { ...dispatched.dispatchPackage, execution: undefined },
+  };
+  assert.equal(canCancelHandoffExecutor(noAgent), false);
+  assert.equal(buildCancelHandoffExecutorMessage(noAgent, 'cancel-3'), undefined);
 });
 
 test('handoff queue summary and filters group package supervision states', () => {
