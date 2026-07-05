@@ -40,7 +40,7 @@ import {
 } from '../server/src/constants.js';
 import { isLocalAgentModeSandboxPath } from '../server/src/sessionPaths.js';
 import type { TeamProvider } from '../server/src/teamProvider.js';
-import { removeAgent } from './agentManager.js';
+import { isExternalTranscriptGone, removeAgent } from './agentManager.js';
 import { readClaudeCodeSessionMetadata } from './claudeCodeSessionMetadata.js';
 import { TERMINAL_NAME_PREFIX } from './constants.js';
 import { getExtensionConfigValue } from './settings.js';
@@ -1854,15 +1854,14 @@ export function startStaleExternalAgentCheck(
 
     for (const [id, agent] of agents) {
       if (!agent.isExternal) continue;
+      if (!agent.jsonlFile) continue; // hooks-only provider: lifecycle owned by SessionEnd
 
-      // Only despawn if the JSONL file has been deleted from disk.
-      // Inactive external agents stay alive so they can resume when
-      // the session continues (e.g., claude --resume).
-      try {
-        fs.statSync(agent.jsonlFile);
-        // File still exists — keep the agent alive regardless of mtime
-      } catch {
-        // File deleted — remove agent
+      // Only despawn if the JSONL file has been DELETED from disk (confirmed ENOENT — never a
+      // transient stat error, which would wrongly reap a live idle session; see
+      // agentManager.isExternalTranscriptGone, the same policy as reapStaleExternalAgents).
+      // Inactive external agents stay alive so they can resume when the session continues
+      // (e.g., claude --resume).
+      if (isExternalTranscriptGone(agent.jsonlFile)) {
         toRemove.push(id);
       }
     }

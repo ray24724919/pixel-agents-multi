@@ -929,7 +929,7 @@ export function reapDuplicateExternalAgents(
  * later: the user sees a room briefly empty and refill (a flicker), and the agent's id churns. "Deleted"
  * means the file was deleted, not "statSync happened to throw once".
  */
-function isExternalTranscriptGone(file: string): boolean {
+export function isExternalTranscriptGone(file: string): boolean {
   try {
     fs.statSync(file);
     return false; // exists → keep

@@ -27,6 +27,7 @@ const {
   getClaudeCoworkSessionsRoot,
   isClaudeChatSession,
   scanClaudeCoworkSessions,
+  startStaleExternalAgentCheck,
 } = await import('../../src/fileWatcher.js');
 const { clearClaudeCodeSessionMetadataCache, getClaudeCodeSessionsRoot } =
   await import('../../src/claudeCodeSessionMetadata.js');
@@ -1020,3 +1021,77 @@ function writeClaudeCodeMetadata(
     }),
   );
 }
+
+describe('startStaleExternalAgentCheck (heuristic-mode reaper, deletion = confirmed ENOENT only)', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pxl-stale-check-'));
+  });
+
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function externalAgent(id: number, jsonlFile: string): AgentState {
+    return { ...makeAgent(id, jsonlFile), isExternal: true };
+  }
+
+  it('reaps only confirmed-deleted transcripts; keeps live, error-path, and hooks-only agents', async () => {
+    const liveFile = path.join(tmpDir, 'live.jsonl');
+    fs.writeFileSync(liveFile, 'x');
+    const agents = new Map<number, AgentState>([
+      [1, externalAgent(1, liveFile)], // exists -> keep
+      [2, externalAgent(2, path.join(tmpDir, 'gone.jsonl'))], // ENOENT -> reap
+      // NUL byte -> statSync throws ERR_INVALID_ARG_VALUE (not ENOENT) -> transient-style error -> keep
+      [3, externalAgent(3, `${tmpDir}/in${String.fromCharCode(0)}valid.jsonl`)],
+      [4, externalAgent(4, '')], // hooks-only (no transcript): lifecycle owned by SessionEnd -> keep
+    ]);
+    const webview = { postMessage: vi.fn() };
+    const timer = startStaleExternalAgentCheck(
+      agents,
+      new Set<string>(),
+      new Map(),
+      new Map(),
+      new Map(),
+      new Map(),
+      new Map(),
+      webview as unknown as import('vscode').Webview,
+      vi.fn(),
+      { current: false }, // heuristic mode: the reaper runs
+    );
+    await vi.advanceTimersByTimeAsync(30_000);
+    clearInterval(timer);
+
+    expect([...agents.keys()].sort()).toEqual([1, 3, 4]);
+    expect(webview.postMessage).toHaveBeenCalledWith({ type: 'agentClosed', id: 2 });
+    expect(webview.postMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('is fully suppressed while hooks mode is active', async () => {
+    const agents = new Map<number, AgentState>([
+      [1, externalAgent(1, path.join(tmpDir, 'gone.jsonl'))], // deleted, but hooks own lifecycle
+    ]);
+    const webview = { postMessage: vi.fn() };
+    const timer = startStaleExternalAgentCheck(
+      agents,
+      new Set<string>(),
+      new Map(),
+      new Map(),
+      new Map(),
+      new Map(),
+      new Map(),
+      webview as unknown as import('vscode').Webview,
+      vi.fn(),
+      { current: true }, // hooks active -> SessionEnd handles cleanup
+    );
+    await vi.advanceTimersByTimeAsync(30_000);
+    clearInterval(timer);
+
+    expect(agents.size).toBe(1);
+    expect(webview.postMessage).not.toHaveBeenCalled();
+  });
+});
