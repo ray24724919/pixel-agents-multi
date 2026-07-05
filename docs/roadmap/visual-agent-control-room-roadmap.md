@@ -1,5 +1,10 @@
 # Pixel Agents Visual Agent Control Room Roadmap
 
+> ⚠️ **HISTORICAL PLANNING DOCUMENT (last updated 2026-05-18).** The per-phase status column below is
+> STALE — do not report status from it. Current state, roadmap scoreboard, and next work live in
+> [`docs/HANDOVER.md`](../HANDOVER.md). The phase _designs_ here (especially Phases 7–10 future work)
+> remain useful references. Draft links below point into `docs/archive/drafts/`.
+
 This document is the working roadmap for turning this fork of Pixel Agents into a more complete Claude + Codex visual agent control room.
 
 The current extension can discover and display Codex, Claude Code, and Claude Desktop/Cowork sessions. The next goal is to make those sessions easier to understand, manage, coordinate, and replay across projects.
