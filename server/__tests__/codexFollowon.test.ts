@@ -117,7 +117,7 @@ vi.mock('../../src/fileWatcher.js', async () => {
   };
 });
 
-const { launchNewTerminal, reapDuplicateExternalAgents, restoreAgents } =
+const { launchNewTerminal, reapDuplicateExternalAgents, reapStaleExternalAgents, restoreAgents } =
   await import('../../src/agentManager.js');
 const { getLiveCodexThreadIdsForSpawnedAgentCwds, PixelAgentsViewProvider } =
   await import('../../src/PixelAgentsViewProvider.js');
@@ -966,5 +966,81 @@ describe('reapDuplicateExternalAgents', () => {
 
     expect(agents.size).toBe(2);
     expect(webview.postMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe('reapStaleExternalAgents (deletion = confirmed ENOENT only)', () => {
+  it('reaps an external agent whose transcript is gone (ENOENT)', () => {
+    const agents = new Map<number, AgentState>([
+      [1, makeAgent(1, { isExternal: true, sessionId: 's1', jsonlFile: '/no/such/file.jsonl' })],
+    ]);
+    const webview = { postMessage: vi.fn() };
+    reapStaleExternalAgents(
+      agents,
+      new Map(),
+      new Map(),
+      new Map(),
+      new Map(),
+      new Map(),
+      webview as unknown as import('vscode').Webview,
+      vi.fn(),
+    );
+    expect(agents.size).toBe(0);
+    expect(webview.postMessage).toHaveBeenCalledWith({ type: 'agentClosed', id: 1 });
+  });
+
+  it('KEEPS an external agent when statSync throws a non-ENOENT error', () => {
+    // A NUL byte makes statSync throw ERR_INVALID_ARG_VALUE (NOT ENOENT) deterministically and
+    // cross-platform — the same catch branch a transient EBUSY/EPERM/EACCES would hit. The agent must
+    // survive: only a confirmed deletion (ENOENT) reaps it.
+    const agents = new Map<number, AgentState>([
+      [
+        1,
+        makeAgent(1, {
+          isExternal: true,
+          sessionId: 's1',
+          jsonlFile: `/t/in${String.fromCharCode(0)}valid.jsonl`,
+        }),
+      ],
+    ]);
+    const webview = { postMessage: vi.fn() };
+    reapStaleExternalAgents(
+      agents,
+      new Map(),
+      new Map(),
+      new Map(),
+      new Map(),
+      new Map(),
+      webview as unknown as import('vscode').Webview,
+      vi.fn(),
+    );
+    expect(agents.size).toBe(1); // transient / non-deletion stat error must not drop a live idle session
+    expect(webview.postMessage).not.toHaveBeenCalled();
+  });
+
+  it('keeps an external agent whose transcript exists on disk', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pa-reap-'));
+    const jsonlFile = path.join(dir, 'live.jsonl');
+    fs.writeFileSync(jsonlFile, 'x');
+    const agents = new Map<number, AgentState>([
+      [1, makeAgent(1, { isExternal: true, sessionId: 's1', jsonlFile })],
+    ]);
+    const webview = { postMessage: vi.fn() };
+    try {
+      reapStaleExternalAgents(
+        agents,
+        new Map(),
+        new Map(),
+        new Map(),
+        new Map(),
+        new Map(),
+        webview as unknown as import('vscode').Webview,
+        vi.fn(),
+      );
+      expect(agents.size).toBe(1);
+      expect(webview.postMessage).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

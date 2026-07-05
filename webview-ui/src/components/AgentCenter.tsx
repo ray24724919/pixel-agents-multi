@@ -481,6 +481,7 @@ function TimelineDashboard({
     linkHandoffExecutionAgent,
     updateHandoffExecutionStatus,
     launchHandoffExecutor,
+    cancelHandoffExecutor,
     refreshHandoffCompletion,
     openHandoffReport,
   } = useHandoffWorkflow({ agents, timelineEvents: model.events, replayState });
@@ -671,6 +672,7 @@ function TimelineDashboard({
         onLinkExecutionAgent={linkHandoffExecutionAgent}
         onUpdateExecutionStatus={updateHandoffExecutionStatus}
         onLaunchExecutor={launchHandoffExecutor}
+        onCancelExecutor={cancelHandoffExecutor}
         onRefreshCompletion={refreshHandoffCompletion}
         onOpenReport={openHandoffReport}
       />

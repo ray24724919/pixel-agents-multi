@@ -924,6 +924,68 @@ export function markHandoffExecutorLaunched(
   };
 }
 
+export interface HandoffExecutorCancelResult {
+  markdown: HandoffArtifactOpenPath;
+  metadataPath: HandoffArtifactMetadataPath;
+  metadata: HandoffArtifactMetadataV1;
+  previousDispatchStatus: HandoffDispatchStatus;
+  nextDispatchStatus: HandoffDispatchStatus;
+  dispatchPackage: HandoffDispatchPackageV1;
+  /** The executor agent id that was linked before cancelling (so the caller can kill it). */
+  previousAgentId?: number;
+}
+
+/**
+ * Cancel an in-flight handoff executor: drop the executor link and return a `dispatched` handoff to
+ * `ready` so it can be re-launched. The caller is responsible for actually killing the linked agent
+ * (see previousAgentId). A `completed` or `blocked` handoff is left at its status (nothing in flight to
+ * cancel — only the link is cleared). Mirrors markHandoffExecutorLaunched's sidecar read/write.
+ */
+export function clearHandoffExecutorLink(
+  repoRoot: string,
+  markdownRelativePath: unknown,
+  nowMs = Date.now(),
+): HandoffExecutorCancelResult {
+  const { markdown, metadataPath, metadata } = readRequiredHandoffArtifactMetadataForMarkdown(
+    repoRoot,
+    markdownRelativePath,
+  );
+  if (!metadata.dispatchPackage) {
+    throw new Error('No handoff work package to cancel.');
+  }
+  const previousDispatchStatus = metadata.dispatchPackage.status;
+  const previousAgentId = safeExecutionAgentId(metadata.dispatchPackage.execution?.agentId);
+  const nextDispatchStatus: HandoffDispatchStatus =
+    previousDispatchStatus === 'dispatched' ? 'ready' : previousDispatchStatus;
+  const timestamp = isoTimestampFromMs(nowMs);
+  // execution: undefined is dropped by JSON.stringify, so the sidecar loses the executor link.
+  const dispatchPackage: HandoffDispatchPackageV1 = {
+    ...metadata.dispatchPackage,
+    status: nextDispatchStatus,
+    execution: undefined,
+    updatedAt: timestamp,
+  };
+  const updatedMetadata: HandoffArtifactMetadataV1 = {
+    ...metadata,
+    dispatchPackage,
+    updatedAt: timestamp,
+  };
+  fs.writeFileSync(
+    metadataPath.absolutePath,
+    `${JSON.stringify(updatedMetadata, null, 2)}\n`,
+    'utf8',
+  );
+  return {
+    markdown,
+    metadataPath,
+    metadata: updatedMetadata,
+    previousDispatchStatus,
+    nextDispatchStatus,
+    dispatchPackage,
+    previousAgentId,
+  };
+}
+
 /** Minimal agent shape needed to confirm a launch and attribute the execution. */
 export interface HandoffExecutorLaunchAgent {
   id: number;

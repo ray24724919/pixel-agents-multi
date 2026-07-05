@@ -25,6 +25,8 @@ export type TimelineEventKind =
   | 'handoff.execution_linked'
   | 'handoff.execution_status_changed'
   | 'handoff.executor_launched'
+  | 'handoff.executor_launch_timed_out'
+  | 'handoff.executor_cancelled'
   | 'handoff.completion_refreshed'
   | 'handoff.report_opened';
 
