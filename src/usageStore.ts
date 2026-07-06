@@ -4,7 +4,11 @@ import * as os from 'os';
 import * as path from 'path';
 
 import {
+  JSONL_STORE_COMPACT_KEEP_MULTIPLIER,
+  JSONL_STORE_SIZE_THRESHOLD_BYTES,
+  JSONL_STORE_TAIL_READ_BYTES,
   LEGACY_USAGE_STORE_FILE_DIR,
+  USAGE_HISTORY_MAX_RECORDS,
   USAGE_PATH_HASH_LENGTH,
   USAGE_PATH_HASH_PREFIX,
   USAGE_RECORD_SCHEMA_VERSION,
@@ -12,6 +16,12 @@ import {
   USAGE_STORE_FILE_NAME,
   USAGE_STORE_SUBDIR,
 } from './constants.js';
+import {
+  markJsonlStoreCompacted,
+  readJsonlStoreLines,
+  rewriteJsonlStore,
+  shouldCompactJsonlStore,
+} from './jsonlStoreIo.js';
 
 export const UsageRecordKind = {
   USAGE_DELTA: 'usage_delta',
@@ -181,6 +191,12 @@ export interface UsageRecordV1 {
 export interface UsageStoreOptions {
   homeDir?: string;
   storePath?: string;
+  /** Compaction sizing only (reads stay uncapped): keep newest maxRecords × multiplier. */
+  maxRecords?: number;
+  /** Test seam: file size above which appends compact and loads tail-read. */
+  sizeThresholdBytes?: number;
+  /** Test seam: how many bytes a tail-read loads from the end of an oversized store. */
+  tailReadBytes?: number;
 }
 
 export interface UsagePathRedaction {
@@ -276,14 +292,23 @@ export function appendUsageRecord(record: UsageRecordV1, options: UsageStoreOpti
   const storePath = resolveUsageStorePath(options);
   ensureUsageStoreDir(options);
   fs.appendFileSync(storePath, `${JSON.stringify(record)}\n`, 'utf8');
+  compactUsageStoreIfNeeded(storePath, options);
 }
 
 export function readUsageRecords(options: UsageStoreOptions = {}): UsageRecordV1[] {
   const storePath = resolveUsageStorePath(options);
   migrateUsageStoreFromLegacy(options);
   if (!fs.existsSync(storePath)) return [];
+  const lines = readJsonlStoreLines(
+    storePath,
+    options.sizeThresholdBytes ?? JSONL_STORE_SIZE_THRESHOLD_BYTES,
+    options.tailReadBytes ?? JSONL_STORE_TAIL_READ_BYTES,
+  );
+  return parseUsageLines(lines);
+}
+
+function parseUsageLines(lines: string[]): UsageRecordV1[] {
   const records: UsageRecordV1[] = [];
-  const lines = fs.readFileSync(storePath, 'utf8').split(/\r?\n/);
   for (const line of lines) {
     if (!line.trim()) continue;
     try {
@@ -296,6 +321,34 @@ export function readUsageRecords(options: UsageStoreOptions = {}): UsageRecordV1
     }
   }
   return records;
+}
+
+/**
+ * Once the store file passes the size threshold, rewrite it down to the newest
+ * maxRecords × JSONL_STORE_COMPACT_KEEP_MULTIPLIER records. "Newest" is file order
+ * (the store is append-only and readers consume it in file order), so the kept tail
+ * preserves the exact order readers saw before compaction. Compaction must never
+ * lose data: any failure keeps the original file as-is.
+ */
+function compactUsageStoreIfNeeded(storePath: string, options: UsageStoreOptions): void {
+  const thresholdBytes = options.sizeThresholdBytes ?? JSONL_STORE_SIZE_THRESHOLD_BYTES;
+  if (!shouldCompactJsonlStore(storePath, thresholdBytes)) return;
+  try {
+    const maxRecords = options.maxRecords ?? USAGE_HISTORY_MAX_RECORDS;
+    const keepRecords = maxRecords * JSONL_STORE_COMPACT_KEEP_MULTIPLIER;
+    const lines = fs.readFileSync(storePath, 'utf8').split(/\r?\n/);
+    const records = parseUsageLines(lines);
+    if (records.length > keepRecords) {
+      const kept = records.slice(records.length - keepRecords);
+      rewriteJsonlStore(
+        storePath,
+        kept.map((record) => JSON.stringify(record)),
+      );
+    }
+    markJsonlStoreCompacted(storePath);
+  } catch {
+    /* Keep the original file untouched; the next append re-evaluates. */
+  }
 }
 
 export function migrateUsageStoreFromLegacy(options: UsageStoreOptions = {}): string | undefined {

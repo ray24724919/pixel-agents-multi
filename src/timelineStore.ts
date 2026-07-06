@@ -3,12 +3,21 @@ import * as os from 'os';
 import * as path from 'path';
 
 import {
+  JSONL_STORE_COMPACT_KEEP_MULTIPLIER,
+  JSONL_STORE_SIZE_THRESHOLD_BYTES,
+  JSONL_STORE_TAIL_READ_BYTES,
   TIMELINE_HISTORY_MAX_RECORDS,
   TIMELINE_RECORD_SCHEMA_VERSION,
   TIMELINE_STORE_FILE_DIR,
   TIMELINE_STORE_FILE_NAME,
   TIMELINE_STORE_SUBDIR,
 } from './constants.js';
+import {
+  markJsonlStoreCompacted,
+  readJsonlStoreLines,
+  rewriteJsonlStore,
+  shouldCompactJsonlStore,
+} from './jsonlStoreIo.js';
 import type { AgentLifecycleStatus } from './lifecycleStatus.js';
 
 export type TimelineRecordSeverity = 'info' | 'success' | 'warning' | 'error';
@@ -54,6 +63,10 @@ export interface TimelineStoreOptions {
   homeDir?: string;
   storePath?: string;
   maxRecords?: number;
+  /** Test seam: file size above which appends compact and loads tail-read. */
+  sizeThresholdBytes?: number;
+  /** Test seam: how many bytes a tail-read loads from the end of an oversized store. */
+  tailReadBytes?: number;
 }
 
 export interface TimelineRecordInput {
@@ -115,6 +128,7 @@ export function appendTimelineRecord(
   const storePath = resolveTimelineStorePath(options);
   ensureTimelineStoreDir(options);
   fs.appendFileSync(storePath, `${JSON.stringify(record)}\n`, 'utf8');
+  compactTimelineStoreIfNeeded(storePath, options);
   return record;
 }
 
@@ -122,8 +136,17 @@ export function readTimelineRecords(options: TimelineStoreOptions = {}): Timelin
   const storePath = resolveTimelineStorePath(options);
   if (!fs.existsSync(storePath)) return [];
 
+  const lines = readJsonlStoreLines(
+    storePath,
+    options.sizeThresholdBytes ?? JSONL_STORE_SIZE_THRESHOLD_BYTES,
+    options.tailReadBytes ?? JSONL_STORE_TAIL_READ_BYTES,
+  );
+  const maxRecords = options.maxRecords ?? TIMELINE_HISTORY_MAX_RECORDS;
+  return dedupeNewestFirst(parseTimelineLines(lines)).slice(0, maxRecords);
+}
+
+function parseTimelineLines(lines: string[]): TimelineRecordV1[] {
   const records: TimelineRecordV1[] = [];
-  const lines = fs.readFileSync(storePath, 'utf8').split(/\r?\n/);
   for (const line of lines) {
     if (!line.trim()) continue;
     try {
@@ -135,15 +158,44 @@ export function readTimelineRecords(options: TimelineStoreOptions = {}): Timelin
       /* Ignore malformed historical lines and keep reading the append-only store. */
     }
   }
+  return records;
+}
 
-  const maxRecords = options.maxRecords ?? TIMELINE_HISTORY_MAX_RECORDS;
+function dedupeNewestFirst(records: TimelineRecordV1[]): TimelineRecordV1[] {
   const deduped = new Map<string, TimelineRecordV1>();
   for (const record of records.sort(compareNewestFirst)) {
     if (!deduped.has(record.id)) {
       deduped.set(record.id, record);
     }
   }
-  return [...deduped.values()].slice(0, maxRecords);
+  return [...deduped.values()];
+}
+
+/**
+ * Once the store file passes the size threshold, rewrite it down to the newest
+ * maxRecords × JSONL_STORE_COMPACT_KEEP_MULTIPLIER records (newest by the same
+ * ordering the reader uses), written oldest-first so appends stay chronological.
+ * Compaction must never lose data: any failure keeps the original file as-is.
+ */
+function compactTimelineStoreIfNeeded(storePath: string, options: TimelineStoreOptions): void {
+  const thresholdBytes = options.sizeThresholdBytes ?? JSONL_STORE_SIZE_THRESHOLD_BYTES;
+  if (!shouldCompactJsonlStore(storePath, thresholdBytes)) return;
+  try {
+    const maxRecords = options.maxRecords ?? TIMELINE_HISTORY_MAX_RECORDS;
+    const keepRecords = maxRecords * JSONL_STORE_COMPACT_KEEP_MULTIPLIER;
+    const lines = fs.readFileSync(storePath, 'utf8').split(/\r?\n/);
+    const newestFirst = dedupeNewestFirst(parseTimelineLines(lines));
+    if (newestFirst.length > keepRecords) {
+      const kept = newestFirst.slice(0, keepRecords).reverse();
+      rewriteJsonlStore(
+        storePath,
+        kept.map((record) => JSON.stringify(record)),
+      );
+    }
+    markJsonlStoreCompacted(storePath);
+  } catch {
+    /* Keep the original file untouched; the next append re-evaluates. */
+  }
 }
 
 export function createTimelineRecord(input: TimelineRecordInput): TimelineRecordV1 | undefined {

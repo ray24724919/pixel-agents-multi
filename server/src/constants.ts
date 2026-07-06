@@ -41,6 +41,11 @@ export const GLOBAL_SCAN_ACTIVE_MIN_SIZE = 3_072; // 3KB
 export const GLOBAL_SCAN_ACTIVE_MAX_AGE_MS = 600_000; // 10 minutes
 // (Codex external adoption is no longer recency-gated — it is deletion-based; see
 // selectCodexAdoptionCandidates in providers/file/codex/codex.ts, v1.3.41.)
+/** Max age of a cached Codex sqlite query result before a forced re-query. The scanners
+ *  re-issue the same queries every 1-3s and each one spawned a synchronous sqlite3 child
+ *  process that blocked the extension-host event loop; results are reused while the state
+ *  DB (including its -wal sidecar) is unchanged, with this TTL as a safety net. */
+export const CODEX_QUERY_CACHE_TTL_MS = 10_000;
 
 // ── Display Truncation ──────────────────────────────────────
 export const BASH_COMMAND_DISPLAY_MAX_LENGTH = 30;

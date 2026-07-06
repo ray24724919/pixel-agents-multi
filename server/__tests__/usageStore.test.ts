@@ -286,4 +286,77 @@ describe('usage store foundation', () => {
     });
     expect(record.labels.tokenSource).toBe(UsageDisplayLabel.EXACT_PROVIDER);
   });
+
+  function compactionUsageRecord(id: string, capturedAtMs: number) {
+    return createUsageDeltaRecord({
+      id,
+      capturedAtMs,
+      provider: { id: 'codex', label: 'Codex' },
+      project: { name: 'compaction-project' },
+      agent: { id: 1, name: 'Codex #1' },
+      usage: { inputTokens: 1, outputTokens: 1 },
+      tokenSource: UsageTokenSource.EXACT_PROVIDER,
+    });
+  }
+
+  it('compacts the store past the size threshold, keeping the newest records in file order', () => {
+    const options = { homeDir: tmpDir, maxRecords: 2, sizeThresholdBytes: 1 };
+    for (let i = 1; i <= 12; i++) {
+      appendUsageRecord(
+        compactionUsageRecord(`usage-${String(i).padStart(2, '0')}`, i * 1000),
+        options,
+      );
+    }
+
+    // keeps maxRecords × 4 = 8 newest records; the oldest 4 are dropped
+    const storePath = getUsageStorePath(tmpDir);
+    const lines = fs.readFileSync(storePath, 'utf8').trim().split('\n');
+    expect(lines).toHaveLength(8);
+    expect(readUsageRecords(options).map((record) => record.id)).toEqual([
+      'usage-05',
+      'usage-06',
+      'usage-07',
+      'usage-08',
+      'usage-09',
+      'usage-10',
+      'usage-11',
+      'usage-12',
+    ]);
+  });
+
+  it('tail-reads an oversized store and returns a complete suffix of the full read', () => {
+    for (let i = 1; i <= 30; i++) {
+      appendUsageRecord(compactionUsageRecord(`tail-${String(i).padStart(2, '0')}`, i * 1000), {
+        homeDir: tmpDir,
+      });
+    }
+
+    const full = readUsageRecords({ homeDir: tmpDir });
+    expect(full).toHaveLength(30);
+
+    const tail = readUsageRecords({
+      homeDir: tmpDir,
+      sizeThresholdBytes: 1024,
+      tailReadBytes: 4096,
+    });
+    expect(tail.length).toBeGreaterThan(0);
+    expect(tail.length).toBeLessThan(full.length);
+    // every returned record is complete and matches the end of the full read exactly
+    expect(tail).toEqual(full.slice(full.length - tail.length));
+    expect(tail[tail.length - 1]?.id).toBe('tail-30');
+  });
+
+  it('leaves small stores untouched below the size threshold', () => {
+    for (let i = 1; i <= 3; i++) {
+      appendUsageRecord(compactionUsageRecord(`keep-${i}`, i * 1000), { homeDir: tmpDir });
+    }
+
+    const storePath = getUsageStorePath(tmpDir);
+    expect(fs.readFileSync(storePath, 'utf8').trim().split('\n')).toHaveLength(3);
+    expect(readUsageRecords({ homeDir: tmpDir }).map((record) => record.id)).toEqual([
+      'keep-1',
+      'keep-2',
+      'keep-3',
+    ]);
+  });
 });

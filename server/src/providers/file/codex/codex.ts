@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
+import { CODEX_QUERY_CACHE_TTL_MS } from '../../../constants.js';
 import type { AgentEvent } from '../../../provider.js';
 
 export const CODEX_PROVIDER_ID = 'codex';
@@ -238,20 +239,69 @@ function queryCodexThread(sql: string): CodexThread | null {
   return queryCodexThreads(sql)[0] ?? null;
 }
 
+interface CodexQueryCacheEntry {
+  dbKey: string;
+  cachedAtMs: number;
+  threads: CodexThread[];
+}
+
+/**
+ * Cache for sqlite3 CLI query results, keyed by SQL text. The scanners re-issue the
+ * same queries every 1-3s and each one spawned a synchronous sqlite3 child process
+ * that blocked the extension-host event loop. An entry is reused only while the state
+ * DB is byte-identical (path + mtime + size of state_5.sqlite AND of its -wal sidecar
+ * — under WAL mode writes land in the sidecar without touching the main file) and the
+ * entry is younger than CODEX_QUERY_CACHE_TTL_MS.
+ */
+const codexQueryCache = new Map<string, CodexQueryCacheEntry>();
+
+export function clearCodexQueryCache(): void {
+  codexQueryCache.clear();
+}
+
+function codexStateDbKey(dbPath: string): string | undefined {
+  let key: string;
+  try {
+    const stat = fs.statSync(dbPath);
+    key = `${dbPath}|${stat.mtimeMs}:${stat.size}`;
+  } catch {
+    return undefined;
+  }
+  try {
+    const walStat = fs.statSync(`${dbPath}-wal`);
+    return `${key}|wal:${walStat.mtimeMs}:${walStat.size}`;
+  } catch {
+    return `${key}|wal:none`;
+  }
+}
+
 function queryCodexThreads(sql: string): CodexThread[] {
   const db = stateDbPath();
   if (!fs.existsSync(db)) return [];
+
+  const dbKey = codexStateDbKey(db);
+  const now = Date.now();
+  if (dbKey !== undefined) {
+    const cached = codexQueryCache.get(sql);
+    if (cached && cached.dbKey === dbKey && now - cached.cachedAtMs < CODEX_QUERY_CACHE_TTL_MS) {
+      return [...cached.threads];
+    }
+  }
 
   try {
     const out = childProcess.execFileSync('sqlite3', ['-separator', '\t', db, sql], {
       encoding: 'utf-8',
       stdio: ['ignore', 'pipe', 'ignore'],
     });
-    return out
+    const threads = out
       .trim()
       .split('\n')
       .map(parseThreadRow)
       .filter((thread): thread is CodexThread => !!thread && fs.existsSync(thread.rolloutPath));
+    if (dbKey !== undefined) {
+      codexQueryCache.set(sql, { dbKey, cachedAtMs: now, threads });
+    }
+    return [...threads];
   } catch {
     return [];
   }
@@ -379,6 +429,9 @@ export function archiveCodexThread(threadId: string): boolean {
     return true;
   } catch {
     return false;
+  } finally {
+    /* We just wrote to the DB — never serve a pre-archive cached result. */
+    clearCodexQueryCache();
   }
 }
 
@@ -635,6 +688,8 @@ export function terminateCodexThreadProcess(
   const killed = options.killProcessTree
     ? options.killProcessTree(pid, platform)
     : killCodexProcessTree(pid, platform);
+  /* The killed codex process may flush state to the DB on exit — drop cached results. */
+  clearCodexQueryCache();
   return killed
     ? { terminated: true, reason: 'terminated', pid, matchedCount: 1 }
     : { terminated: false, reason: 'kill-failed', pid, matchedCount: 1 };
