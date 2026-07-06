@@ -25,6 +25,7 @@ const {
   findCodexThreadsForCwd,
   buildCodexLaunchCommand,
   archiveCodexThread,
+  clearCodexQueryCache,
   extractCodexCdValues,
   findMatchingCodexProcesses,
   terminateCodexThreadProcess,
@@ -132,6 +133,7 @@ describe('codexProvider', () => {
   beforeEach(() => {
     tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), 'pxl-codex-test-'));
     execFileSyncMock.mockReset();
+    clearCodexQueryCache();
   });
 
   afterEach(() => {
@@ -371,6 +373,111 @@ describe('codexProvider', () => {
         ],
         { stdio: ['ignore', 'ignore', 'ignore'] },
       );
+    });
+
+    describe('query cache', () => {
+      function setupCachedThread(id: string) {
+        const codexHome = path.join(tmpBase, '.codex');
+        const dbPath = path.join(codexHome, 'state_5.sqlite');
+        const rolloutPath = path.join(codexHome, 'sessions', `${id}.jsonl`);
+        fs.mkdirSync(path.dirname(rolloutPath), { recursive: true });
+        fs.writeFileSync(dbPath, 'db');
+        fs.writeFileSync(rolloutPath, JSON.stringify({ id }) + '\n');
+        execFileSyncMock.mockReturnValue(
+          `${id}\t${rolloutPath}\t/workspace/project\tTitle\t1778544000000\t1\t\t\n`,
+        );
+        return { dbPath, rolloutPath };
+      }
+
+      it('serves repeated identical queries from cache while the DB is unchanged', () => {
+        setupCachedThread('thread-cache');
+
+        const first = findCodexThreadById('thread-cache');
+        const second = findCodexThreadById('thread-cache');
+
+        expect(first?.id).toBe('thread-cache');
+        expect(second).toEqual(first);
+        expect(execFileSyncMock).toHaveBeenCalledTimes(1);
+      });
+
+      it('re-queries when the DB file mtime changes', () => {
+        const { dbPath } = setupCachedThread('thread-mtime');
+
+        findCodexThreadById('thread-mtime');
+        const future = new Date(Date.now() + 60_000);
+        fs.utimesSync(dbPath, future, future);
+        findCodexThreadById('thread-mtime');
+
+        expect(execFileSyncMock).toHaveBeenCalledTimes(2);
+      });
+
+      it('re-queries when the -wal sidecar appears or changes', () => {
+        const { dbPath } = setupCachedThread('thread-wal');
+
+        findCodexThreadById('thread-wal');
+        fs.writeFileSync(`${dbPath}-wal`, 'wal-data');
+        findCodexThreadById('thread-wal');
+        expect(execFileSyncMock).toHaveBeenCalledTimes(2);
+
+        const future = new Date(Date.now() + 60_000);
+        fs.utimesSync(`${dbPath}-wal`, future, future);
+        findCodexThreadById('thread-wal');
+        expect(execFileSyncMock).toHaveBeenCalledTimes(3);
+      });
+
+      it('re-queries after the TTL expires even when the DB looks unchanged', () => {
+        vi.useFakeTimers();
+        try {
+          setupCachedThread('thread-ttl');
+
+          findCodexThreadById('thread-ttl');
+          vi.setSystemTime(Date.now() + 11_000);
+          findCodexThreadById('thread-ttl');
+
+          expect(execFileSyncMock).toHaveBeenCalledTimes(2);
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it('clears the cache after archiveCodexThread writes to the DB', () => {
+        setupCachedThread('thread-archive');
+
+        findCodexThreadById('thread-archive');
+        expect(execFileSyncMock).toHaveBeenCalledTimes(1);
+
+        expect(archiveCodexThread('thread-archive')).toBe(true);
+        findCodexThreadById('thread-archive');
+
+        // 1 select + 1 update + 1 fresh select after the cache was cleared
+        expect(execFileSyncMock).toHaveBeenCalledTimes(3);
+      });
+
+      it('clears the cache after terminateCodexThreadProcess kills a process', () => {
+        setupCachedThread('thread-kill');
+
+        findCodexThreadById('thread-kill');
+        expect(execFileSyncMock).toHaveBeenCalledTimes(1);
+
+        const result = terminateCodexThreadProcess(
+          { threadId: 'thread-kill', cwd: '/workspace/project' },
+          {
+            platform: 'linux',
+            listProcesses: () => [
+              {
+                pid: 101,
+                name: 'codex',
+                commandLine: 'codex --cd /workspace/project --no-alt-screen',
+              },
+            ],
+            killProcessTree: vi.fn(() => true),
+          },
+        );
+
+        expect(result.terminated).toBe(true);
+        findCodexThreadById('thread-kill');
+        expect(execFileSyncMock).toHaveBeenCalledTimes(2);
+      });
     });
 
     it('extracts quoted and unquoted Codex --cd values', () => {

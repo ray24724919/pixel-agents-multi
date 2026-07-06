@@ -29,6 +29,19 @@ export const TIMELINE_STORE_FILE_NAME = 'timeline-v1.jsonl';
 export const TIMELINE_RECORD_SCHEMA_VERSION = 1;
 export const TIMELINE_HISTORY_MAX_RECORDS = 500;
 
+// JSONL history stores (usage + timeline): compaction and tail-reads. The stores are
+// append-only and grew unbounded (usage-v1.jsonl reached 25MB) while loads only keep the
+// newest records — so appends compact the file once it passes the size threshold and
+// loads over the threshold read only the file tail.
+/** Compaction sizing for the usage store (it has no read cap of its own). */
+export const USAGE_HISTORY_MAX_RECORDS = 500;
+/** File size above which appends trigger compaction and loads switch to tail-reads. */
+export const JSONL_STORE_SIZE_THRESHOLD_BYTES = 2 * 1024 * 1024; // 2MB
+/** Compaction keeps maxRecords × this multiplier so back-to-back appends don't re-compact. */
+export const JSONL_STORE_COMPACT_KEEP_MULTIPLIER = 4;
+/** How many bytes a tail-read loads from the end of an oversized store. */
+export const JSONL_STORE_TAIL_READ_BYTES = 2 * 1024 * 1024; // 2MB
+
 // Repo-centered handoff artifacts
 export const HANDOFF_ARTIFACTS_RELATIVE_DIR = 'docs/agent-handoffs';
 export const HANDOFF_ARTIFACT_FILENAME_SUFFIX = 'handoff';

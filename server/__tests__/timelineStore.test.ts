@@ -171,4 +171,83 @@ describe('timeline store foundation', () => {
 
     expect(records.map((record) => record.id)).toEqual(['valid']);
   });
+
+  it('compacts the store past the size threshold, keeping the newest records chronologically', () => {
+    const options = { homeDir: tmpDir, maxRecords: 2, sizeThresholdBytes: 1 };
+    for (let i = 1; i <= 12; i++) {
+      appendTimelineRecord(
+        {
+          id: `record-${String(i).padStart(2, '0')}`,
+          agentId: 1,
+          timestamp: i * 100,
+          kind: 'tool.started',
+          title: `Record ${i}`,
+        },
+        options,
+      );
+    }
+
+    // keeps maxRecords × 4 = 8 newest records, written oldest-first so appends stay chronological
+    const storePath = getTimelineStorePath(tmpDir);
+    const lines = fs.readFileSync(storePath, 'utf8').trim().split('\n');
+    const ids = lines.map((line) => (JSON.parse(line) as { id: string }).id);
+    expect(ids).toEqual([
+      'record-05',
+      'record-06',
+      'record-07',
+      'record-08',
+      'record-09',
+      'record-10',
+      'record-11',
+      'record-12',
+    ]);
+
+    // the reader still applies its own cap, newest first
+    expect(readTimelineRecords(options).map((record) => record.id)).toEqual([
+      'record-12',
+      'record-11',
+    ]);
+  });
+
+  it('tail-reads an oversized store and returns the same newest records as a full read', () => {
+    for (let i = 1; i <= 50; i++) {
+      appendTimelineRecord(
+        {
+          id: `tail-${String(i).padStart(2, '0')}`,
+          agentId: 1,
+          timestamp: i * 1000,
+          kind: 'tool.started',
+          title: `Tail ${i}`,
+        },
+        { homeDir: tmpDir },
+      );
+    }
+
+    const fullRead = readTimelineRecords({ homeDir: tmpDir, maxRecords: 10 });
+    const tailRead = readTimelineRecords({
+      homeDir: tmpDir,
+      maxRecords: 10,
+      sizeThresholdBytes: 512,
+      tailReadBytes: 4096,
+    });
+
+    expect(fullRead).toHaveLength(10);
+    expect(tailRead).toEqual(fullRead);
+    expect(tailRead[0]?.id).toBe('tail-50');
+  });
+
+  it('leaves small stores untouched below the size threshold', () => {
+    for (let i = 1; i <= 5; i++) {
+      appendTimelineRecord(
+        { id: `small-${i}`, agentId: 1, timestamp: i * 100, kind: 'tool.started', title: `S${i}` },
+        { homeDir: tmpDir, maxRecords: 1 },
+      );
+    }
+
+    const storePath = getTimelineStorePath(tmpDir);
+    expect(fs.readFileSync(storePath, 'utf8').trim().split('\n')).toHaveLength(5);
+    expect(
+      readTimelineRecords({ homeDir: tmpDir, maxRecords: 1 }).map((record) => record.id),
+    ).toEqual(['small-5']);
+  });
 });
