@@ -89,15 +89,29 @@ Fixed this audit: the duplicate heuristic reaper (v1.3.52).
 
 Open, in priority order:
 
-1. **Performance (ray's reported pain, uninvestigated).** ray reports 卡頓 (jank). No profiling has
-   ever been done. Starting points, most likely first:
-   - the rAF game loop (`gameLoop.ts`) — check it pauses when the webview is hidden/not visible;
-   - per-agent 500 ms JSONL polling × 12+ agents + 1 s/3 s/30 s scanners (heuristic mode) — check
-     scanners are actually suppressed when hooks mode is on;
-   - full-canvas redraw every frame in `renderer.ts` (no dirty-rect);
-   - webview bundle 611 KB (cosmetic; build warns).
-     Measure first (Chrome DevTools → Performance on the webview via Developer: Open Webview Developer
-     Tools), fix second. Do NOT blind-optimize.
+1. **Performance (ray's reported pain — STATIC RECON DONE 2026-06-18, two read-only audits).**
+   Ranked suspects with evidence; runtime profiling still pending:
+   1. **Extension host blocks on synchronous `sqlite3` subprocesses** — `codex.ts` queries via
+      `execFileSync` on the 3 s external scan AND a 1 s per-launching-Codex-agent cwd poll; each
+      spawn blocks the event loop. _Mitigation shipped v1.3.53: mtime-gated query cache._ Remaining:
+      consider async exec.
+   2. **Unbounded history stores** — `usage-v1.jsonl` hit 25 MB / 23.5 k lines, `timeline-v1.jsonl`
+      6.8 MB / 30.7 k lines; every load did whole-file read + full sort, keeping only newest 500.
+      _Mitigation shipped v1.3.53: compact-on-write + tail-read._
+   3. **React re-render flood (webview)** — `useExtensionMessages.ts` fires 1–4 setState per tool
+      message (~60–90 setState/s with 12 streaming agents); ALL state lives at App level; no
+      React.memo on OfficeCanvas/ToolOverlay/AgentCenterSurface. Fix = batch/throttle tool-event
+      state (~300 ms), memo the big children, split contexts. **Needs React DevTools profiling
+      first** (Developer: Open Webview Developer Tools).
+   4. **rAF loop never pauses** (`gameLoop.ts:9-36` — no visibilitychange handling) + full-canvas
+      clear + per-frame z-sort in `renderer.ts` (~50–100 drawables). Fix = pause on hidden,
+      dirty-flag skip.
+   5. Heuristic-mode scanner load: ~28 sync fs ops/s per window (~56 with two windows); per-agent
+      500 ms polls run regardless of hooks mode (only their /clear logic is gated). Hooks default
+      OFF (`GLOBAL_KEY_HOOKS_ENABLED` default false) — ray runs full-heuristic. Enabling hooks mode
+      is itself a perf lever, but its global scans (`scanGlobalProjectDirs`, cowork scan) run
+      unconditionally either way.
+      Measure before fixing #3/#4. Do NOT blind-optimize.
 2. **`server/src/providers/file/codex/codex.ts` (971 lines, two functions span most of it).**
    Split only when next touched (extract process-termination + SQL query helpers). No standalone
    refactor.

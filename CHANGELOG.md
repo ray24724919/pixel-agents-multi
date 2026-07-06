@@ -7,6 +7,36 @@
 - Windows release verification should include `npm run check-types`, `npm run test:webview`, `npm run test:server`, `npm run build`, `npx vsce ls`, `npx vsce package`, `code --install-extension pixel-agents-multi-1.3.0.vsix --force`, and `code --list-extensions --show-versions | rg "raychen\.pixel-agents-multi"`.
 - Recent fork stabilization includes Codex multi-thread adoption, Claude Cowork/local-agent-mode refresh visibility, random seat redistribution on refresh, and clearer token usage labels for exact vs estimated counts.
 
+## v1.3.24 – v1.3.52 (condensed, 2026-06)
+
+- **v1.3.24** — Freeze the campus once a lobby exists; de-ratchet the design anchor (Checkpoint A).
+- **v1.3.25** — Reap duplicate live terminal bindings causing phantom duplicate agents.
+- **v1.3.26** — Meetings gather in shared space only; check-types covers webview tests.
+- **v1.3.27** — Reap dead external sessions so daily scheduled runs stop accumulating agents.
+- **v1.3.28** — Split `projectRoomGeneration.ts` into modules; zones now derive from rooms+furniture.
+- **v1.3.29–33** — AgentCenter refactor steps 5-9: extract Timeline/Usage/Agents/handoff panel clusters.
+- **v1.3.34** — AgentCenter split complete (5826→833 lines, 15 modules).
+- **v1.3.35** — Stop daily Codex scheduled runs from piling up one room agent per day.
+- **v1.3.36** — Campus centre-out bay growth (③a); reclaim dead project rooms on reload.
+- **v1.3.37** — Stop adopting Claude Cowork/local-agent-mode sandboxes as phantom "outputs" rooms.
+- **v1.3.38** — Disable project-room auto-reclaim (it deleted rooms the user still used).
+- **v1.3.39** — Keep idle-but-open external agents (stale-reap raised 6h → 14 days).
+- **v1.3.40** — Reap external agents on session deletion, not idle time.
+- **v1.3.41** — Adopt idle/kept Codex threads via deletion-based detection.
+- **v1.3.42** — Campus corridor right-extension (③c) + center-on-entry camera.
+- **v1.3.43** — Handoff auto-advance completion when the executor settles (Brick B).
+- **v1.3.44** — Skip failed-rebase Cowork sandbox sessions, killing the "outputs" phantom rooms.
+- **v1.3.45** — Handoff per-session repo root, usable in an office window / multi-repo setup.
+- **v1.3.46** — Dedup external agents by session to kill duplicate room characters.
+- **v1.3.47** — Case-insensitive transcript dedup, fixing a re-duplicating live session.
+- **v1.3.48** — Make the agent Remove action discoverable (Actions → Remove…).
+- **v1.3.49** — External-agent session dedup, case-insensitive paths, discoverable Remove/Kill gating.
+- **v1.3.50** — Reap/skip an external agent only on confirmed deletion (ENOENT), not any stat error.
+- **v1.3.51** — Handoff Brick C: auto-close orphaned executor on launch timeout + cancel a dispatched executor.
+- **v1.3.52** — Harden the heuristic stale-check reaper to ENOENT-only, skipping hooks-only agents.
+
+For current state and roadmap see docs/HANDOVER.md.
+
 ## v1.3.0
 
 ### Features
