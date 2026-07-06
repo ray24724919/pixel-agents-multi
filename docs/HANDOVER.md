@@ -1,6 +1,6 @@
 # HANDOVER — Current State & Successor Guide
 
-> **This is the single authoritative "where are we" document.** Written 2026-06-18 during a full-project
+> **This is the single authoritative "where are we" document.** Written 2026-07-06 during a full-project
 > audit (5-agent fan-out over roadmap, tech debt, docs, runtime health, and memory).
 > When documents disagree, trust order is: **AI memory files → git log → this file → CLAUDE.md → everything else.**
 > `docs/roadmap/visual-agent-control-room-roadmap.md` is a _historical planning artifact_ (last updated
@@ -31,18 +31,28 @@ Non-negotiable rules learned the hard way (each one was violated once and caused
    upset. When a choice is destructive, prefer the non-destructive default regardless of an earlier
    abstract approval.
 
-## 2. Current state (2026-06-18)
+## 2. Current state (2026-07-06, end of Fable handover session)
 
-- **Version:** v1.3.52 (installed locally, packaged `pixel-agents-multi-1.3.52.vsix`).
-- **main:** contains everything through v1.3.52; pushed to `origin/main` (09050b0) — first backup
-  push since 2026-06-09.
-- **Test gate:** check-types + eslint + server 309 (vitest) + webview 286 (node test) — all green.
-  Run `npm run check-types && npm run lint && npm test` before claiming anything works.
-- **Per-checkpoint discipline** (established, follow it): feature branch → gate green → bump
-  `package.json` version → `npm run package:vsix` → `npm run install:local` → commit → ray reviews →
-  local `--no-ff` merge to main. Push = ray's call.
-- **Pending live verification by ray:** v1.3.50 (transient-reap fix), v1.3.51 (Brick C cancel/timeout),
-  v1.3.52 (heuristic reaper hardening) are merged + installed but ray hasn't exercised them live yet.
+- **main:** v1.3.53 (e6f6cbb — perf IO basics: JSONL store compaction/tail-read + Codex sqlite query
+  cache), pushed to `origin/main`. Gate at main: check-types + lint + server **321** + webview **286**.
+- **Parallel sessions in flight — VERSION RESERVATIONS:**
+  - `feat/handoff-brick-d-backlink` @ 2a8ed80 — Brick D COMPLETE, awaiting ray's review/merge. It
+    mistakenly also used "1.3.53" (collision): at merge time, merge main into it, re-bump to
+    **1.3.54**, re-gate (expect server 321+12, webview 293), repackage. Details in memory
+    `task-brick-d-backlink.md`.
+  - Webview perf session (React re-render batching + rAF pause) — branches from main v1.3.53; use
+    version **1.3.55** at its checkpoint. ⚠️ It will touch `useExtensionMessages.ts`/`renderer.ts`,
+    which Brick D ALSO touched on its branch — **merge Brick D first**, then rebase the perf branch
+    on updated main before finalizing, or conflicts will land on whoever merges second.
+- **Installed extension right now:** Brick D's "1.3.53" build (= v1.3.52 + backlink/badge, WITHOUT
+  the perf commits). After Brick D merges as 1.3.54, package+install from main.
+- **Per-checkpoint discipline** (follow it): feature branch → gate green → bump version (**check
+  main and this section first — parallel sessions have collided on version numbers**) →
+  `npm run package:vsix` → `npm run install:local` → commit → ray reviews → local `--no-ff` merge to
+  main. Push = ray's call. ⚠️ For changes that REWRITE user data, get ray's policy sign-off BEFORE
+  `install:local` — install is live deployment (see the usage-store incident in §5).
+- **Pending live verification by ray:** v1.3.50–53 (agent-flicker reaps ×2, Brick C cancel/timeout,
+  perf IO) + Brick D's badge visuals (pixel taste = ray's call).
 
 ## 3. Roadmap scoreboard
 
@@ -83,21 +93,31 @@ Full sagas live in git history and the AI memory; these are the distilled rules:
 | Generator bulldozed ray's hand-designed studio (v1.3.7)                                                | Generation is additive-only; never delete/void non-`project-` furniture. "My layout got messed up" → suspect destructive generation, repro with a node diag against the real layout.json.                                          |
 | W18 cosmetic polish spiral                                                                             | If a plan's acceptance criteria can't be executed (test/command/measurement), it's churn — don't start it.                                                                                                                         |
 
-## 5. Technical debt register (audited 2026-06-18)
+## 5. Technical debt register (audited 2026-07-06)
 
 Fixed this audit: the duplicate heuristic reaper (v1.3.52).
 
 Open, in priority order:
 
-1. **Performance (ray's reported pain — STATIC RECON DONE 2026-06-18, two read-only audits).**
+1. **Performance (ray's reported pain — STATIC RECON DONE 2026-07-06, two read-only audits).**
    Ranked suspects with evidence; runtime profiling still pending:
    1. **Extension host blocks on synchronous `sqlite3` subprocesses** — `codex.ts` queries via
       `execFileSync` on the 3 s external scan AND a 1 s per-launching-Codex-agent cwd poll; each
       spawn blocks the event loop. _Mitigation shipped v1.3.53: mtime-gated query cache._ Remaining:
       consider async exec.
    2. **Unbounded history stores** — `usage-v1.jsonl` hit 25 MB / 23.5 k lines, `timeline-v1.jsonl`
-      6.8 MB / 30.7 k lines; every load did whole-file read + full sort, keeping only newest 500.
-      _Mitigation shipped v1.3.53: compact-on-write + tail-read._
+      6.8 MB / 30.7 k lines; every load did whole-file read + full sort.
+      _Mitigation shipped v1.3.53: compact-on-write + tail-read._ **INCIDENT + POLICY
+      (2026-07-06):** unlike timeline (read always capped at 500), the Usage page consumed FULL
+      history; the first live append under v1.3.53 compacted the real usage store 23,542 → ~2,000
+      records (post-compact backup: `usage/usage-v1.jsonl.bak-post-compact-incident`; the lost
+      2026-06-03→06-15 window exists only in source transcripts/rollouts). ray accepted the
+      **bounded-history policy** (Usage page shows newest ~2,000 ≈ 3 weeks) and requested a
+      **backfill task** (spawn-task card created): re-derive the lost window into
+      `usage/usage-v1-archive-2026-06.jsonl` (independent archive file, never compacted, for future
+      Usage-Intelligence aggregation). A full-history Usage view requires that aggregation design —
+      do NOT simply raise retention caps. Timeline pre-compaction snapshot backed up:
+      `timeline/timeline-v1.jsonl.bak-intact`.
    3. **React re-render flood (webview)** — `useExtensionMessages.ts` fires 1–4 setState per tool
       message (~60–90 setState/s with 12 streaming agents); ALL state lives at App level; no
       React.memo on OfficeCanvas/ToolOverlay/AgentCenterSurface. Fix = batch/throttle tool-event
@@ -131,7 +151,7 @@ Open, in priority order:
 
 | Path                                                                                        | What it is                                                                            |
 | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `CLAUDE.md`                                                                                 | Architecture reference (rewritten 2026-06-18 — trust it again)                        |
+| `CLAUDE.md`                                                                                 | Architecture reference (rewritten 2026-07-06 — trust it again)                        |
 | `docs/HANDOVER.md`                                                                          | This file — current state, roadmap, rules                                             |
 | `docs/agent-handoffs/`                                                                      | **LIVE product data** — handoff markdown + `.handoff.json` sidecars. Never mass-edit. |
 | `docs/roadmap/supervision/work-packages/handoffs/`                                          | **LIVE runtime path** — handoff work packages referenced by sidecars                  |
